@@ -25,10 +25,16 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open_editor, &quit])?;
 
-    TrayIconBuilder::with_id("main-tray")
+    let mut tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Cutdown")
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(false);
+
+    if let Some(icon) = app.default_window_icon().cloned() {
+        tray = tray.icon(icon);
+    }
+
+    tray
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open_editor" => {
                 if let Err(err) = show_main_window(app) {

@@ -17,13 +17,19 @@ export type ExportStatus = {
   outputSize?: number;
 };
 
+export type TimelineSegment = {
+  id: string;
+  sourceStart: number;
+  sourceEnd: number;
+};
+
 export type EditorState = {
   currentFile: string | null;
   videoSrc: string | null;
   metadata: VideoMetadata | null;
   currentTime: number;
-  inPoint: number;
-  outPoint: number;
+  segments: TimelineSegment[];
+  selectedSegmentId: string | null;
   exportStatus: ExportStatus;
 };
 
@@ -32,8 +38,8 @@ const initialState: EditorState = {
   videoSrc: null,
   metadata: null,
   currentTime: 0,
-  inPoint: 0,
-  outPoint: 0,
+  segments: [],
+  selectedSegmentId: null,
   exportStatus: {
     state: 'idle',
     message: 'Choose a clip to begin.',
@@ -41,6 +47,26 @@ const initialState: EditorState = {
 };
 
 export const editor = writable<EditorState>(initialState);
+
+export function createFullSegment(duration: number): TimelineSegment {
+  return {
+    id: crypto.randomUUID(),
+    sourceStart: 0,
+    sourceEnd: duration,
+  };
+}
+
+export function segmentDuration(segment: TimelineSegment): number {
+  return Math.max(0, segment.sourceEnd - segment.sourceStart);
+}
+
+export function totalSegmentDuration(segments: TimelineSegment[]): number {
+  return segments.reduce((total, segment) => total + segmentDuration(segment), 0);
+}
+
+export function sortSegments(segments: TimelineSegment[]): TimelineSegment[] {
+  return [...segments].sort((a, b) => a.sourceStart - b.sourceStart);
+}
 
 export function resetEditor(): void {
   editor.set(initialState);

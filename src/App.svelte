@@ -6,7 +6,13 @@
   import Timeline from './components/Timeline.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
   import { clamp, formatBytes, formatTime } from './lib/format';
-  import { editor, type VideoMetadata } from './stores/editor';
+  import {
+    createFullSegment,
+    editor,
+    totalSegmentDuration,
+    type TimelineSegment,
+    type VideoMetadata,
+  } from './stores/editor';
 
   type ExportResult = {
     outputPath: string;
@@ -22,13 +28,89 @@
     | undefined;
   let exportModalOpen = false;
   let outputPath = '';
+  let segmentHistory: Array<{
+    segments: TimelineSegment[];
+    selectedSegmentId: string | null;
+  }> = [];
+  let redoHistory: Array<{
+    segments: TimelineSegment[];
+    selectedSegmentId: string | null;
+  }> = [];
 
   $: metadata = $editor.metadata;
   $: duration = metadata?.duration ?? 0;
-  $: outPoint = $editor.outPoint || duration;
-  $: trimDuration = Math.max(0, outPoint - $editor.inPoint);
+  $: segments = $editor.segments;
+  $: selectedSegment = segments.find((segment) => segment.id === $editor.selectedSegmentId) ?? null;
+  $: outputDuration = totalSegmentDuration(segments);
   $: fileName = $editor.currentFile?.split(/[\\/]/).pop() ?? 'No file selected';
-  $: canExport = Boolean($editor.currentFile && trimDuration > 0);
+  $: canExport = Boolean($editor.currentFile && outputDuration > 0);
+
+  function cloneSegments(source: TimelineSegment[]): TimelineSegment[] {
+    return source.map((segment) => ({ ...segment }));
+  }
+
+  function pushUndoSnapshot(): void {
+    segmentHistory = [
+      ...segmentHistory.slice(-19),
+      {
+        segments: cloneSegments($editor.segments),
+        selectedSegmentId: $editor.selectedSegmentId,
+      },
+    ];
+    redoHistory = [];
+  }
+
+  function undoSegmentEdit(): void {
+    const snapshot = segmentHistory[segmentHistory.length - 1];
+
+    if (!snapshot) {
+      return;
+    }
+
+    redoHistory = [
+      ...redoHistory.slice(-19),
+      {
+        segments: cloneSegments($editor.segments),
+        selectedSegmentId: $editor.selectedSegmentId,
+      },
+    ];
+    segmentHistory = segmentHistory.slice(0, -1);
+    editor.update((state) => ({
+      ...state,
+      segments: cloneSegments(snapshot.segments),
+      selectedSegmentId: snapshot.selectedSegmentId,
+      exportStatus: {
+        state: 'idle',
+        message: 'Undid last edit.',
+      },
+    }));
+  }
+
+  function redoSegmentEdit(): void {
+    const snapshot = redoHistory[redoHistory.length - 1];
+
+    if (!snapshot) {
+      return;
+    }
+
+    segmentHistory = [
+      ...segmentHistory.slice(-19),
+      {
+        segments: cloneSegments($editor.segments),
+        selectedSegmentId: $editor.selectedSegmentId,
+      },
+    ];
+    redoHistory = redoHistory.slice(0, -1);
+    editor.update((state) => ({
+      ...state,
+      segments: cloneSegments(snapshot.segments),
+      selectedSegmentId: snapshot.selectedSegmentId,
+      exportStatus: {
+        state: 'idle',
+        message: 'Redid edit.',
+      },
+    }));
+  }
 
   async function chooseClip(): Promise<void> {
     const selected = await open({
@@ -45,14 +127,16 @@
       return;
     }
 
+    segmentHistory = [];
+    redoHistory = [];
     editor.update((state) => ({
       ...state,
       currentFile: selected,
       videoSrc: convertFileSrc(selected),
       metadata: null,
       currentTime: 0,
-      inPoint: 0,
-      outPoint: 0,
+      segments: [],
+      selectedSegmentId: null,
       exportStatus: {
         state: 'running',
         message: 'Probing clip metadata...',
@@ -64,7 +148,8 @@
       editor.update((state) => ({
         ...state,
         metadata: probed,
-        outPoint: probed.duration,
+        segments: [createFullSegment(probed.duration)],
+        selectedSegmentId: null,
         exportStatus: {
           state: 'idle',
           message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
@@ -87,23 +172,154 @@
     editor.update((state) => ({ ...state, currentTime: nextTime }));
   }
 
-  function setInPoint(seconds: number): void {
+  function selectSegment(id: string | null): void {
+    editor.update((state) => ({ ...state, selectedSegmentId: id }));
+  }
+
+  function splitAtCurrentTime(): void {
+    if (!canExport) {
+      return;
+    }
+
+    const splitTime = $editor.currentTime;
+    const targetSegment = $editor.segments.find(
+      (segment) => splitTime > segment.sourceStart + 0.05 && splitTime < segment.sourceEnd - 0.05,
+    );
+
+    if (!targetSegment) {
+      return;
+    }
+
+    pushUndoSnapshot();
     editor.update((state) => ({
       ...state,
-      inPoint: clamp(seconds, 0, Math.max(0, outPoint - 0.1)),
+      segments: state.segments.flatMap((segment) => {
+        const insideSegment = splitTime > segment.sourceStart + 0.05 && splitTime < segment.sourceEnd - 0.05;
+
+        if (!insideSegment) {
+          return [segment];
+        }
+
+        return [
+          {
+            ...segment,
+            sourceEnd: splitTime,
+          },
+          {
+            id: crypto.randomUUID(),
+            sourceStart: splitTime,
+            sourceEnd: segment.sourceEnd,
+          },
+        ];
+      }),
+      selectedSegmentId: null,
+      exportStatus: {
+        state: 'idle',
+        message: `Split at ${formatTime(splitTime)}.`,
+      },
     }));
   }
 
-  function setOutPoint(seconds: number): void {
+  function deleteSelectedSegment(): void {
+    if (!$editor.selectedSegmentId) {
+      return;
+    }
+
+    if ($editor.segments.length <= 1) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'idle',
+          message: 'At least one segment is required.',
+        },
+      }));
+      return;
+    }
+
+    pushUndoSnapshot();
     editor.update((state) => ({
       ...state,
-      outPoint: clamp(seconds, Math.min(state.inPoint + 0.1, duration), duration),
+      segments: state.segments.filter((segment) => segment.id !== state.selectedSegmentId),
+      selectedSegmentId: null,
+      exportStatus: {
+        state: 'idle',
+        message: 'Deleted selected segment.',
+      },
     }));
+  }
+
+  function reorderSegment(id: string, targetIndex: number): void {
+    const currentIndex = $editor.segments.findIndex((segment) => segment.id === id);
+
+    if (currentIndex < 0 || currentIndex === targetIndex) {
+      return;
+    }
+
+    pushUndoSnapshot();
+    editor.update((state) => {
+      const nextSegments = cloneSegments(state.segments);
+      const [movedSegment] = nextSegments.splice(currentIndex, 1);
+      nextSegments.splice(targetIndex, 0, movedSegment);
+
+      return {
+        ...state,
+        segments: nextSegments,
+        selectedSegmentId: id,
+        exportStatus: {
+          state: 'idle',
+          message: 'Reordered segment.',
+        },
+      };
+    });
+  }
+
+  function jumpSegment(direction: -1 | 1): void {
+    if (segments.length === 0) {
+      return;
+    }
+
+    const boundaries = segments.flatMap((segment) => [segment.sourceStart, segment.sourceEnd]).sort((a, b) => a - b);
+    const nextBoundary =
+      direction > 0
+        ? boundaries.find((boundary) => boundary > $editor.currentTime + 0.05)
+        : [...boundaries].reverse().find((boundary) => boundary < $editor.currentTime - 0.05);
+
+    if (nextBoundary !== undefined) {
+      seekTo(nextBoundary);
+    }
+  }
+
+  function previewSelectedSegment(): void {
+    if (selectedSegment) {
+      seekTo(selectedSegment.sourceStart);
+    } else if (segments[0]) {
+      seekTo(segments[0].sourceStart);
+    }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
-    if (!canExport || target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
+    if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
+      return;
+    }
+
+    if (event.ctrlKey && event.key.toLowerCase() === 'z') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        redoSegmentEdit();
+      } else {
+        undoSegmentEdit();
+      }
+      return;
+    }
+
+    if (event.ctrlKey && event.key.toLowerCase() === 'y') {
+      event.preventDefault();
+      redoSegmentEdit();
+      return;
+    }
+
+    if (!canExport) {
       return;
     }
 
@@ -113,13 +329,23 @@
       return;
     }
 
-    if (event.key.toLowerCase() === 'i') {
-      setInPoint($editor.currentTime);
+    if (event.key.toLowerCase() === 's') {
+      splitAtCurrentTime();
       return;
     }
 
-    if (event.key.toLowerCase() === 'o') {
-      setOutPoint($editor.currentTime);
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      deleteSelectedSegment();
+      return;
+    }
+
+    if (event.key === '[') {
+      jumpSegment(-1);
+      return;
+    }
+
+    if (event.key === ']') {
+      jumpSegment(1);
       return;
     }
 
@@ -173,8 +399,10 @@
         params: {
           inputPath: $editor.currentFile,
           outputPath,
-          inPoint: $editor.inPoint,
-          outPoint,
+          segments: segments.map((segment) => ({
+            start: segment.sourceStart,
+            end: segment.sourceEnd,
+          })),
         },
       });
 
@@ -218,10 +446,15 @@
     bind:this={preview}
     src={$editor.videoSrc}
     currentTime={$editor.currentTime}
-    on:metadata={(event) => {
-      if (!duration && event.detail.duration) {
-        setOutPoint(event.detail.duration);
-      }
+    on:metadata={() => {}}
+    on:error={(event) => {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: event.detail.message,
+        },
+      }));
     }}
     on:timeupdate={(event) => {
       editor.update((state) => ({ ...state, currentTime: event.detail.currentTime }));
@@ -232,29 +465,48 @@
     disabled={!$editor.currentFile}
     {duration}
     currentTime={$editor.currentTime}
-    inPoint={$editor.inPoint}
-    {outPoint}
+    {segments}
+    selectedSegmentId={$editor.selectedSegmentId}
     on:seek={(event) => seekTo(event.detail.seconds)}
-    on:setIn={(event) => setInPoint(event.detail.seconds)}
-    on:setOut={(event) => setOutPoint(event.detail.seconds)}
+    on:selectSegment={(event) => selectSegment(event.detail.id)}
+    on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.targetIndex)}
   />
 
-  <section class="trim-bar" aria-label="Trim controls">
+  <section class="transport-bar" aria-label="Editor controls">
     <div>
-      <span>In</span>
-      <strong>{formatTime($editor.inPoint)}</strong>
+      <span>Selected</span>
+      <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : 'None'}</strong>
+      {#if selectedSegment}
+        <small>{formatTime(selectedSegment.sourceStart)} - {formatTime(selectedSegment.sourceEnd)}</small>
+      {/if}
     </div>
     <div>
-      <span>Out</span>
-      <strong>{formatTime(outPoint)}</strong>
+      <span>Output</span>
+      <strong>{formatTime(outputDuration)}</strong>
     </div>
     <div>
-      <span>Duration</span>
-      <strong>{formatTime(trimDuration)}</strong>
+      <span>Segments</span>
+      <strong>{segments.length}</strong>
     </div>
-    <button type="button" class="secondary" disabled={!canExport} on:click={() => seekTo($editor.inPoint)}>
-      Preview Trim
-    </button>
+    <div class="transport-bar__actions">
+      <button type="button" class="secondary" disabled={!canExport} on:click={() => jumpSegment(-1)}>[ Prev</button>
+      <button type="button" class="secondary" disabled={!canExport} on:click={() => jumpSegment(1)}>Next ]</button>
+      <button type="button" class="secondary" disabled={!canExport} on:click={splitAtCurrentTime}>Split</button>
+      <button type="button" class="secondary" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>
+        Delete Segment
+      </button>
+      <button type="button" class="secondary" disabled={!canExport} on:click={previewSelectedSegment}>Preview Segment</button>
+    </div>
+  </section>
+
+  <section class="shortcut-bar" aria-label="Keyboard shortcuts">
+    <span><kbd>S</kbd> Split</span>
+    <span><kbd>Delete</kbd> Remove segment</span>
+    <span><kbd>Ctrl</kbd> + <kbd>Z</kbd> Undo</span>
+    <span><kbd>Ctrl</kbd> + <kbd>Y</kbd> Redo</span>
+    <span><kbd>[</kbd> / <kbd>]</kbd> Boundaries</span>
+    <span>Drag top ruler to scrub</span>
+    <span>Drag clips to reorder</span>
   </section>
 
   <footer class="bottom-bar">
@@ -275,8 +527,8 @@
 <ExportModal
   open={exportModalOpen}
   {outputPath}
-  inPoint={$editor.inPoint}
-  {outPoint}
+  segmentCount={segments.length}
+  duration={outputDuration}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
   on:confirm={exportClip}

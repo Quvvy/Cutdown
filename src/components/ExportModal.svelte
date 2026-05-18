@@ -4,8 +4,8 @@
 
   export let open = false;
   export let outputPath = '';
-  export let inPoint = 0;
-  export let outPoint = 0;
+  export let segmentCount = 0;
+  export let duration = 0;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -18,14 +18,14 @@
   <div class="modal-backdrop">
     <section class="modal" aria-label="Export clip">
       <header>
-        <h2>Export lossless trim</h2>
+        <h2>Export sequence</h2>
         <button type="button" class="icon-button" on:click={() => dispatch('close')}>Close</button>
       </header>
 
       <dl>
         <div>
-          <dt>Range</dt>
-          <dd>{formatTime(inPoint)} to {formatTime(outPoint)}</dd>
+          <dt>Sequence</dt>
+          <dd>{segmentCount} segment{segmentCount === 1 ? '' : 's'} | {formatTime(duration)}</dd>
         </div>
         <div>
           <dt>Output</dt>

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -20,8 +21,14 @@ pub struct VideoMetadata {
 pub struct ExportParams {
     input_path: String,
     output_path: String,
-    in_point: f64,
-    out_point: f64,
+    segments: Vec<ExportSegment>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportSegment {
+    start: f64,
+    end: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,39 +120,30 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
 pub fn export_clip(params: ExportParams) -> Result<ExportResult, String> {
     let input = PathBuf::from(&params.input_path);
     let output = PathBuf::from(&params.output_path);
-    let duration = params.out_point - params.in_point;
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
     }
 
-    if duration <= 0.0 {
-        return Err("Out point must be after in point.".to_string());
-    }
+    let segments = valid_segments(params.segments)?;
+    let duration = segments
+        .iter()
+        .map(|segment| segment.end - segment.start)
+        .sum::<f64>();
 
     if let Some(parent) = output.parent() {
-        std::fs::create_dir_all(parent)
+        fs::create_dir_all(parent)
             .map_err(|err| format!("Failed to create output directory: {err}"))?;
     }
 
-    let command_output = Command::new(ffmpeg_path())
-        .arg("-y")
-        .arg("-ss")
-        .arg(format_seconds(params.in_point))
-        .arg("-i")
-        .arg(&input)
-        .arg("-t")
-        .arg(format_seconds(duration))
-        .args(["-c", "copy", "-avoid_negative_ts", "make_zero"])
-        .arg(&output)
-        .output()
-        .map_err(|err| format!("Failed to run ffmpeg: {err}"))?;
-
-    if !command_output.status.success() {
-        return Err(command_error("ffmpeg", &command_output.stderr));
+    if segments.len() == 1 {
+        let segment = &segments[0];
+        export_segment(&input, &output, segment.start, segment.end - segment.start)?;
+    } else {
+        export_multi_segment(&input, &output, &segments)?;
     }
 
-    let file_size = std::fs::metadata(&output)
+    let file_size = fs::metadata(&output)
         .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
         .len();
 
@@ -154,6 +152,123 @@ pub fn export_clip(params: ExportParams) -> Result<ExportResult, String> {
         file_size,
         duration,
     })
+}
+
+fn valid_segments(segments: Vec<ExportSegment>) -> Result<Vec<ExportSegment>, String> {
+    let segments = segments
+        .into_iter()
+        .filter(|segment| segment.end > segment.start)
+        .collect::<Vec<_>>();
+
+    if segments.is_empty() {
+        return Err("At least one segment is required for export.".to_string());
+    }
+
+    Ok(segments)
+}
+
+fn export_multi_segment(
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "cutdown-{}-{}",
+        std::process::id(),
+        current_timestamp_millis()
+    ));
+    fs::create_dir_all(&temp_dir).map_err(|err| format!("Failed to create temp directory: {err}"))?;
+
+    let result = (|| {
+        let extension = output
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or("mp4");
+        let mut segment_paths = Vec::with_capacity(segments.len());
+
+        for (index, segment) in segments.iter().enumerate() {
+            let segment_path = temp_dir.join(format!("segment-{index:03}.{extension}"));
+            export_segment(
+                input,
+                &segment_path,
+                segment.start,
+                segment.end - segment.start,
+            )?;
+            segment_paths.push(segment_path);
+        }
+
+        let concat_list = temp_dir.join("segments.txt");
+        fs::write(&concat_list, concat_file_contents(&segment_paths))
+            .map_err(|err| format!("Failed to write concat list: {err}"))?;
+
+        let command_output = Command::new(ffmpeg_path())
+            .arg("-y")
+            .args(["-f", "concat", "-safe", "0"])
+            .arg("-i")
+            .arg(&concat_list)
+            .args(["-c", "copy"])
+            .arg(output)
+            .output()
+            .map_err(|err| format!("Failed to run ffmpeg concat: {err}"))?;
+
+        if !command_output.status.success() {
+            return Err(command_error("ffmpeg concat", &command_output.stderr));
+        }
+
+        Ok(())
+    })();
+
+    let cleanup = fs::remove_dir_all(&temp_dir);
+    if result.is_ok() {
+        cleanup.map_err(|err| format!("Failed to remove temp files: {err}"))?;
+    } else {
+        let _ = cleanup;
+    }
+
+    result
+}
+
+fn export_segment(input: &Path, output: &Path, start: f64, duration: f64) -> Result<(), String> {
+    if duration <= 0.0 {
+        return Err("Segment end must be after segment start.".to_string());
+    }
+
+    let command_output = Command::new(ffmpeg_path())
+        .arg("-y")
+        .arg("-ss")
+        .arg(format_seconds(start))
+        .arg("-i")
+        .arg(input)
+        .arg("-t")
+        .arg(format_seconds(duration))
+        .args(["-c", "copy", "-avoid_negative_ts", "make_zero"])
+        .arg(output)
+        .output()
+        .map_err(|err| format!("Failed to run ffmpeg: {err}"))?;
+
+    if !command_output.status.success() {
+        return Err(command_error("ffmpeg", &command_output.stderr));
+    }
+
+    Ok(())
+}
+
+fn concat_file_contents(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| {
+            let normalized = path.to_string_lossy().replace('\\', "/").replace('\'', "'\\''");
+            format!("file '{normalized}'")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn current_timestamp_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
 }
 
 fn ffmpeg_path() -> PathBuf {
