@@ -8,6 +8,7 @@ export type VideoMetadata = {
   height: number;
   fileSize: number;
   audioCodec: string | null;
+  audioChannels: number | null;
 };
 
 export type ExportStatus = {
@@ -26,6 +27,8 @@ export type TimelineSegment = {
 export type EditorState = {
   currentFile: string | null;
   videoSrc: string | null;
+  previewTempPath: string | null;
+  previewStrategy: 'Native preview' | 'Preview remux' | 'Preview proxy';
   metadata: VideoMetadata | null;
   currentTime: number;
   segments: TimelineSegment[];
@@ -36,6 +39,8 @@ export type EditorState = {
 const initialState: EditorState = {
   currentFile: null,
   videoSrc: null,
+  previewTempPath: null,
+  previewStrategy: 'Native preview',
   metadata: null,
   currentTime: 0,
   segments: [],

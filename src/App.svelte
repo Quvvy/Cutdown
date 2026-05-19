@@ -1,8 +1,14 @@
 <script lang="ts">
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-  import { open, save } from '@tauri-apps/plugin-dialog';
+  import { listen } from '@tauri-apps/api/event';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { confirm, open, save } from '@tauri-apps/plugin-dialog';
+  import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
+  import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import ExportModal from './components/ExportModal.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
+  import SettingsModal from './components/SettingsModal.svelte';
   import Timeline from './components/Timeline.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
   import { clamp, formatBytes, formatTime } from './lib/format';
@@ -20,14 +26,52 @@
     duration: number;
   };
 
+  type ExportProgress = {
+    stage: string;
+    message: string;
+    percent?: number | null;
+  };
+
+  type FfmpegCheckResult = {
+    available: boolean;
+    ffmpegPath: string;
+    ffprobePath: string;
+    source: string;
+    message: string;
+  };
+
+  type AppSettings = {
+    watchFolder: string | null;
+    watchFolderEnabled: boolean;
+    lastExportDir: string | null;
+  };
+
+  type PreviewResult = {
+    previewPath: string;
+    strategy: 'Preview remux' | 'Preview proxy';
+  };
+
   let preview:
     | {
         seekTo(seconds: number): void;
         togglePlayback(): void;
       }
     | undefined;
+  let timeline:
+    | {
+        zoomToSourceRange(start: number, end: number): void;
+      }
+    | undefined;
   let exportModalOpen = false;
+  let settingsModalOpen = false;
+  let exportMode: 'sequence' | 'range' = 'sequence';
+  let rangeLoopPlayback = false;
+  let exportProgressPercent: number | null = null;
   let outputPath = '';
+  let watchFolder: string | null = null;
+  let watchFolderEnabled = false;
+  let ffmpegStatus = '';
+  let ffmpegAvailable = true;
   let segmentHistory: Array<{
     segments: TimelineSegment[];
     selectedSegmentId: string | null;
@@ -36,6 +80,115 @@
     segments: TimelineSegment[];
     selectedSegmentId: string | null;
   }> = [];
+  let previewFallbackRunning = false;
+  let timelineZoom = 28;
+  let videoTrackHeight = 68;
+  let audioTrackHeight = 58;
+  let rangeStart: number | null = null;
+  let rangeEnd: number | null = null;
+  let currentWindowTitle = '';
+
+  onMount(() => {
+    void bootstrapApp();
+
+    const unlistenExport = listen<ExportProgress>('export_progress', (event) => {
+      exportProgressPercent =
+        typeof event.payload.percent === 'number' ? event.payload.percent : exportProgressPercent;
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: event.payload.stage === 'complete' ? 'success' : 'running',
+          message: event.payload.message,
+          outputPath: state.exportStatus.outputPath,
+          outputSize: state.exportStatus.outputSize,
+        },
+      }));
+    });
+
+    const unlistenWatch = listen<{ path: string }>('watch_folder_clip', (event) => {
+      void handleWatchFolderClip(event.payload.path);
+    });
+
+    return () => {
+      void unlistenExport.then((stop) => stop());
+      void unlistenWatch.then((stop) => stop());
+      const previewTempPath = get(editor).previewTempPath;
+      if (previewTempPath) {
+        void invoke('cleanup_preview', { path: previewTempPath });
+      }
+    };
+  });
+
+  async function bootstrapApp(): Promise<void> {
+    try {
+      const [settings, ffmpeg] = await Promise.all([
+        invoke<AppSettings>('get_settings'),
+        invoke<FfmpegCheckResult>('check_ffmpeg'),
+      ]);
+
+      watchFolder = settings.watchFolder;
+      watchFolderEnabled = settings.watchFolderEnabled;
+      ffmpegAvailable = ffmpeg.available;
+      ffmpegStatus = ffmpeg.message;
+
+      if (!ffmpeg.available) {
+        editor.update((state) => ({
+          ...state,
+          exportStatus: {
+            state: 'error',
+            message: ffmpeg.message,
+          },
+        }));
+      }
+    } catch (error) {
+      ffmpegStatus = error instanceof Error ? error.message : String(error);
+    }
+
+    if (!(await isPermissionGranted())) {
+      await requestPermission();
+    }
+  }
+
+  async function notify(message: string, title = 'Cutdown'): Promise<void> {
+    try {
+      if (await isPermissionGranted()) {
+        await sendNotification({ title, body: message });
+      }
+    } catch {
+      // Notifications are optional.
+    }
+  }
+
+  function hasUnsavedEdits(): boolean {
+    return segmentHistory.length > 0;
+  }
+
+  async function handleWatchFolderClip(path: string): Promise<void> {
+    if (hasUnsavedEdits()) {
+      const proceed = await confirm('Replace the current clip with the new watch-folder file?', {
+        title: 'Open new clip',
+        kind: 'warning',
+      });
+
+      if (!proceed) {
+        return;
+      }
+    }
+
+    await openClipPath(path);
+  }
+
+  async function cleanupPreview(path: string | null): Promise<void> {
+    if (!path) {
+      return;
+    }
+
+    try {
+      await invoke('cleanup_preview', { path });
+    } catch {
+      // Temporary preview cleanup is best-effort.
+    }
+  }
 
   $: metadata = $editor.metadata;
   $: duration = metadata?.duration ?? 0;
@@ -44,9 +197,30 @@
   $: outputDuration = totalSegmentDuration(segments);
   $: fileName = $editor.currentFile?.split(/[\\/]/).pop() ?? 'No file selected';
   $: canExport = Boolean($editor.currentFile && outputDuration > 0);
+  $: normalizedRange =
+    rangeStart !== null && rangeEnd !== null
+      ? {
+          start: Math.min(rangeStart, rangeEnd),
+          end: Math.max(rangeStart, rangeEnd),
+        }
+      : null;
+  $: rangeDuration = normalizedRange ? normalizedRange.end - normalizedRange.start : 0;
+  $: canUseRange = Boolean(normalizedRange && rangeDuration > 0.05);
+  $: updateWindowTitle(fileName);
 
   function cloneSegments(source: TimelineSegment[]): TimelineSegment[] {
     return source.map((segment) => ({ ...segment }));
+  }
+
+  function updateWindowTitle(name: string): void {
+    const nextTitle = `Cutdown - ${name}`;
+
+    if (nextTitle === currentWindowTitle) {
+      return;
+    }
+
+    currentWindowTitle = nextTitle;
+    void getCurrentWindow().setTitle(nextTitle);
   }
 
   function pushUndoSnapshot(): void {
@@ -127,12 +301,40 @@
       return;
     }
 
+    await openClipPath(selected);
+  }
+
+  async function openClipPath(selected: string): Promise<void> {
+    if (!ffmpegAvailable) {
+      const ffmpeg = await invoke<FfmpegCheckResult>('check_ffmpeg');
+      ffmpegAvailable = ffmpeg.available;
+      ffmpegStatus = ffmpeg.message;
+
+      if (!ffmpeg.available) {
+        editor.update((state) => ({
+          ...state,
+          exportStatus: {
+            state: 'error',
+            message: ffmpeg.message,
+          },
+        }));
+        return;
+      }
+    }
+
+    await cleanupPreview($editor.previewTempPath);
     segmentHistory = [];
     redoHistory = [];
+    rangeStart = null;
+    rangeEnd = null;
+    rangeLoopPlayback = false;
+    exportMode = 'sequence';
     editor.update((state) => ({
       ...state,
       currentFile: selected,
       videoSrc: convertFileSrc(selected),
+      previewTempPath: null,
+      previewStrategy: 'Native preview',
       metadata: null,
       currentTime: 0,
       segments: [],
@@ -145,6 +347,8 @@
 
     try {
       const probed = await invoke<VideoMetadata>('probe_video', { path: selected });
+      rangeStart = 0;
+      rangeEnd = probed.duration;
       editor.update((state) => ({
         ...state,
         metadata: probed,
@@ -152,7 +356,7 @@
         selectedSegmentId: null,
         exportStatus: {
           state: 'idle',
-          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
+          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
         },
       }));
     } catch (error) {
@@ -176,12 +380,11 @@
     editor.update((state) => ({ ...state, selectedSegmentId: id }));
   }
 
-  function splitAtCurrentTime(): void {
+  function splitAtTime(splitTime: number): void {
     if (!canExport) {
       return;
     }
 
-    const splitTime = $editor.currentTime;
     const targetSegment = $editor.segments.find(
       (segment) => splitTime > segment.sourceStart + 0.05 && splitTime < segment.sourceEnd - 0.05,
     );
@@ -220,6 +423,10 @@
     }));
   }
 
+  function splitAtCurrentTime(): void {
+    splitAtTime($editor.currentTime);
+  }
+
   function deleteSelectedSegment(): void {
     if (!$editor.selectedSegmentId) {
       return;
@@ -248,58 +455,140 @@
     }));
   }
 
-  function reorderSegment(id: string, targetIndex: number): void {
-    const currentIndex = $editor.segments.findIndex((segment) => segment.id === id);
-
-    if (currentIndex < 0 || currentIndex === targetIndex) {
+  function splitAtRangeMarkers(): void {
+    if (!canUseRange || !normalizedRange) {
       return;
     }
 
     pushUndoSnapshot();
+    splitAtTime(normalizedRange.start);
+    splitAtTime(normalizedRange.end);
+  }
+
+  function keepOnlyRange(): void {
+    if (!canUseRange || !normalizedRange) {
+      return;
+    }
+
+    pushUndoSnapshot();
+    editor.update((state) => ({
+      ...state,
+      segments: [
+        {
+          id: crypto.randomUUID(),
+          sourceStart: normalizedRange.start,
+          sourceEnd: normalizedRange.end,
+        },
+      ],
+      selectedSegmentId: null,
+      exportStatus: {
+        state: 'idle',
+        message: `Kept range ${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}.`,
+      },
+    }));
+  }
+
+  function deleteOutsideRange(): void {
+    if (!canUseRange || !normalizedRange) {
+      return;
+    }
+
+    const { start, end } = normalizedRange;
+    pushUndoSnapshot();
     editor.update((state) => {
-      const nextSegments = cloneSegments(state.segments);
-      const [movedSegment] = nextSegments.splice(currentIndex, 1);
-      nextSegments.splice(targetIndex, 0, movedSegment);
+      const trimmedSegments = state.segments.flatMap((segment) => {
+        const overlapStart = Math.max(segment.sourceStart, start);
+        const overlapEnd = Math.min(segment.sourceEnd, end);
+
+        if (overlapEnd <= overlapStart + 0.05) {
+          return [];
+        }
+
+        return [
+          {
+            ...segment,
+            sourceStart: overlapStart,
+            sourceEnd: overlapEnd,
+          },
+        ];
+      });
 
       return {
         ...state,
-        segments: nextSegments,
-        selectedSegmentId: id,
+        segments:
+          trimmedSegments.length > 0
+            ? trimmedSegments
+            : [
+                {
+                  id: crypto.randomUUID(),
+                  sourceStart: start,
+                  sourceEnd: end,
+                },
+              ],
+        selectedSegmentId: null,
         exportStatus: {
           state: 'idle',
-          message: 'Reordered segment.',
+          message: 'Removed footage outside the I/O range.',
         },
       };
     });
   }
 
-  function jumpSegment(direction: -1 | 1): void {
-    if (segments.length === 0) {
+  function toggleRangeLoop(): void {
+    if (!canUseRange) {
       return;
     }
 
-    const boundaries = segments.flatMap((segment) => [segment.sourceStart, segment.sourceEnd]).sort((a, b) => a - b);
-    const nextBoundary =
-      direction > 0
-        ? boundaries.find((boundary) => boundary > $editor.currentTime + 0.05)
-        : [...boundaries].reverse().find((boundary) => boundary < $editor.currentTime - 0.05);
+    rangeLoopPlayback = !rangeLoopPlayback;
 
-    if (nextBoundary !== undefined) {
-      seekTo(nextBoundary);
+    if (rangeLoopPlayback && normalizedRange) {
+      seekTo(normalizedRange.start);
     }
   }
 
-  function previewSelectedSegment(): void {
-    if (selectedSegment) {
-      seekTo(selectedSegment.sourceStart);
-    } else if (segments[0]) {
-      seekTo(segments[0].sourceStart);
+  function zoomToRange(): void {
+    if (!canUseRange || !normalizedRange) {
+      return;
     }
+
+    timeline?.zoomToSourceRange(normalizedRange.start, normalizedRange.end);
+  }
+
+  function setRangeMarker(marker: 'start' | 'end', seconds: number): void {
+    const nextTime = clamp(seconds, 0, duration);
+
+    if (marker === 'start') {
+      rangeStart = nextTime;
+      rangeEnd = rangeEnd ?? duration;
+    } else {
+      rangeStart = rangeStart ?? 0;
+      rangeEnd = nextTime;
+    }
+  }
+
+  function clearRange(): void {
+    rangeStart = null;
+    rangeEnd = null;
+  }
+
+  function updateTrackHeights(event: CustomEvent<{ videoHeight: number; audioHeight: number }>): void {
+    videoTrackHeight = event.detail.videoHeight;
+    audioTrackHeight = event.detail.audioHeight;
+  }
+
+  function zoomToFit(): void {
+    timelineZoom = 0;
   }
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
-    if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') {
+    const isTextInput =
+      target?.tagName === 'TEXTAREA' ||
+      target?.isContentEditable ||
+      (target instanceof HTMLInputElement &&
+        !['button', 'checkbox', 'radio', 'range'].includes(target.type));
+
+    if (isTextInput) {
       return;
     }
 
@@ -323,6 +612,16 @@
       return;
     }
 
+    if (event.key.toLowerCase() === 'i') {
+      setRangeMarker('start', $editor.currentTime);
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'o') {
+      setRangeMarker('end', $editor.currentTime);
+      return;
+    }
+
     if (event.code === 'Space') {
       event.preventDefault();
       preview?.togglePlayback();
@@ -339,18 +638,20 @@
       return;
     }
 
-    if (event.key === '[') {
-      jumpSegment(-1);
+    if (event.key.toLowerCase() === 'l' && canUseRange) {
+      toggleRangeLoop();
       return;
     }
 
-    if (event.key === ']') {
-      jumpSegment(1);
+    if (!event.ctrlKey && event.key.toLowerCase() === 'z' && canUseRange) {
+      event.preventDefault();
+      zoomToRange();
       return;
     }
 
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
+
       const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
       const step = event.shiftKey ? 5 : frameStep;
       seekTo($editor.currentTime + (event.key === 'ArrowRight' ? step : -step));
@@ -366,13 +667,21 @@
   }
 
   async function chooseOutput(): Promise<void> {
+    const settings = await invoke<AppSettings>('get_settings');
+    const defaultName = defaultOutputPath().split(/[\\/]/).pop() ?? 'cutdown.mp4';
+    const defaultDir = settings.lastExportDir ?? $editor.currentFile?.replace(/[\\/][^\\/]+$/, '') ?? undefined;
+
     const selected = await save({
-      defaultPath: outputPath || defaultOutputPath(),
+      defaultPath: outputPath || (defaultDir ? `${defaultDir}\\${defaultName}` : defaultOutputPath()),
       filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
     });
 
     if (selected) {
       outputPath = selected;
+      const parent = selected.replace(/[\\/][^\\/]+$/, '');
+      if (parent) {
+        await invoke('set_last_export_dir', { path: parent });
+      }
     }
   }
 
@@ -386,11 +695,54 @@
       return;
     }
 
+    if (!ffmpegAvailable) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: ffmpegStatus || 'ffmpeg is not available.',
+        },
+      }));
+      return;
+    }
+
+    try {
+      const exists = await invoke<boolean>('path_exists', { path: outputPath }).catch(() => false);
+      if (exists) {
+        const overwrite = await confirm(`Replace existing file?\n${outputPath}`, {
+          title: 'Overwrite output',
+          kind: 'warning',
+        });
+
+        if (!overwrite) {
+          return;
+        }
+      }
+    } catch {
+      // Overwrite confirmation is best-effort when the helper is unavailable.
+    }
+
+    const exportSegments =
+      exportMode === 'range' && canUseRange && normalizedRange
+        ? [{ start: normalizedRange.start, end: normalizedRange.end }]
+        : segments.map((segment) => ({
+            start: segment.sourceStart,
+            end: segment.sourceEnd,
+          }));
+
+    if (exportSegments.length === 0) {
+      return;
+    }
+
+    exportProgressPercent = 0;
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
-        message: 'Running lossless ffmpeg trim...',
+        message:
+          exportMode === 'range'
+            ? 'Exporting I/O range with lossless ffmpeg trim...'
+            : 'Running lossless ffmpeg trim...',
       },
     }));
 
@@ -399,14 +751,18 @@
         params: {
           inputPath: $editor.currentFile,
           outputPath,
-          segments: segments.map((segment) => ({
-            start: segment.sourceStart,
-            end: segment.sourceEnd,
-          })),
+          audioMode: 'preserve',
+          segments: exportSegments,
         },
       });
 
       exportModalOpen = false;
+      exportProgressPercent = 100;
+      const parent = result.outputPath.replace(/[\\/][^\\/]+$/, '');
+      if (parent) {
+        await invoke('set_last_export_dir', { path: parent });
+      }
+
       editor.update((state) => ({
         ...state,
         exportStatus: {
@@ -416,10 +772,100 @@
           outputSize: result.fileSize,
         },
       }));
+      await notify(`Exported ${formatBytes(result.fileSize)} clip.`, 'Export complete');
+    } catch (error) {
+      exportProgressPercent = null;
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
+  }
+
+  async function handlePreviewError(message: string): Promise<void> {
+    if (!$editor.currentFile || previewFallbackRunning) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message,
+        },
+      }));
+      return;
+    }
+
+    if ($editor.previewStrategy === 'Preview proxy') {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: 'The generated preview proxy could not be played.',
+        },
+      }));
+      return;
+    }
+
+    previewFallbackRunning = true;
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'running',
+        message: $editor.previewStrategy === 'Preview remux' ? 'Generating preview proxy...' : 'Trying preview remux...',
+      },
+    }));
+
+    try {
+      const previousPreview = $editor.previewTempPath;
+      const result = await invoke<PreviewResult>('prepare_preview', {
+        params: {
+          inputPath: $editor.currentFile,
+          forceProxy: $editor.previewStrategy === 'Preview remux',
+        },
+      });
+
+      await cleanupPreview(previousPreview);
+      editor.update((state) => ({
+        ...state,
+        videoSrc: convertFileSrc(result.previewPath),
+        previewTempPath: result.previewPath,
+        previewStrategy: result.strategy,
+        currentTime: 0,
+        exportStatus: {
+          state: 'idle',
+          message: `${result.strategy} ready. Export will still use the original file.`,
+        },
+      }));
+      preview?.seekTo(0);
     } catch (error) {
       editor.update((state) => ({
         ...state,
         exportStatus: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      previewFallbackRunning = false;
+    }
+  }
+
+  async function revealExport(): Promise<void> {
+    const path = $editor.exportStatus.outputPath;
+
+    if (!path) {
+      return;
+    }
+
+    try {
+      await invoke('reveal_in_explorer', { path });
+    } catch (error) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          ...state.exportStatus,
           state: 'error',
           message: error instanceof Error ? error.message : String(error),
         },
@@ -431,45 +877,65 @@
 <svelte:window on:keydown={handleKeydown} />
 
 <main class="shell">
-  <header class="top-bar">
-    <div>
-      <p class="eyebrow">Cutdown MVP</p>
-      <h1>{fileName}</h1>
-    </div>
-    <div class="top-bar__actions">
-      <button type="button" class="secondary" on:click={chooseClip}>Open Clip</button>
-      <button type="button" disabled={!canExport} on:click={openExportModal}>Export</button>
-    </div>
-  </header>
+  <section class="toolbar" aria-label="Editor toolbar">
+    <button type="button" class="tool-button" on:click={chooseClip}>Open</button>
+    <button type="button" class="tool-button" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit}>Undo</button>
+    <button type="button" class="tool-button" disabled={redoHistory.length === 0} on:click={redoSegmentEdit}>Redo</button>
+    <button type="button" class="tool-button" disabled={!canExport} on:click={splitAtCurrentTime}>Split</button>
+    <button type="button" class="tool-button" disabled={!$editor.currentFile} on:click={zoomToFit}>Fit</button>
+    <div class="toolbar__spacer"></div>
+    <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
+    <button type="button" class="tool-button" on:click={() => (settingsModalOpen = true)}>Settings</button>
+    <button type="button" class="tool-button" disabled={!canExport} on:click={openExportModal}>Export</button>
+  </section>
 
-  <VideoPreview
-    bind:this={preview}
-    src={$editor.videoSrc}
-    currentTime={$editor.currentTime}
-    on:metadata={() => {}}
-    on:error={(event) => {
-      editor.update((state) => ({
-        ...state,
-        exportStatus: {
-          state: 'error',
-          message: event.detail.message,
-        },
-      }));
-    }}
-    on:timeupdate={(event) => {
-      editor.update((state) => ({ ...state, currentTime: event.detail.currentTime }));
-    }}
-  />
+  <section class="preview-panel">
+    <VideoPreview
+      bind:this={preview}
+      src={$editor.videoSrc}
+      currentTime={$editor.currentTime}
+      loopEnabled={rangeLoopPlayback}
+      loopStart={normalizedRange?.start ?? null}
+      loopEnd={normalizedRange?.end ?? null}
+      on:metadata={() => {}}
+      on:error={(event) => void handlePreviewError(event.detail.message)}
+      on:timeupdate={(event) => {
+        editor.update((state) => ({ ...state, currentTime: event.detail.currentTime }));
+      }}
+    />
+  </section>
 
   <Timeline
+    bind:this={timeline}
     disabled={!$editor.currentFile}
     {duration}
     currentTime={$editor.currentTime}
     {segments}
     selectedSegmentId={$editor.selectedSegmentId}
+    rangeStart={normalizedRange?.start ?? null}
+    rangeEnd={normalizedRange?.end ?? null}
+    zoom={timelineZoom}
+    videoTrackHeight={videoTrackHeight}
+    audioTrackHeight={audioTrackHeight}
+    audioCodec={metadata?.audioCodec ?? null}
+    audioChannels={metadata?.audioChannels ?? null}
     on:seek={(event) => seekTo(event.detail.seconds)}
     on:selectSegment={(event) => selectSegment(event.detail.id)}
-    on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.targetIndex)}
+    on:rangeChange={(event) => {
+      rangeStart = event.detail.start;
+      rangeEnd = event.detail.end;
+    }}
+    on:zoomChange={(event) => (timelineZoom = event.detail.zoom)}
+    on:trackHeightChange={updateTrackHeights}
+    on:splitAt={(event) => splitAtTime(event.detail.seconds)}
+    on:deleteSelected={deleteSelectedSegment}
+    on:zoomFit={zoomToFit}
+    on:zoomRange={zoomToRange}
+    on:clearRange={clearRange}
+    on:splitRange={splitAtRangeMarkers}
+    on:keepRange={keepOnlyRange}
+    on:trimOutsideRange={deleteOutsideRange}
+    on:toggleRangeLoop={toggleRangeLoop}
   />
 
   <section class="transport-bar" aria-label="Editor controls">
@@ -481,32 +947,33 @@
       {/if}
     </div>
     <div>
-      <span>Output</span>
-      <strong>{formatTime(outputDuration)}</strong>
+      <span>Range</span>
+      <strong>{normalizedRange ? formatTime(rangeDuration) : 'None'}</strong>
+      {#if normalizedRange}
+        <small>{formatTime(normalizedRange.start)} - {formatTime(normalizedRange.end)}</small>
+      {/if}
     </div>
     <div>
-      <span>Segments</span>
-      <strong>{segments.length}</strong>
+      <span>Output</span>
+      <strong>{formatTime(outputDuration)}</strong>
+      <small>{segments.length} segment{segments.length === 1 ? '' : 's'}</small>
     </div>
     <div class="transport-bar__actions">
-      <button type="button" class="secondary" disabled={!canExport} on:click={() => jumpSegment(-1)}>[ Prev</button>
-      <button type="button" class="secondary" disabled={!canExport} on:click={() => jumpSegment(1)}>Next ]</button>
-      <button type="button" class="secondary" disabled={!canExport} on:click={splitAtCurrentTime}>Split</button>
-      <button type="button" class="secondary" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>
-        Delete Segment
+      <button type="button" class="secondary" disabled={!canUseRange} on:click={splitAtRangeMarkers}>Split I/O</button>
+      <button type="button" class="secondary" disabled={!canUseRange} on:click={keepOnlyRange}>Keep range</button>
+      <button type="button" class="secondary" disabled={!canUseRange} on:click={deleteOutsideRange}>Trim outside</button>
+      <button type="button" class="secondary" disabled={!canUseRange} on:click={zoomToRange}>Zoom range</button>
+      <button
+        type="button"
+        class="secondary"
+        class:active={rangeLoopPlayback}
+        disabled={!canUseRange}
+        on:click={toggleRangeLoop}
+      >
+        {rangeLoopPlayback ? 'Loop on' : 'Loop range'}
       </button>
-      <button type="button" class="secondary" disabled={!canExport} on:click={previewSelectedSegment}>Preview Segment</button>
+      <button type="button" class="secondary" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>Delete</button>
     </div>
-  </section>
-
-  <section class="shortcut-bar" aria-label="Keyboard shortcuts">
-    <span><kbd>S</kbd> Split</span>
-    <span><kbd>Delete</kbd> Remove segment</span>
-    <span><kbd>Ctrl</kbd> + <kbd>Z</kbd> Undo</span>
-    <span><kbd>Ctrl</kbd> + <kbd>Y</kbd> Redo</span>
-    <span><kbd>[</kbd> / <kbd>]</kbd> Boundaries</span>
-    <span>Drag top ruler to scrub</span>
-    <span>Drag clips to reorder</span>
   </section>
 
   <footer class="bottom-bar">
@@ -515,12 +982,28 @@
         <span>{metadata.width}x{metadata.height}</span>
         <span>{metadata.fps.toFixed(2)} fps</span>
         <span>{metadata.codec}</span>
+        <span>{metadata.audioCodec ? `${metadata.audioCodec}${metadata.audioChannels ? ` ${metadata.audioChannels}ch` : ''}` : 'no audio'}</span>
+        <span>{$editor.previewStrategy}</span>
         <span>{formatBytes(metadata.fileSize)}</span>
       {:else}
-        <span>Lossless trim preset ready</span>
+        <span>Open a clip to start cutting</span>
+      {/if}
+      <span><kbd>S</kbd> split</span>
+      <span><kbd>I</kbd>/<kbd>O</kbd> range</span>
+      <span><kbd>L</kbd> loop</span>
+      <span><kbd>Z</kbd> zoom range</span>
+      <span><kbd>Ctrl</kbd>+wheel zoom</span>
+    </div>
+    <div class="bottom-bar__status">
+      <ProgressBar
+        active={$editor.exportStatus.state === 'running'}
+        label={$editor.exportStatus.message}
+        percent={exportProgressPercent}
+      />
+      {#if $editor.exportStatus.outputPath}
+        <button type="button" class="secondary" on:click={revealExport}>Open Folder</button>
       {/if}
     </div>
-    <ProgressBar active={$editor.exportStatus.state === 'running'} label={$editor.exportStatus.message} />
   </footer>
 </main>
 
@@ -529,7 +1012,23 @@
   {outputPath}
   segmentCount={segments.length}
   duration={outputDuration}
+  {rangeDuration}
+  canExportRange={canUseRange}
+  {exportMode}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
+  on:exportModeChange={(event) => (exportMode = event.detail.mode)}
   on:confirm={exportClip}
+/>
+
+<SettingsModal
+  visible={settingsModalOpen}
+  {watchFolder}
+  {watchFolderEnabled}
+  {ffmpegStatus}
+  on:close={() => (settingsModalOpen = false)}
+  on:saved={(event) => {
+    watchFolder = event.detail.watchFolder;
+    watchFolderEnabled = event.detail.watchFolderEnabled;
+  }}
 />

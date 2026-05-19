@@ -4,14 +4,23 @@
 
   export let src: string | null = null;
   export let currentTime = 0;
+  export let loopEnabled = false;
+  export let loopStart: number | null = null;
+  export let loopEnd: number | null = null;
 
   let video: HTMLVideoElement;
   let loadError = '';
+  let previousSrc: string | null = null;
   const dispatch = createEventDispatcher<{
     timeupdate: { currentTime: number };
     metadata: { duration: number };
     error: { message: string };
   }>();
+
+  $: if (src !== previousSrc) {
+    previousSrc = src;
+    loadError = '';
+  }
 
   export function seekTo(seconds: number): void {
     if (!video) {
@@ -40,6 +49,16 @@
   }
 
   function handleTimeUpdate(): void {
+    if (
+      loopEnabled &&
+      loopStart !== null &&
+      loopEnd !== null &&
+      loopEnd > loopStart + 0.05 &&
+      video.currentTime >= loopEnd - 0.02
+    ) {
+      video.currentTime = loopStart;
+    }
+
     dispatch('timeupdate', { currentTime: video.currentTime });
   }
 

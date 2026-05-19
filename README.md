@@ -6,15 +6,39 @@ The project uses Tauri v2, Svelte, TypeScript, Rust, plain CSS, and ffmpeg as th
 
 ## Current MVP
 
-The first milestone is a working local editor and lossless export baseline:
+The current milestone is a working local multi-cut editor and lossless export baseline:
 
-- Open a local video file from the editor.
+- Open a local video file from the editor (or from watch-folder notifications).
 - Probe clip metadata through `ffprobe`.
-- Preview video with an HTML `video` element.
-- Set in/out trim points with timeline handles.
-- Use keyboard shortcuts for `I`, `O`, `Space`, frame stepping, and 5-second stepping.
-- Export a lossless stream-copy trim through `ffmpeg`.
+- Preview video with an HTML `video` element (native, remux, or proxy fallback).
+- Split the clip into multiple kept segments.
+- Select/delete unwanted segments.
+- Set an I/O range on the source timeline and use it for editing and export.
+- Undo/redo segment edits.
+- Export kept segments as a concatenated sequence, or export the I/O range as a single trim.
+- Watch an OBS replay folder and get a toast when a new clip appears.
 - Use a Windows tray menu for `Open Editor` and `Quit`.
+
+Current shortcuts:
+
+- `S`: split at playhead.
+- `I` / `O`: set range in/out points.
+- `Delete` / `Backspace`: delete selected segment.
+- `Ctrl+Z`: undo segment edit.
+- `Ctrl+Y` / `Ctrl+Shift+Z`: redo segment edit.
+- `L`: toggle preview loop inside the I/O range.
+- `Z`: zoom timeline to the I/O range.
+- `Space`: play/pause.
+- `Left` / `Right`: step by frame.
+- `Shift+Left` / `Shift+Right`: step by 5 seconds.
+
+Range actions are also available from the transport bar, timeline context menu, and export modal (sequence vs I/O range).
+
+Known limitations:
+
+- Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
+- Audio is preserved by default during stream-copy export, but there is no audio editing yet.
+- Preview support is currently limited by WebView2/HTML video decoding. ffmpeg may support files that the preview cannot play until proxy/remux preview support is added.
 
 ## Requirements
 
@@ -25,11 +49,19 @@ The first milestone is a working local editor and lossless export baseline:
 - Visual Studio Build Tools with C++ workload.
 - ffmpeg and ffprobe.
 
-For development, ffmpeg can be available on `PATH`. For release packaging, static Windows `ffmpeg.exe` and `ffprobe.exe` should be bundled in:
+For development, ffmpeg can be available on `PATH`. For release packaging, static Windows `ffmpeg.exe` and `ffprobe.exe` are packaged from:
 
 ```text
 public/ffmpeg/
 ```
+
+Populate that folder from the locally installed ffmpeg build:
+
+```powershell
+npm run prepare:ffmpeg
+```
+
+The app checks ffmpeg availability on startup (see **Settings** in the toolbar). If bundled binaries are missing, install ffmpeg on PATH or run `npm run prepare:ffmpeg` before building.
 
 ## Development
 
@@ -55,86 +87,57 @@ npm run tauri dev
 Build the app and installer:
 
 ```powershell
+npm run prepare:ffmpeg
 npm run tauri -- build
 ```
 
+## Runtime testing
+
+See [docs/TESTING.md](docs/TESTING.md) for the manual validation matrix (probe, preview, edit, export, watch folder).
+
+## Watch folder (OBS replay buffer)
+
+1. Open **Settings** in the toolbar.
+2. Choose your OBS replay buffer output folder.
+3. Enable watch-folder notifications and save.
+4. When a new video file appears, Cutdown shows a Windows toast and can open the clip in the editor.
+
 ## Roadmap
 
-### Milestone 1: MVP Editor
+### Milestone 1: Multi-Cut MVP Editor
 
-Status: in progress.
-
-- Tauri v2 + Svelte + TypeScript scaffold.
-- Tray menu and editor window management.
-- Editor screen with video preview, timeline, trim controls, and export modal.
-- Rust commands for `probe_video`, `export_clip`, and placeholder GPU detection.
-- Lossless stream-copy export with ffmpeg.
-- Basic Windows icon and NSIS build path.
+Status: complete.
 
 ### Milestone 2: ffmpeg Bundling and Export Hardening
 
+Status: mostly complete.
+
 - Bundle static Windows x64 `ffmpeg.exe` and `ffprobe.exe`.
-- Add clear missing-binary errors and setup diagnostics.
-- Parse ffmpeg stderr for progress events and ETA.
+- `check_ffmpeg` diagnostics and setup guidance.
+- Parse ffmpeg stderr for progress events (percent).
 - Emit `export_progress` events to the frontend.
-- Add open-in-explorer and success notification actions.
-- Add safer output naming and overwrite handling.
-- Add runtime tests with sample mp4, mkv, and mov clips.
+- Open-in-explorer, success notification, overwrite confirm, last export folder.
+- Preview remux/proxy when native WebView2 playback fails.
 
-### Milestone 3: Presets and Compression
+### Milestone 3: Reliable Preview
 
-- Implement built-in presets: Discord, Lossless Trim, Archive, and Twitter/X.
-- Persist presets to `%APPDATA%/Cutdown/presets.json`.
-- Detect available GPU encoders: `h264_nvenc`, `h264_amf`, and `h264_qsv`.
-- Prefer GPU encoding when available, with fallback to `libx264`.
-- Implement target-size encoding for Discord-style 10MB exports.
-- Add two-pass bitrate calculation and retry handling for oversized output.
+Status: first implementation complete.
 
-### Milestone 4: Crop
+### Milestone 4: Presets and Compression
 
-- Add crop mode to the video preview.
-- Support draggable and resizable crop selection.
-- Snap near common aspect ratios: 16:9, 9:16, 4:3, and 1:1.
-- Pass crop settings to ffmpeg as a `crop=w:h:x:y` filter.
-- Automatically re-encode when crop is enabled.
+Status: not started.
 
-### Milestone 5: Watch Folder Workflow
+### Milestone 5: Crop
 
-- Add settings for the OBS replay buffer watch folder.
-- Use Rust `notify` to monitor new video files.
-- Show Windows toast notifications for new clips.
-- Open the editor with the selected clip from a notification.
-- Keep tray behavior fast and quiet on startup.
+Status: not started.
 
-### Milestone 6: Upload and Sharing
+### Milestone 6: Watch Folder Workflow
 
-- Add upload host adapter modules.
-- Implement Catbox.moe anonymous upload first.
-- Add Streamable with credentials stored through the OS keychain.
-- Investigate FileGarden API support and either implement or document as TODO.
-- Add upload selection to export flow and copy-link success actions.
+Status: MVP complete.
 
-### Milestone 7: Clip History
+### Milestone 7–10
 
-- Store the last 20 exported clips in `%APPDATA%/Cutdown/history.json`.
-- Generate and persist thumbnails at export time.
-- Add a collapsible history drawer.
-- Support reopen-in-editor and copy-share-link actions.
-
-### Milestone 8: Settings and Windows Integration
-
-- Add minimal settings for watch folder, export folder, default preset, upload host, startup behavior, GPU override, notifications, and upload credentials.
-- Add run-on-startup support through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
-- Register Windows Open With support for `.mp4`, `.mkv`, `.mov`, `.avi`, `.webm`, `.ts`, and `.flv`.
-- Document registry keys for manual add/remove.
-
-### Milestone 9: Performance Audit
-
-- Measure cold launch to tray icon.
-- Measure editor open latency from tray, notification, and Open With entry.
-- Measure preview readiness for large clips.
-- Profile thumbnail generation and ensure it remains async.
-- Measure idle RAM and final app binary size.
+Upload/sharing, clip history, full Windows integration, and performance audit remain planned. See [PROGRESS.md](PROGRESS.md).
 
 ## Project Structure
 
@@ -143,12 +146,16 @@ src-tauri/
   src/
     main.rs
     ffmpeg.rs
+    settings.rs
+    watch_folder.rs
     encoder_detect.rs
 src/
   App.svelte
   components/
   stores/
   lib/
+docs/
+  TESTING.md
 public/
   ffmpeg/
 ```

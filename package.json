@@ -8,11 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
+    "prepare:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
     "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
+    "@tauri-apps/plugin-notification": "^2.0.0",
     "svelte": "^4.2.19"
   },
   "devDependencies": {

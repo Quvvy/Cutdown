@@ -32,6 +32,7 @@
   "bundle": {
     "active": true,
     "targets": "nsis",
+    "resources": ["../public/ffmpeg/*"],
     "windows": {
       "nsis": {
         "displayLanguageSelector": false

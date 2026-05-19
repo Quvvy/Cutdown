@@ -8,33 +8,122 @@
   export let segments: TimelineSegment[] = [];
   export let selectedSegmentId: string | null = null;
   export let disabled = true;
+  export let rangeStart: number | null = null;
+  export let rangeEnd: number | null = null;
+  export let zoom = 28;
+  export let videoTrackHeight = 68;
+  export let audioTrackHeight = 58;
+  export let audioCodec: string | null = null;
+  export let audioChannels: number | null = null;
 
-  let track: HTMLDivElement;
-  let scrubber: HTMLDivElement;
+  let scrollArea: HTMLDivElement;
+  let videoScroll: HTMLDivElement;
+  let audioScroll: HTMLDivElement;
+  let ruler: HTMLDivElement;
   let activeSeek = false;
-  let dragSegmentId: string | null = null;
-  let dragStartX = 0;
-  let isReordering = false;
+  let activeMarker: 'start' | 'end' | null = null;
+  let activeResize = false;
+  let resizeStartY = 0;
+  let resizeStartVideoHeight = 0;
+  let resizeStartAudioHeight = 0;
+  let contextMenu:
+    | {
+        x: number;
+        y: number;
+        seconds: number;
+      }
+    | null = null;
+
+  type SegmentLayout = {
+    segment: TimelineSegment;
+    left: number;
+    width: number;
+  };
 
   const dispatch = createEventDispatcher<{
     seek: { seconds: number };
     selectSegment: { id: string };
-    reorderSegment: { id: string; targetIndex: number };
+    rangeChange: { start: number; end: number };
+    zoomChange: { zoom: number };
+    trackHeightChange: { videoHeight: number; audioHeight: number };
+    splitAt: { seconds: number };
+    deleteSelected: void;
+    zoomFit: void;
+    zoomRange: void;
+    clearRange: void;
+    splitRange: void;
+    keepRange: void;
+    trimOutsideRange: void;
+    toggleRangeLoop: void;
   }>();
 
-  $: safeDuration = Math.max(duration, 0);
-  $: outputDuration = segments.reduce((total, segment) => total + Math.max(0, segment.sourceEnd - segment.sourceStart), 0);
-  $: playheadPercent = outputDuration > 0 ? (sourceToSequenceTime(currentTime) / outputDuration) * 100 : 0;
-  $: ticks = Array.from({ length: 6 }, (_, index) => ({
-    id: index,
-    seconds: outputDuration * (index / 5),
-    percent: index * 20,
-  }));
+  export function zoomToSourceRange(start: number, end: number): void {
+    if (disabled || outputDuration <= 0) {
+      return;
+    }
 
-  function sequenceSecondsFromPointer(event: PointerEvent): number {
-    const rect = scrubber.getBoundingClientRect();
-    const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    return ratio * outputDuration;
+    const seqStart = sourceToSequenceTime(start);
+    const seqEnd = sourceToSequenceTime(end);
+    const rangeSeconds = Math.max(0.05, seqEnd - seqStart);
+    const viewport = scrollArea?.clientWidth ?? 640;
+    const nextZoom = clamp((viewport / rangeSeconds - 1.5) / 0.42, 0, 100);
+
+    dispatch('zoomChange', { zoom: nextZoom });
+
+    if (scrollArea) {
+      scrollArea.scrollLeft = Math.max(0, seqStart * (1.5 + nextZoom * 0.42) - 24);
+    }
+  }
+
+  $: outputDuration = segments.reduce((total, segment) => total + Math.max(0, segment.sourceEnd - segment.sourceStart), 0);
+  $: pixelsPerSecond = 1.5 + zoom * 0.42;
+  $: timelineWidth = Math.max(640, outputDuration * pixelsPerSecond);
+  $: playheadLeft = sourceToSequenceTime(currentTime) * pixelsPerSecond;
+  $: normalizedRange =
+    rangeStart !== null && rangeEnd !== null
+      ? {
+          start: Math.min(rangeStart, rangeEnd),
+          end: Math.max(rangeStart, rangeEnd),
+        }
+      : null;
+  $: rangeSequenceStart = normalizedRange ? sourceToSequenceTime(normalizedRange.start) : 0;
+  $: rangeSequenceEnd = normalizedRange ? sourceToSequenceTime(normalizedRange.end) : 0;
+  $: rangeLeft = rangeSequenceStart * pixelsPerSecond;
+  $: rangeWidth = Math.max(0, (rangeSequenceEnd - rangeSequenceStart) * pixelsPerSecond);
+  $: segmentLayouts = buildSegmentLayouts(segments, pixelsPerSecond);
+  $: ticks = buildTicks(outputDuration, pixelsPerSecond);
+  $: audioLabel = audioCodec ? `${audioCodec}${audioChannels ? ` ${audioChannels}ch` : ''}` : 'no audio';
+
+  function buildTicks(totalSeconds: number, pxPerSecond: number): Array<{ id: number; seconds: number; left: number; major: boolean }> {
+    if (totalSeconds <= 0) {
+      return [];
+    }
+
+    const targetSpacing = 90;
+    const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    const step = candidates.find((candidate) => candidate * pxPerSecond >= targetSpacing) ?? candidates[candidates.length - 1];
+    const ticks = [];
+
+    for (let seconds = 0; seconds <= totalSeconds + 0.001; seconds += step) {
+      ticks.push({
+        id: ticks.length,
+        seconds,
+        left: seconds * pxPerSecond,
+        major: ticks.length % 2 === 0,
+      });
+    }
+
+    return ticks;
+  }
+
+  function xToSequenceSeconds(clientX: number): number {
+    const rect = scrollArea.getBoundingClientRect();
+    const localX = clientX - rect.left + scrollArea.scrollLeft;
+    return clamp(localX / pixelsPerSecond, 0, outputDuration);
+  }
+
+  function sequenceToX(sequenceTime: number): number {
+    return clamp(sequenceTime, 0, outputDuration) * pixelsPerSecond;
   }
 
   function sequenceToSourceTime(sequenceTime: number): number {
@@ -55,6 +144,8 @@
 
   function sourceToSequenceTime(sourceTime: number): number {
     let cursor = 0;
+    let nearestSequenceTime = 0;
+    let nearestDistance = Number.POSITIVE_INFINITY;
 
     for (const segment of segments) {
       const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
@@ -63,12 +154,22 @@
         return cursor + clamp(sourceTime - segment.sourceStart, 0, segmentLength);
       }
 
-      if (sourceTime > segment.sourceEnd) {
-        cursor += segmentLength;
+      const startDistance = Math.abs(sourceTime - segment.sourceStart);
+      if (startDistance < nearestDistance) {
+        nearestDistance = startDistance;
+        nearestSequenceTime = cursor;
       }
+
+      const endDistance = Math.abs(sourceTime - segment.sourceEnd);
+      if (endDistance < nearestDistance) {
+        nearestDistance = endDistance;
+        nearestSequenceTime = cursor + segmentLength;
+      }
+
+      cursor += segmentLength;
     }
 
-    return clamp(cursor, 0, outputDuration);
+    return clamp(nearestSequenceTime, 0, outputDuration);
   }
 
   function updateSeek(event: PointerEvent): void {
@@ -76,7 +177,7 @@
       return;
     }
 
-    dispatch('seek', { seconds: sequenceToSourceTime(clamp(sequenceSecondsFromPointer(event), 0, outputDuration)) });
+    dispatch('seek', { seconds: sequenceToSourceTime(xToSequenceSeconds(event.clientX)) });
   }
 
   function startSeek(event: PointerEvent): void {
@@ -85,17 +186,131 @@
     }
 
     event.preventDefault();
+    closeContextMenu();
     activeSeek = true;
-    scrubber.setPointerCapture(event.pointerId);
+    ruler.setPointerCapture(event.pointerId);
     updateSeek(event);
   }
 
   function stopSeek(event: PointerEvent): void {
-    if (scrubber?.hasPointerCapture(event.pointerId)) {
-      scrubber.releasePointerCapture(event.pointerId);
+    if (ruler?.hasPointerCapture(event.pointerId)) {
+      ruler.releasePointerCapture(event.pointerId);
     }
 
     activeSeek = false;
+  }
+
+  function startMarkerDrag(marker: 'start' | 'end', event: PointerEvent): void {
+    if (disabled || outputDuration <= 0 || !normalizedRange) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    activeMarker = marker;
+    ruler.setPointerCapture(event.pointerId);
+    updateMarker(event);
+  }
+
+  function updateMarker(event: PointerEvent): void {
+    if (!activeMarker || !normalizedRange) {
+      return;
+    }
+
+    const sourceTime = sequenceToSourceTime(xToSequenceSeconds(event.clientX));
+    const nextStart = activeMarker === 'start' ? sourceTime : normalizedRange.start;
+    const nextEnd = activeMarker === 'end' ? sourceTime : normalizedRange.end;
+    dispatch('rangeChange', {
+      start: clamp(nextStart, 0, duration),
+      end: clamp(nextEnd, 0, duration),
+    });
+  }
+
+  function stopMarkerDrag(event: PointerEvent): void {
+    if (ruler?.hasPointerCapture(event.pointerId)) {
+      ruler.releasePointerCapture(event.pointerId);
+    }
+
+    activeMarker = null;
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    updateSeek(event);
+    updateMarker(event);
+    updateTrackResize(event);
+  }
+
+  function handlePointerUp(event: PointerEvent): void {
+    stopSeek(event);
+    stopMarkerDrag(event);
+    stopTrackResize(event);
+  }
+
+  function updateZoom(nextZoom: number): void {
+    dispatch('zoomChange', { zoom: clamp(nextZoom, 0, 100) });
+  }
+
+  function handleZoomInput(event: Event): void {
+    updateZoom(Number((event.currentTarget as HTMLInputElement).value));
+  }
+
+  function handleWheel(event: WheelEvent): void {
+    if (!event.ctrlKey || disabled) {
+      return;
+    }
+
+    event.preventDefault();
+    updateZoom(zoom + (event.deltaY < 0 ? 6 : -6));
+  }
+
+  function syncTrackScroll(): void {
+    const nextScrollLeft = scrollArea?.scrollLeft ?? 0;
+
+    if (videoScroll) {
+      videoScroll.scrollLeft = nextScrollLeft;
+    }
+
+    if (audioScroll) {
+      audioScroll.scrollLeft = nextScrollLeft;
+    }
+  }
+
+  function startTrackResize(event: PointerEvent): void {
+    event.preventDefault();
+    activeResize = true;
+    resizeStartY = event.clientY;
+    resizeStartVideoHeight = videoTrackHeight;
+    resizeStartAudioHeight = audioTrackHeight;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function updateTrackResize(event: PointerEvent): void {
+    if (!activeResize) {
+      return;
+    }
+
+    const delta = event.clientY - resizeStartY;
+    dispatch('trackHeightChange', {
+      videoHeight: clamp(resizeStartVideoHeight + delta, 42, 150),
+      audioHeight: clamp(resizeStartAudioHeight - delta, 38, 150),
+    });
+  }
+
+  function stopTrackResize(event: PointerEvent): void {
+    const target = event.currentTarget as HTMLElement | null;
+    if (target?.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture(event.pointerId);
+    }
+
+    activeResize = false;
+  }
+
+  function toggleAudioExpanded(): void {
+    dispatch('trackHeightChange', {
+      videoHeight: videoTrackHeight,
+      audioHeight: audioTrackHeight < 92 ? 116 : 58,
+    });
   }
 
   function segmentSequenceStart(index: number): number {
@@ -104,113 +319,244 @@
       .reduce((total, segment) => total + Math.max(0, segment.sourceEnd - segment.sourceStart), 0);
   }
 
-  function segmentStyle(segment: TimelineSegment, index: number): string {
-    const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
-    const left = outputDuration > 0 ? (segmentSequenceStart(index) / outputDuration) * 100 : 0;
-    const width = outputDuration > 0 ? (segmentLength / outputDuration) * 100 : 0;
-    return `left: ${left}%; width: ${Math.max(width, 0)}%`;
+  function buildSegmentLayouts(sourceSegments: TimelineSegment[], pxPerSecond: number): SegmentLayout[] {
+    let cursor = 0;
+
+    return sourceSegments.map((segment) => {
+      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
+      const layout = {
+        segment,
+        left: cursor * pxPerSecond,
+        width: Math.max(12, segmentLength * pxPerSecond),
+      };
+      cursor += segmentLength;
+      return layout;
+    });
+  }
+
+  function segmentStyle(layout: SegmentLayout): string {
+    return `left: ${layout.left}px; width: ${layout.width}px`;
   }
 
   function selectSegment(segment: TimelineSegment, event: PointerEvent): void {
     event.preventDefault();
     event.stopPropagation();
     activeSeek = false;
-    dragSegmentId = segment.id;
-    dragStartX = event.clientX;
-    isReordering = false;
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    closeContextMenu();
     dispatch('selectSegment', { id: segment.id });
   }
 
-  function moveSegment(event: PointerEvent): void {
-    if (!dragSegmentId) {
+  function openContextMenu(event: MouseEvent): void {
+    if (disabled || outputDuration <= 0) {
       return;
     }
 
-    if (Math.abs(event.clientX - dragStartX) > 8) {
-      isReordering = true;
-    }
+    event.preventDefault();
+    contextMenu = {
+      x: event.clientX,
+      y: event.clientY,
+      seconds: sequenceToSourceTime(xToSequenceSeconds(event.clientX)),
+    };
   }
 
-  function finishSegmentDrag(event: PointerEvent): void {
-    if (!dragSegmentId) {
+  function closeContextMenu(): void {
+    contextMenu = null;
+  }
+
+  function runContextAction(
+    action:
+      | 'split'
+      | 'delete'
+      | 'fit'
+      | 'zoomRange'
+      | 'splitRange'
+      | 'keepRange'
+      | 'trimOutside'
+      | 'loopRange'
+      | 'clear',
+  ): void {
+    if (!contextMenu && action === 'split') {
       return;
     }
 
-    if ((event.currentTarget as HTMLElement).hasPointerCapture(event.pointerId)) {
-      (event.currentTarget as HTMLElement).releasePointerCapture(event.pointerId);
+    if (action === 'split' && contextMenu) {
+      dispatch('splitAt', { seconds: contextMenu.seconds });
+    } else if (action === 'delete') {
+      dispatch('deleteSelected');
+    } else if (action === 'fit') {
+      dispatch('zoomFit');
+    } else if (action === 'zoomRange') {
+      dispatch('zoomRange');
+    } else if (action === 'splitRange') {
+      dispatch('splitRange');
+    } else if (action === 'keepRange') {
+      dispatch('keepRange');
+    } else if (action === 'trimOutside') {
+      dispatch('trimOutsideRange');
+    } else if (action === 'loopRange') {
+      dispatch('toggleRangeLoop');
+    } else if (action === 'clear') {
+      dispatch('clearRange');
     }
 
-    if (isReordering && segments.length > 1) {
-      const rect = track.getBoundingClientRect();
-      const ratio = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-      const targetIndex = clamp(Math.floor(ratio * segments.length), 0, segments.length - 1);
-      dispatch('reorderSegment', { id: dragSegmentId, targetIndex });
-    }
-
-    dragSegmentId = null;
-    isReordering = false;
+    closeContextMenu();
   }
 </script>
 
-<section class="timeline" aria-label="Trim timeline">
-  <div
-    bind:this={scrubber}
-    class="timeline__ruler"
-    class:is-disabled={disabled}
-    role="slider"
-    aria-label="Seek"
-    aria-valuemin="0"
-    aria-valuemax={outputDuration}
-    aria-valuenow={sourceToSequenceTime(currentTime)}
-    tabindex={disabled ? -1 : 0}
-    on:pointerdown={startSeek}
-    on:pointermove={updateSeek}
-    on:pointerup={stopSeek}
-    on:pointercancel={stopSeek}
-  >
-    {#each ticks as tick}
-      <span style={`left: ${tick.percent}%`}>{formatTime(tick.seconds)}</span>
-    {/each}
-  </div>
+<svelte:window on:pointermove={handlePointerMove} on:pointerup={handlePointerUp} on:pointercancel={handlePointerUp} on:click={closeContextMenu} />
 
-  <div
-    bind:this={track}
-    class="timeline__track"
-    class:is-disabled={disabled}
-  >
-    {#each ticks as tick}
-      <div class="timeline__tick" style={`left: ${tick.percent}%`}></div>
-    {/each}
-
-    {#each segments as segment, index}
-      <button
-        aria-label={`Segment from ${formatTime(segment.sourceStart)} to ${formatTime(segment.sourceEnd)}`}
-        class:dragging={segment.id === dragSegmentId && isReordering}
-        class:selected={segment.id === selectedSegmentId}
-        class="timeline__segment"
-        style={segmentStyle(segment, index)}
-        type="button"
-        on:pointerdown={(event) => selectSegment(segment, event)}
-        on:pointermove={moveSegment}
-        on:pointerup={finishSegmentDrag}
-        on:pointercancel={finishSegmentDrag}
-        on:dblclick={(event) => {
-          event.stopPropagation();
-          dispatch('seek', { seconds: segment.sourceStart });
-        }}
-      >
-        <span>{formatTime(segment.sourceStart)}</span>
-        <strong>{formatTime(segment.sourceEnd - segment.sourceStart)}</strong>
+<section class="timeline" aria-label="Vegas-style timeline" on:contextmenu={openContextMenu} on:wheel={handleWheel}>
+  <header class="timeline__controls">
+    <div class="timeline__readouts">
+      <span>Now <strong>{formatTime(currentTime)}</strong></span>
+      <span>Out <strong>{formatTime(outputDuration)}</strong></span>
+      <span>Range <strong>{normalizedRange ? `${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}` : 'none'}</strong></span>
+    </div>
+    <div class="timeline__zoom">
+      <span>Zoom</span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        value={zoom}
+        disabled={disabled}
+        aria-label="Timeline zoom"
+        on:input={handleZoomInput}
+      />
+      <button type="button" class="timeline__mini-button" disabled={disabled} on:click={() => dispatch('zoomFit')}>Fit</button>
+      <button type="button" class="timeline__mini-button" disabled={disabled || !normalizedRange} on:click={() => dispatch('zoomRange')}>
+        Range
       </button>
-    {/each}
+    </div>
+  </header>
 
-    <div class="timeline__playhead" style={`left: ${playheadPercent}%`}></div>
+  <div class="timeline__body">
+    <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
+    <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>
+      <div class="timeline__content" style={`width: ${timelineWidth}px`}>
+        <div
+          bind:this={ruler}
+          class="timeline__ruler"
+          class:is-disabled={disabled}
+          role="slider"
+          aria-label="Seek"
+          aria-valuemin="0"
+          aria-valuemax={outputDuration}
+          aria-valuenow={sourceToSequenceTime(currentTime)}
+          tabindex={disabled ? -1 : 0}
+          on:pointerdown={startSeek}
+        >
+          {#each ticks as tick}
+            <div class:major={tick.major} class="timeline__ruler-tick" style={`left: ${tick.left}px`}></div>
+            {#if tick.major}
+              <span style={`left: ${tick.left}px`}>{formatTime(tick.seconds)}</span>
+            {/if}
+          {/each}
+
+          {#if normalizedRange}
+            <div class="timeline__range-fill" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+            <button
+              type="button"
+              class="timeline__marker timeline__marker--in"
+              style={`left: ${rangeLeft}px`}
+              aria-label="Range start"
+              on:pointerdown={(event) => startMarkerDrag('start', event)}
+            ></button>
+            <button
+              type="button"
+              class="timeline__marker timeline__marker--out"
+              style={`left: ${rangeLeft + rangeWidth}px`}
+              aria-label="Range end"
+              on:pointerdown={(event) => startMarkerDrag('end', event)}
+            ></button>
+          {/if}
+
+          <div class="timeline__playhead timeline__playhead--ruler" style={`left: ${playheadLeft}px`}></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="timeline__track-head" style={`height: ${videoTrackHeight}px`}>
+      <strong>Video</strong>
+      <span>{segments.length} segment{segments.length === 1 ? '' : 's'}</span>
+    </div>
+    <div bind:this={videoScroll} class="timeline__scroll timeline__scroll--track" role="region" aria-label="Video track" on:contextmenu={openContextMenu}>
+      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px; height: ${videoTrackHeight}px`}>
+        {#each ticks as tick}
+          <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
+        {/each}
+        {#if normalizedRange}
+          <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+        {/if}
+        {#each segmentLayouts as layout (layout.segment.id)}
+          <button
+            aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+            class:selected={layout.segment.id === selectedSegmentId}
+            class="timeline__segment timeline__segment--video"
+            style={segmentStyle(layout)}
+            type="button"
+            on:pointerdown={(event) => selectSegment(layout.segment, event)}
+            on:dblclick={(event) => {
+              event.stopPropagation();
+              dispatch('seek', { seconds: layout.segment.sourceStart });
+            }}
+          >
+            <span>{formatTime(layout.segment.sourceStart)}</span>
+            <strong>{formatTime(layout.segment.sourceEnd - layout.segment.sourceStart)}</strong>
+          </button>
+        {/each}
+        <div class="timeline__playhead" style={`left: ${playheadLeft}px`}></div>
+      </div>
+    </div>
+
+    <button type="button" class="timeline__resize" aria-label="Resize tracks" on:pointerdown={startTrackResize}></button>
+    <div class="timeline__resize-fill"></div>
+
+    <button
+      type="button"
+      class="timeline__track-head timeline__track-head--audio"
+      style={`height: ${audioTrackHeight}px`}
+      on:dblclick={toggleAudioExpanded}
+    >
+      <strong>Audio</strong>
+      <span>{audioLabel}</span>
+    </button>
+    <div bind:this={audioScroll} class="timeline__scroll timeline__scroll--track" role="region" aria-label="Audio track" on:contextmenu={openContextMenu}>
+      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px; height: ${audioTrackHeight}px`}>
+        {#each ticks as tick}
+          <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
+        {/each}
+        {#if normalizedRange}
+          <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+        {/if}
+        {#each segmentLayouts as layout (layout.segment.id)}
+          <button
+            aria-label={`Audio segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+            class:selected={layout.segment.id === selectedSegmentId}
+            class="timeline__segment timeline__segment--audio"
+            style={segmentStyle(layout)}
+            type="button"
+            on:pointerdown={(event) => selectSegment(layout.segment, event)}
+          >
+            <span>{audioLabel}</span>
+          </button>
+        {/each}
+        <div class="timeline__playhead" style={`left: ${playheadLeft}px`}></div>
+      </div>
+    </div>
   </div>
 
-  <div class="timeline__meta">
-    <span>{segments.length} segment{segments.length === 1 ? '' : 's'}</span>
-    <span>Now {formatTime(currentTime)}</span>
-    <span>Output {formatTime(outputDuration)}</span>
-  </div>
+  {#if contextMenu}
+    <div class="timeline-menu" role="menu" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
+      <button type="button" on:click={() => runContextAction('split')}>Split here</button>
+      <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}>Delete selected segment</button>
+      <button type="button" on:click={() => runContextAction('fit')}>Zoom to fit</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}>Zoom to range</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}>Split at I and O</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('keepRange')}>Keep only range</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('trimOutside')}>Trim outside range</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('loopRange')}>Loop preview range</button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('clear')}>Clear selection</button>
+    </div>
+  {/if}
 </section>

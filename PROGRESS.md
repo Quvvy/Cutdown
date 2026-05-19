@@ -4,36 +4,36 @@ This file tracks implementation progress against the original Cutdown product pr
 
 ## Current Status
 
-The project is at MVP baseline. The app scaffolds, type-checks, compiles, and builds with Tauri on Windows.
+The project is a multi-cut MVP with I/O range editing, export hardening, and an OBS watch-folder workflow. The app scaffolds, type-checks, compiles, and builds with Tauri on Windows.
 
 ## Completed
 
 - Initialized a Tauri v2, Svelte, TypeScript, and Rust project.
 - Added plain CSS styling with a dark utility-focused interface.
 - Added a Windows tray menu with `Open Editor` and `Quit`.
-- Added a single-screen editor layout.
-- Added HTML `video` preview with current timestamp overlay.
-- Added timeline range controls for in/out trim points and seeking.
-- Added keyboard shortcuts for `I`, `O`, `Space`, frame stepping, and 5-second stepping.
-- Added an export modal for selecting the output path.
-- Added Svelte editor state for current file, video metadata, trim points, and export status.
-- Added Rust `probe_video` command using `ffprobe`.
-- Added Rust `export_clip` command using ffmpeg stream copy.
-- Added placeholder `detect_gpu_encoders` command.
-- Added a required Tauri icon asset.
-- Installed and validated local prerequisites: Node/npm, Rust/Cargo, WebView2, Visual Studio Build Tools, ffmpeg, and ffprobe.
+- Added a single-screen editor layout with consolidated toolbar (no faux menu bar).
+- Added HTML `video` preview with current timestamp overlay and I/O loop playback.
+- Added a segment-based timeline with top-ruler scrubbing and I/O range markers.
+- Added split/delete segment editing and I/O range actions (split I/O, keep, trim outside, zoom, export range).
+- Removed segment reordering and preview-selected-segment / fake audio metering UI.
+- Added undo/redo for segment edits.
+- Added keyboard shortcuts for editing, range, loop, and zoom.
+- Added an export modal with sequence vs I/O range modes.
+- Added Rust `probe_video`, `export_clip`, `check_ffmpeg`, preview remux/proxy, and `reveal_in_explorer`.
+- Added stage-based `export_progress` events with optional ffmpeg percent parsing.
+- Added bundled ffmpeg path resolution and startup diagnostics.
+- Added export UX: last output folder memory, overwrite confirm, success notification.
+- Added settings persistence in `%APPDATA%/Cutdown/settings.json`.
+- Added watch-folder monitoring with Windows toast + auto-open in editor.
+- Added `docs/TESTING.md` runtime validation matrix.
 
 ## Validation
 
-Last checked after restarting Cursor:
+Last checked:
 
-- `node --version` resolves.
-- `npm --version` resolves.
-- `rustc --version` resolves.
-- `cargo --version` resolves.
-- `ffmpeg` and `ffprobe` resolve.
 - `npm run check` passes with 0 errors and 0 warnings.
 - `cargo check` passes.
+- Manual runtime matrix documented in [docs/TESTING.md](docs/TESTING.md).
 
 Previously validated:
 
@@ -42,116 +42,69 @@ Previously validated:
 
 ## Known Issues and Risks
 
-- ffmpeg and ffprobe are installed on the system, but release bundling still needs static binaries in `public/ffmpeg/`.
-- The MVP has not yet been runtime-tested with real sample clips in the UI.
-- `npm audit --omit=dev` reports a moderate Svelte advisory. npm's automated fix requires a breaking Svelte 5 upgrade, so it is deferred until a planned framework update.
-- The repo has no initial commit yet.
-- Most files are currently untracked.
+- ffmpeg and ffprobe must be on PATH for dev, or copied via `npm run prepare:ffmpeg` for bundled release builds.
+- The multi-cut MVP still needs broader runtime testing with real sample clips and audio variations (see test matrix).
+- `npm audit --omit=dev` reports a moderate Svelte advisory. npm's automated fix requires a breaking Svelte 5 upgrade, so it is deferred.
+- Stream-copy cuts are fast and lossless, but may not be frame-perfect because keyframes matter.
+- Preview support depends on WebView2/HTML video support. ffmpeg can support more formats than the preview can play.
+- Watch-folder notifications require Windows notification permission.
 
 ## Next Up
 
-1. Bundle static Windows x64 `ffmpeg.exe` and `ffprobe.exe`.
-2. Runtime-test probe and lossless export with mp4, mkv, and mov clips.
-3. Add ffmpeg progress event parsing.
-4. Improve export completion UX with open-in-explorer and toast actions.
-5. Implement real GPU encoder detection.
+1. Complete manual runtime matrix on real OBS/replay-buffer clips.
+2. Compression presets (Discord, lossless trim, GPU encode).
+3. Crop mode and Windows Open With integration.
 
 ## Roadmap Status
 
-### Milestone 1: MVP Editor
+### Milestone 1: Multi-Cut MVP Editor
+
+Status: complete.
+
+### Milestone 2: Export, Audio, and ffmpeg Hardening
 
 Status: mostly complete.
 
 Remaining:
 
-- Runtime-test with real clips.
-- Polish output path handling.
-- Add progress events instead of one-shot export status.
+- Broader runtime testing with real clips.
+- Optional: frame-accurate re-encode trim mode.
 
-### Milestone 2: ffmpeg Bundling and Export Hardening
+### Milestone 3: Reliable Preview
 
-Status: not started.
+Status: first implementation complete.
 
-Planned:
-
-- Bundle static Windows ffmpeg binaries.
-- Add diagnostics for missing binaries.
-- Parse ffmpeg progress.
-- Add safer overwrite and output folder behavior.
-
-### Milestone 3: Presets and Compression
+### Milestone 4: Presets and Compression
 
 Status: not started.
 
-Planned:
-
-- Add Discord, Lossless Trim, Archive, and Twitter/X presets.
-- Add custom preset persistence.
-- Add size-targeted two-pass encoding.
-- Add GPU encoder preference and fallback.
-
-### Milestone 4: Crop
+### Milestone 5: Crop
 
 Status: not started.
 
-Planned:
+### Milestone 6: Watch Folder Workflow
 
-- Add crop overlay.
-- Add aspect ratio snapping.
-- Add ffmpeg crop filter wiring.
-- Force re-encode when crop is active.
+Status: MVP complete.
 
-### Milestone 5: Watch Folder Workflow
+Implemented:
 
-Status: not started.
+- Watch folder setting and enable toggle.
+- `notify`-based folder monitoring with debounce and extension filter.
+- Windows toast on new clips.
+- Open clip in editor from watch event (with unsaved-edit confirm).
 
-Planned:
-
-- Add watch folder setting.
-- Monitor with Rust `notify`.
-- Show Windows toast notifications for new clips.
-- Open clicked clips directly in the editor.
-
-### Milestone 6: Upload and Sharing
+### Milestone 7: Upload and Sharing
 
 Status: not started.
 
-Planned:
-
-- Add upload host trait/module structure.
-- Implement Catbox.moe.
-- Implement Streamable with secure credential storage.
-- Investigate FileGarden.
-
-### Milestone 7: Clip History
+### Milestone 8: Clip History
 
 Status: not started.
 
-Planned:
+### Milestone 9: Settings and Windows Integration
 
-- Store last 20 exports.
-- Generate thumbnails.
-- Add collapsible history drawer.
-- Support reopen and copy-link actions.
+Status: partial (minimal settings panel only).
 
-### Milestone 8: Settings and Windows Integration
+### Milestone 10: Performance Audit
 
 Status: not started.
-
-Planned:
-
-- Add minimal settings panel.
-- Add startup registration.
-- Add Open With/file association support.
-- Document registry keys.
-
-### Milestone 9: Performance Audit
-
-Status: not started.
-
-Planned:
-
-- Measure startup and editor-open times.
-- Measure preview readiness.
-- Measure idle RAM.
-- Measure final app and ffmpeg bundle sizes.
