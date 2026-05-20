@@ -1,6 +1,34 @@
+use crate::presets::{self, normalize_custom_export_presets};
+use crate::upload_providers::{
+    migrate_upload_providers, normalize_settings_providers, UploadProvider,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CustomExportPreset {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub lossless: bool,
+    #[serde(default = "default_custom_mode")]
+    pub mode: String,
+    pub video_bitrate_kbps: Option<u64>,
+    pub audio_bitrate_kbps: Option<u64>,
+    pub crf: Option<u32>,
+    pub max_width: Option<u32>,
+    pub max_height: Option<u32>,
+    pub target_bytes: Option<u64>,
+    pub encoder_speed: Option<String>,
+}
+
+fn default_custom_mode() -> String {
+    "bitrate".to_string()
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -16,7 +44,17 @@ pub struct AppSettings {
     pub catbox_user_hash: Option<String>,
     #[serde(default)]
     pub catbox_api_url: Option<String>,
+    #[serde(default)]
+    pub recent_sources: Vec<String>,
+    #[serde(default)]
+    pub upload_providers: Vec<UploadProvider>,
+    #[serde(default)]
+    pub default_upload_provider_id: Option<String>,
+    #[serde(default)]
+    pub custom_export_presets: Vec<CustomExportPreset>,
 }
+
+const MAX_RECENT_SOURCES: usize = 10;
 
 impl Default for AppSettings {
     fn default() -> Self {
@@ -30,6 +68,10 @@ impl Default for AppSettings {
             run_at_startup: false,
             catbox_user_hash: None,
             catbox_api_url: None,
+            recent_sources: Vec::new(),
+            upload_providers: Vec::new(),
+            default_upload_provider_id: None,
+            custom_export_presets: Vec::new(),
         }
     }
 }
@@ -45,6 +87,61 @@ pub struct UpdateSettingsParams {
     pub run_at_startup: bool,
     pub catbox_user_hash: Option<String>,
     pub catbox_api_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveEditorSettingsParams {
+    pub watch_folder: Option<String>,
+    pub watch_folder_enabled: bool,
+    pub default_export_dir: Option<String>,
+    pub last_preset_id: Option<String>,
+    pub prefer_gpu_encoding: bool,
+    pub run_at_startup: bool,
+    pub providers: Vec<UploadProvider>,
+    pub default_upload_provider_id: Option<String>,
+    pub custom_export_presets: Vec<CustomExportPreset>,
+}
+
+pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSettings, String> {
+    let mut settings = load_settings();
+    settings.watch_folder = params
+        .watch_folder
+        .filter(|value| !value.trim().is_empty());
+    settings.watch_folder_enabled =
+        params.watch_folder_enabled && settings.watch_folder.is_some();
+    settings.default_export_dir = params
+        .default_export_dir
+        .filter(|value| !value.trim().is_empty());
+    settings.prefer_gpu_encoding = params.prefer_gpu_encoding;
+    settings.run_at_startup = params.run_at_startup;
+    settings.upload_providers = params.providers;
+    settings.default_upload_provider_id = params
+        .default_upload_provider_id
+        .filter(|value| !value.trim().is_empty());
+    settings.custom_export_presets = params.custom_export_presets;
+
+    if let Some(preset_id) = params.last_preset_id.filter(|value| !value.trim().is_empty()) {
+        settings.last_preset_id = preset_id;
+    }
+
+    normalize_custom_export_presets(&mut settings.custom_export_presets)?;
+
+    if !presets::all_preset_infos()
+        .iter()
+        .any(|preset| preset.id == settings.last_preset_id)
+    {
+        settings.last_preset_id = presets::PRESET_LOSSLESS.to_string();
+    }
+
+    normalize_settings_providers(
+        &mut settings.upload_providers,
+        &mut settings.default_upload_provider_id,
+    )?;
+
+    crate::windows_integration::set_run_at_startup(params.run_at_startup)?;
+    save_settings(&settings)?;
+    Ok(settings)
 }
 
 pub fn settings_path() -> Result<PathBuf, String> {
@@ -67,7 +164,24 @@ pub fn load_settings() -> AppSettings {
         Err(_) => return AppSettings::default(),
     };
 
-    serde_json::from_str(&raw).unwrap_or_default()
+    let mut settings: AppSettings = serde_json::from_str(&raw).unwrap_or_default();
+    migrate_upload_providers(
+        &mut settings.upload_providers,
+        &mut settings.default_upload_provider_id,
+        &settings.catbox_user_hash,
+        &settings.catbox_api_url,
+    );
+    if !settings.upload_providers.is_empty() {
+        let previous_default = settings.default_upload_provider_id.clone();
+        let _ = normalize_settings_providers(
+            &mut settings.upload_providers,
+            &mut settings.default_upload_provider_id,
+        );
+        if settings.default_upload_provider_id != previous_default {
+            let _ = save_settings(&settings);
+        }
+    }
+    settings
 }
 
 pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
@@ -87,6 +201,21 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
 #[tauri::command]
 pub fn get_settings() -> AppSettings {
     load_settings()
+}
+
+#[tauri::command]
+pub fn push_recent_source(path: String) -> Result<Vec<String>, String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(load_settings().recent_sources);
+    }
+
+    let mut settings = load_settings();
+    settings.recent_sources.retain(|entry| entry != trimmed);
+    settings.recent_sources.insert(0, trimmed.to_string());
+    settings.recent_sources.truncate(MAX_RECENT_SOURCES);
+    save_settings(&settings)?;
+    Ok(settings.recent_sources.clone())
 }
 
 pub fn update_watch_folder_settings(path: Option<String>, enabled: bool) -> Result<AppSettings, String> {

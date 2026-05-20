@@ -5,6 +5,7 @@ mod launch;
 mod presets;
 mod settings;
 mod upload;
+mod upload_providers;
 mod watch_folder;
 mod windows_integration;
 
@@ -51,6 +52,16 @@ fn save_app_settings(
     params: UpdateSettingsParams,
 ) -> Result<AppSettings, String> {
     let settings = settings::update_settings(params)?;
+    watch_folder::restart_watcher(app)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_editor_settings(
+    app: AppHandle,
+    params: settings::SaveEditorSettingsParams,
+) -> Result<AppSettings, String> {
+    let settings = settings::apply_editor_settings(params)?;
     watch_folder::restart_watcher(app)?;
     Ok(settings)
 }
@@ -122,6 +133,7 @@ fn main() {
             path_exists,
             update_watch_folder,
             save_app_settings,
+            save_editor_settings,
             launch::get_launch_path,
             ffmpeg::probe_video,
             ffmpeg::export_clip,
@@ -130,6 +142,7 @@ fn main() {
             ffmpeg::prepare_preview,
             ffmpeg::cleanup_preview,
             settings::get_settings,
+            settings::push_recent_source,
             settings::set_last_export_dir,
             settings::set_last_preset_id,
             presets::list_presets,
@@ -138,7 +151,10 @@ fn main() {
             clip_history::list_clip_history,
             clip_history::clear_clip_history,
             clip_history::remove_clip_history_entry,
-            upload::upload_to_catbox,
+            upload::upload_file,
+            upload::list_upload_providers,
+            upload::save_upload_providers,
+            upload::get_upload_providers_for_editor,
             upload::copy_text_to_clipboard,
         ])
         .run(tauri::generate_context!())

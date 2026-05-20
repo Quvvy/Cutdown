@@ -4,13 +4,14 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { confirm, open, save } from '@tauri-apps/plugin-dialog';
   import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
   import ExportModal from './components/ExportModal.svelte';
   import IconButton from './components/IconButton.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import ShortcutsModal from './components/ShortcutsModal.svelte';
   import Timeline from './components/Timeline.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
   import {
@@ -22,6 +23,16 @@
     splitOutputPath,
   } from './lib/format';
   import type { ClipHistoryEntry, NormalizedCropRect } from './lib/types';
+  import {
+    parseCustomPresetsFromSettings,
+    type CustomExportPreset,
+  } from './lib/exportPresets';
+  import {
+    kindLabel,
+    parseProvidersFromSettings,
+    type UploadProvider,
+    type UploadProviderSummary,
+  } from './lib/uploadProviders';
   import {
     createFullSegment,
     editor,
@@ -56,6 +67,8 @@
     description: string;
     lossless: boolean;
     requiresGpu: boolean;
+    custom: boolean;
+    targetBytes: number | null;
   };
 
   type AppSettings = {
@@ -68,6 +81,10 @@
     runAtStartup: boolean;
     catboxUserHash: string | null;
     catboxApiUrl: string | null;
+    recentSources: string[];
+    uploadProviders: UploadProvider[];
+    defaultUploadProviderId: string | null;
+    customExportPresets: CustomExportPreset[];
   };
 
   type PreviewResult = {
@@ -79,6 +96,11 @@
     | {
         seekTo(seconds: number): void;
         togglePlayback(): void;
+        fitToView(): Promise<void>;
+        remeasureViewport(): void;
+        zoomIn(): void;
+        zoomOut(): void;
+        resetView(): void;
       }
     | undefined;
   let timeline:
@@ -89,15 +111,22 @@
     | undefined;
   let exportModalOpen = false;
   let settingsModalOpen = false;
+  let shortcutsModalOpen = false;
   let historyDrawerOpen = false;
+  let recentSources: string[] = [];
+  let dragOver = false;
+  let accurateTrimExport = false;
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
   let cropEnabled = false;
   let cropAspect: 'free' | '16:9' | '9:16' = 'free';
   let cropRect: NormalizedCropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
-  let catboxUserHash = '';
-  let catboxApiUrl = '';
+  let uploadProviders: UploadProvider[] = [];
+  let uploadProviderSummaries: UploadProviderSummary[] = [];
+  let defaultUploadProviderId: string | null = null;
+  let selectedUploadProviderId: string | null = null;
   let exportPresets: PresetInfo[] = [];
+  let customExportPresets: CustomExportPreset[] = [];
   let exportPresetId = 'lossless-trim';
   let gpuEncoders: string[] = [];
   let preferGpuEncoding = true;
@@ -126,11 +155,89 @@
   let timelineZoom = 28;
   let videoTrackHeight = 68;
   let audioTrackHeight = 58;
+  let workspaceEl: HTMLElement | undefined;
+  let workspaceSplitter: HTMLButtonElement | undefined;
+  let workspaceSplitRatio = 0.52;
+  let workspaceResizing = false;
+  let workspaceResizeStartY = 0;
+  let workspaceResizeStartRatio = 0.52;
+
+  const WORKSPACE_SPLIT_KEY = 'cutdown-workspace-split';
+  const WORKSPACE_SPLITTER_PX = 6;
+  const MIN_PREVIEW_PANE_PX = 120;
+  const MIN_TIMELINE_PANE_PX = 160;
   let rangeStart: number | null = null;
   let rangeEnd: number | null = null;
   let currentWindowTitle = '';
 
+  function loadWorkspaceSplit(): void {
+    try {
+      const saved = localStorage.getItem(WORKSPACE_SPLIT_KEY);
+      if (!saved) {
+        return;
+      }
+
+      const ratio = Number.parseFloat(saved);
+      if (Number.isFinite(ratio) && ratio >= 0.2 && ratio <= 0.8) {
+        workspaceSplitRatio = ratio;
+      }
+    } catch {
+      // Ignore invalid persisted split.
+    }
+  }
+
+  function saveWorkspaceSplit(): void {
+    try {
+      localStorage.setItem(WORKSPACE_SPLIT_KEY, String(workspaceSplitRatio));
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  function startWorkspaceResize(event: PointerEvent): void {
+    event.preventDefault();
+    workspaceResizing = true;
+    workspaceResizeStartY = event.clientY;
+    workspaceResizeStartRatio = workspaceSplitRatio;
+    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+  }
+
+  function updateWorkspaceResize(event: PointerEvent): void {
+    if (!workspaceResizing || !workspaceEl) {
+      return;
+    }
+
+    const available = workspaceEl.clientHeight - WORKSPACE_SPLITTER_PX;
+    if (available <= MIN_PREVIEW_PANE_PX + MIN_TIMELINE_PANE_PX) {
+      return;
+    }
+
+    const delta = event.clientY - workspaceResizeStartY;
+    const startPreviewPx = workspaceResizeStartRatio * available;
+    const nextPreviewPx = clamp(
+      startPreviewPx + delta,
+      MIN_PREVIEW_PANE_PX,
+      available - MIN_TIMELINE_PANE_PX,
+    );
+    workspaceSplitRatio = nextPreviewPx / available;
+  }
+
+  function stopWorkspaceResize(event: PointerEvent): void {
+    if (!workspaceResizing) {
+      return;
+    }
+
+    if (workspaceSplitter?.hasPointerCapture(event.pointerId)) {
+      workspaceSplitter.releasePointerCapture(event.pointerId);
+    }
+
+    saveWorkspaceSplit();
+    workspaceResizing = false;
+    void tick().then(() => preview?.remeasureViewport());
+  }
+
   onMount(() => {
+    loadWorkspaceSplit();
     void bootstrapApp();
 
     const unlistenExport = listen<ExportProgress>('export_progress', (event) => {
@@ -151,9 +258,29 @@
       void handleWatchFolderClip(event.payload.path);
     });
 
+    const videoExtensions = new Set(['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'flv']);
+    const appWindow = getCurrentWindow();
+    const unlistenDragDrop = appWindow.onDragDropEvent((event) => {
+      if (event.payload.type === 'over') {
+        dragOver = true;
+      } else if (event.payload.type === 'drop') {
+        dragOver = false;
+        const path = event.payload.paths.find((candidate) => {
+          const ext = candidate.split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase() ?? '';
+          return videoExtensions.has(ext);
+        });
+        if (path) {
+          void openClipPath(path);
+        }
+      } else {
+        dragOver = false;
+      }
+    });
+
     return () => {
       void unlistenExport.then((stop) => stop());
       void unlistenWatch.then((stop) => stop());
+      void unlistenDragDrop.then((stop) => stop());
       const previewTempPath = get(editor).previewTempPath;
       if (previewTempPath) {
         void invoke('cleanup_preview', { path: previewTempPath });
@@ -177,10 +304,14 @@
       exportPresetId = settings.lastPresetId || 'lossless-trim';
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
-      catboxUserHash = settings.catboxUserHash ?? '';
-      catboxApiUrl = settings.catboxApiUrl ?? '';
+      uploadProviders = parseProvidersFromSettings(settings.uploadProviders);
+      defaultUploadProviderId = settings.defaultUploadProviderId;
+      selectedUploadProviderId = defaultUploadProviderId;
+      await refreshUploadProviderSummaries();
       exportPresets = presets;
+      customExportPresets = parseCustomPresetsFromSettings(settings.customExportPresets);
       clipHistory = await invoke<ClipHistoryEntry[]>('list_clip_history');
+      recentSources = settings.recentSources ?? [];
       gpuEncoders = encoders;
       ffmpegAvailable = ffmpeg.available;
       ffmpegStatus =
@@ -429,6 +560,9 @@
         },
       }));
       syncExportDefaultsForClip();
+      void invoke<string[]>('push_recent_source', { path: selected }).then((sources) => {
+        recentSources = sources;
+      });
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -658,7 +792,41 @@
   function closeModals(): void {
     exportModalOpen = false;
     settingsModalOpen = false;
+    shortcutsModalOpen = false;
     historyDrawerOpen = false;
+  }
+
+  function applySettingsFromDisk(settings: AppSettings): void {
+    watchFolder = settings.watchFolder;
+    watchFolderEnabled = settings.watchFolderEnabled;
+    defaultExportDir = settings.defaultExportDir ?? settings.lastExportDir;
+    exportPresetId = settings.lastPresetId || 'lossless-trim';
+    preferGpuEncoding = settings.preferGpuEncoding;
+    runAtStartup = settings.runAtStartup;
+    uploadProviders = parseProvidersFromSettings(settings.uploadProviders);
+    defaultUploadProviderId = settings.defaultUploadProviderId;
+    customExportPresets = parseCustomPresetsFromSettings(settings.customExportPresets);
+    syncUploadProviderSelection();
+  }
+
+  async function refreshExportPresets(): Promise<void> {
+    exportPresets = await invoke<PresetInfo[]>('list_presets');
+  }
+
+  async function openSettings(): Promise<void> {
+    try {
+      const settings = await invoke<AppSettings>('get_settings');
+      applySettingsFromDisk(settings);
+      settingsModalOpen = true;
+    } catch (error) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    }
   }
 
   function exportCropPixels(): { x: number; y: number; width: number; height: number } | null {
@@ -716,19 +884,100 @@
     clipHistory = [];
   }
 
-  async function uploadClip(path: string): Promise<void> {
+  function uploadProviderName(providerId: string | null): string {
+    const summary = uploadProviderSummaries.find((entry) => entry.id === providerId);
+    if (summary) {
+      return summary.name;
+    }
+
+    const provider = uploadProviders.find((entry) => entry.id === providerId);
+    return provider?.name ?? 'upload host';
+  }
+
+  async function refreshUploadProviderSummaries(): Promise<void> {
+    uploadProviderSummaries = await invoke('list_upload_providers');
+    syncUploadProviderSelection();
+  }
+
+  function getEnabledUploadTargets(): typeof uploadProviderSummaries {
+    const configuredIds = new Set(
+      uploadProviders.filter((provider) => provider.enabled).map((provider) => provider.id),
+    );
+    const enabledSummaries = uploadProviderSummaries.filter((entry) => entry.enabled);
+    if (configuredIds.size === 0) {
+      return enabledSummaries;
+    }
+
+    return enabledSummaries.filter((entry) => configuredIds.has(entry.id));
+  }
+
+  function syncUploadProviderSelection(): void {
+    const enabled = getEnabledUploadTargets();
+    if (enabled.length === 0) {
+      selectedUploadProviderId = null;
+      return;
+    }
+
+    const preferredIds = [selectedUploadProviderId, defaultUploadProviderId];
+    for (const id of preferredIds) {
+      if (id && enabled.some((entry) => entry.id === id)) {
+        selectedUploadProviderId = id;
+        defaultUploadProviderId = id;
+        return;
+      }
+    }
+
+    const fallback = enabled.find((entry) => entry.isDefault) ?? enabled[0];
+    selectedUploadProviderId = fallback.id;
+    defaultUploadProviderId = fallback.id;
+  }
+
+  $: uploadProviders, uploadProviderSummaries, syncUploadProviderSelection();
+
+  function resolveUploadProviderId(providerId?: string | null): string | null {
+    const enabled = getEnabledUploadTargets();
+    const candidates = [providerId, selectedUploadProviderId, defaultUploadProviderId];
+    for (const id of candidates) {
+      if (id && enabled.some((entry) => entry.id === id)) {
+        return id;
+      }
+    }
+
+    const fallback = enabled.find((entry) => entry.isDefault) ?? enabled[0];
+    return fallback?.id ?? null;
+  }
+
+  async function uploadClip(path: string, providerId?: string | null): Promise<void> {
+    const targetProviderId = resolveUploadProviderId(providerId);
+    if (!targetProviderId) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: 'No upload targets configured. Add one in Settings.',
+        },
+      }));
+      return;
+    }
+
+    selectedUploadProviderId = targetProviderId;
+    const providerName = uploadProviderName(targetProviderId);
     historyBusyPath = path;
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
-        message: 'Uploading to Catbox...',
+        message: `Uploading to ${providerName}...`,
       },
     }));
 
     try {
-      const url = await invoke<string>('upload_to_catbox', { filePath: path });
+      const url = await invoke<string>('upload_file', {
+        filePath: path,
+        providerId: targetProviderId,
+      });
       await invoke('copy_text_to_clipboard', { text: url });
+      await refreshUploadProviderSummaries();
       editor.update((state) => ({
         ...state,
         exportStatus: {
@@ -738,7 +987,7 @@
           outputSize: state.exportStatus.outputSize,
         },
       }));
-      await notify('Upload link copied to clipboard.', 'Catbox upload');
+      await notify('Upload link copied to clipboard.', `${providerName} upload`);
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -761,11 +1010,17 @@
         !['button', 'checkbox', 'radio', 'range'].includes(target.type));
 
     if (event.key === 'Escape') {
-      if (exportModalOpen || settingsModalOpen || historyDrawerOpen) {
+      if (exportModalOpen || settingsModalOpen || historyDrawerOpen || shortcutsModalOpen) {
         event.preventDefault();
         closeModals();
         return;
       }
+    }
+
+    if (event.key === '?' && !event.ctrlKey && !event.altKey) {
+      event.preventDefault();
+      shortcutsModalOpen = true;
+      return;
     }
 
     if (isTextInput) {
@@ -935,7 +1190,7 @@
       // Overwrite confirmation is best-effort when the helper is unavailable.
     }
 
-    const exportSegments =
+    let exportSegments =
       exportMode === 'range' && canUseRange && normalizedRange
         ? [{ start: normalizedRange.start, end: normalizedRange.end }]
         : segments.map((segment) => ({
@@ -972,6 +1227,7 @@
           sourcePath: $editor.currentFile,
           crop,
           volume: clipVolume,
+          accurateTrim: accurateTrimExport,
         },
       });
 
@@ -1095,9 +1351,14 @@
   }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window
+  on:keydown={handleKeydown}
+  on:pointermove={updateWorkspaceResize}
+  on:pointerup={stopWorkspaceResize}
+  on:pointercancel={stopWorkspaceResize}
+/>
 
-<main class="shell">
+<main class="shell" class:shell--dragover={dragOver}>
   <section class="toolbar" aria-label="Editor toolbar">
     <IconButton icon="open" title="Open video file" on:click={chooseClip} />
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
@@ -1105,12 +1366,14 @@
     <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
     <div class="toolbar__spacer"></div>
     <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
+    <button type="button" class="tool-button" title="Keyboard shortcuts (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
     <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
-    <IconButton icon="settings" title="Settings" on:click={() => (settingsModalOpen = true)} />
+    <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
     <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport} on:click={openExportModal} />
   </section>
 
-  <section class="preview-panel">
+  <section class="editor-workspace" bind:this={workspaceEl}>
+  <section class="preview-panel" style={`flex: ${workspaceSplitRatio} 1 0`}>
     <div class="preview-panel__tools">
       <IconButton
         icon="crop"
@@ -1123,6 +1386,32 @@
       <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 16:9 aspect" on:click={() => applyAspectCrop('16:9')}>16:9</button>
       <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 9:16 aspect" on:click={() => applyAspectCrop('9:16')}>9:16</button>
       <button type="button" class="secondary" disabled={!cropEnabled} title="Free crop aspect" on:click={() => applyAspectCrop('free')}>Free</button>
+      <span class="preview-panel__divider" aria-hidden="true"></span>
+      <IconButton
+        icon="scaleFit"
+        title="Fit preview to panel"
+        variant="secondary"
+        disabled={!$editor.currentFile}
+        on:click={() => preview?.fitToView()}
+      />
+      <button
+        type="button"
+        class="secondary"
+        title="Zoom preview out"
+        disabled={!$editor.currentFile}
+        on:click={() => preview?.zoomOut()}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        title="Zoom preview in"
+        disabled={!$editor.currentFile}
+        on:click={() => preview?.zoomIn()}
+      >
+        +
+      </button>
     </div>
     <VideoPreview
       bind:this={preview}
@@ -1143,6 +1432,15 @@
     />
   </section>
 
+  <button
+    type="button"
+    class="workspace-splitter"
+    bind:this={workspaceSplitter}
+    aria-label="Resize preview and timeline"
+    on:pointerdown={startWorkspaceResize}
+  ></button>
+
+  <div class="timeline-pane" style={`flex: ${1 - workspaceSplitRatio} 1 0`}>
   <Timeline
     bind:this={timeline}
     disabled={!$editor.currentFile}
@@ -1175,6 +1473,8 @@
     on:trimOutsideRange={deleteOutsideRange}
     on:toggleRangeLoop={toggleRangeLoop}
   />
+  </div>
+  </section>
 
   <section class="transport-bar" aria-label="Editor controls">
     <div>
@@ -1250,15 +1550,50 @@
       />
       {#if $editor.exportStatus.outputPath}
         <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open Folder</button>
-        <button
-          type="button"
-          class="secondary"
-          title="Upload to Catbox and copy link"
-          disabled={historyBusyPath === $editor.exportStatus.outputPath}
-          on:click={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
-        >
-          Upload
-        </button>
+        {@const uploadTargets = uploadProviderSummaries.filter((entry) => entry.enabled)}
+        {#if uploadTargets.length <= 1}
+          <button
+            type="button"
+            class="secondary"
+            title={uploadTargets[0]
+              ? `Upload to ${uploadTargets[0].name} and copy link`
+              : 'Configure an upload target in Settings'}
+            disabled={historyBusyPath === $editor.exportStatus.outputPath || uploadTargets.length === 0}
+            on:click={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
+          >
+            Upload{uploadTargets[0] ? ` · ${uploadTargets[0].name}` : ''}
+          </button>
+        {:else}
+          <details class="bottom-bar__upload">
+            <summary class="bottom-bar__upload-summary">
+              <button
+                type="button"
+                class="secondary"
+                title={`Upload to ${uploadProviderName(resolveUploadProviderId())} and copy link`}
+                disabled={historyBusyPath === $editor.exportStatus.outputPath}
+                on:click|stopPropagation={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
+              >
+                Upload · {uploadProviderName(resolveUploadProviderId())}
+              </button>
+            </summary>
+            <div class="bottom-bar__upload-menu" role="menu">
+              {#each uploadTargets as provider (provider.id)}
+                <button
+                  type="button"
+                  class="secondary"
+                  role="menuitem"
+                  disabled={historyBusyPath === $editor.exportStatus.outputPath}
+                  on:click={() => {
+                    selectedUploadProviderId = provider.id;
+                    void uploadClip($editor.exportStatus.outputPath ?? '', provider.id);
+                  }}
+                >
+                  {provider.name}{provider.isDefault ? ' (default)' : ''} · {kindLabel(provider.kind)}
+                </button>
+              {/each}
+            </div>
+          </details>
+        {/if}
       {/if}
     </div>
   </footer>
@@ -1275,6 +1610,7 @@
   {exportMode}
   presets={exportPresets}
   presetId={exportPresetId}
+  bind:accurateTrim={accurateTrimExport}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
   on:exportModeChange={(event) => (exportMode = event.detail.mode)}
@@ -1290,11 +1626,21 @@
   {exportPresetId}
   {preferGpuEncoding}
   {runAtStartup}
-  {catboxUserHash}
-  {catboxApiUrl}
+  bind:uploadProviders
+  bind:defaultUploadProviderId
+  bind:customExportPresets
   {ffmpegStatus}
   {gpuEncoders}
   on:close={() => (settingsModalOpen = false)}
+  on:error={(event) => {
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'error',
+        message: event.detail.message,
+      },
+    }));
+  }}
   on:saved={(event) => {
     watchFolder = event.detail.watchFolder;
     watchFolderEnabled = event.detail.watchFolderEnabled;
@@ -1302,10 +1648,16 @@
     exportPresetId = event.detail.lastPresetId;
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
-    catboxUserHash = event.detail.catboxUserHash;
-    catboxApiUrl = event.detail.catboxApiUrl;
+    uploadProviders = event.detail.uploadProviders;
+    defaultUploadProviderId = event.detail.defaultUploadProviderId;
+    customExportPresets = event.detail.customExportPresets;
+    selectedUploadProviderId = event.detail.defaultUploadProviderId;
+    void refreshUploadProviderSummaries();
+    void refreshExportPresets();
   }}
 />
+
+<ShortcutsModal open={shortcutsModalOpen} on:close={() => (shortcutsModalOpen = false)} />
 
 <ClipHistoryDrawer
   open={historyDrawerOpen}
@@ -1315,7 +1667,7 @@
   on:reveal={(event) => void invoke('reveal_in_explorer', { path: event.detail.path })}
   on:openClip={(event) => void openClipPath(event.detail.path)}
   on:copyPath={(event) => void invoke('copy_text_to_clipboard', { text: event.detail.path })}
-  on:upload={(event) => void uploadClip(event.detail.path)}
+  on:upload={(event) => void uploadClip(event.detail.path, event.detail.providerId)}
   on:remove={(event) => void removeHistoryEntry(event.detail.path)}
   on:clear={() => void clearHistory()}
 />

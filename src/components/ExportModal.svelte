@@ -1,15 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { formatBytes, formatTime, sanitizeExportFileName } from '../lib/format';
+  import type { ExportPresetInfo } from '../lib/exportPresets';
   import IconButton from './IconButton.svelte';
-
-  type PresetInfo = {
-    id: string;
-    name: string;
-    description: string;
-    lossless: boolean;
-    requiresGpu: boolean;
-  };
 
   export let open = false;
   export let outputDirectory = '';
@@ -19,8 +12,9 @@
   export let rangeDuration = 0;
   export let canExportRange = false;
   export let exportMode: 'sequence' | 'range' = 'sequence';
-  export let presets: PresetInfo[] = [];
+  export let presets: ExportPresetInfo[] = [];
   export let presetId = 'lossless-trim';
+  export let accurateTrim = false;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -33,14 +27,13 @@
   $: selectedPreset = presets.find((preset) => preset.id === presetId) ?? null;
   $: exportDuration = exportMode === 'range' && canExportRange ? rangeDuration : duration;
   $: canExport = Boolean(outputFileName.trim()) && Boolean(outputDirectory);
-  $: discordEstimate =
-    selectedPreset?.id === 'discord' && exportDuration > 0
-      ? `Target upload size about ${formatBytes(9 * 1024 * 1024)} for ${formatTime(exportDuration)}.`
+  $: sizeEstimate =
+    selectedPreset?.targetBytes && exportDuration > 0
+      ? `Target upload size about ${formatBytes(selectedPreset.targetBytes)} for ${formatTime(exportDuration)}.`
       : null;
 
-  function handlePresetChange(event: Event): void {
-    const target = event.currentTarget as HTMLSelectElement;
-    dispatch('presetChange', { presetId: target.value });
+  function selectPreset(id: string): void {
+    dispatch('presetChange', { presetId: id });
   }
 
   function normalizeFileName(): void {
@@ -52,81 +45,108 @@
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
   <div class="modal-backdrop" on:click={() => dispatch('close')}>
     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-    <section class="modal" aria-label="Export clip" on:click|stopPropagation>
+    <section class="modal modal--wide modal--export" aria-label="Export clip" on:click|stopPropagation>
       <header>
         <h2>Export clip</h2>
         <button type="button" class="icon-button" title="Close" on:click={() => dispatch('close')}>Close</button>
       </header>
 
-      <dl>
-        <div>
-          <dt>Preset</dt>
-          <dd>
-            <select value={presetId} on:change={handlePresetChange}>
-              {#each presets as preset}
-                <option value={preset.id}>{preset.name}</option>
-              {/each}
-            </select>
-            {#if selectedPreset}
-              <p class="modal__hint">{selectedPreset.description}</p>
-            {/if}
-            {#if discordEstimate}
-              <p class="modal__hint">{discordEstimate}</p>
-            {/if}
-          </dd>
-        </div>
-        <div>
-          <dt>Export mode</dt>
-          <dd class="modal__mode">
-            <label>
-              <input
-                type="radio"
-                name="export-mode"
-                value="sequence"
-                checked={exportMode === 'sequence'}
-                on:change={() => dispatch('exportModeChange', { mode: 'sequence' })}
-              />
-              Sequence ({segmentCount} segment{segmentCount === 1 ? '' : 's'}, {formatTime(duration)})
-            </label>
-            <label>
-              <input
-                type="radio"
-                name="export-mode"
-                value="range"
-                checked={exportMode === 'range'}
-                disabled={!canExportRange}
-                on:change={() => dispatch('exportModeChange', { mode: 'range' })}
-              />
-              I/O range ({formatTime(rangeDuration)})
-            </label>
-          </dd>
-        </div>
-        <div>
-          <dt>File name</dt>
-          <dd class="modal__output">
-            <input
-              type="text"
-              class="modal__text-input"
-              bind:value={outputFileName}
-              spellcheck="false"
-              aria-label="Exported file name"
-              on:blur={normalizeFileName}
-            />
-            <p class="modal__hint">
-              {#if outputDirectory}
-                Save to: {outputDirectory}
-              {:else}
-                Choose a folder with the button below.
+      <div class="modal__body">
+        <dl>
+          <div>
+            <dt>Preset</dt>
+            <dd>
+              <ul class="preset-picker" role="listbox" aria-label="Export presets">
+                {#each presets as preset (preset.id)}
+                  <li>
+                    <button
+                      type="button"
+                      class="preset-picker__option"
+                      class:preset-picker__option--selected={preset.id === presetId}
+                      role="option"
+                      aria-selected={preset.id === presetId}
+                      on:click={() => selectPreset(preset.id)}
+                    >
+                      <span class="preset-picker__name">
+                        {preset.name}
+                        {#if preset.custom}
+                          <small>Custom</small>
+                        {/if}
+                      </span>
+                      <span class="preset-picker__description">{preset.description}</span>
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+              {#if sizeEstimate}
+                <p class="modal__hint">{sizeEstimate}</p>
               {/if}
-            </p>
-          </dd>
-        </div>
-      </dl>
+            </dd>
+          </div>
+          <div>
+            <dt>Export mode</dt>
+            <dd class="modal__mode">
+              <label>
+                <input
+                  type="radio"
+                  name="export-mode"
+                  value="sequence"
+                  checked={exportMode === 'sequence'}
+                  on:change={() => dispatch('exportModeChange', { mode: 'sequence' })}
+                />
+                Sequence ({segmentCount} segment{segmentCount === 1 ? '' : 's'}, {formatTime(duration)})
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="export-mode"
+                  value="range"
+                  checked={exportMode === 'range'}
+                  disabled={!canExportRange}
+                  on:change={() => dispatch('exportModeChange', { mode: 'range' })}
+                />
+                I/O range ({formatTime(rangeDuration)})
+              </label>
+            </dd>
+          </div>
+          <div>
+            <dt>File name</dt>
+            <dd class="modal__output">
+              <input
+                type="text"
+                class="modal__text-input"
+                bind:value={outputFileName}
+                spellcheck="false"
+                aria-label="Exported file name"
+                on:blur={normalizeFileName}
+              />
+              <p class="modal__hint">
+                {#if outputDirectory}
+                  Save to: {outputDirectory}
+                {:else}
+                  Choose a folder with the button below.
+                {/if}
+              </p>
+            </dd>
+          </div>
+          <div>
+            <dt>Trim quality</dt>
+            <dd class="modal__mode">
+              <label>
+                <input type="checkbox" bind:checked={accurateTrim} />
+                Accurate trim (re-encode boundaries; slower than lossless stream-copy)
+              </label>
+            </dd>
+          </div>
+        </dl>
 
-      <p class="modal__note">Existing files at the selected output path will be replaced.</p>
+        <p class="modal__note">Existing files at the selected output path will be replaced.</p>
+      </div>
 
       <footer>
-        <button type="button" class="secondary" title="Choose export folder" on:click={() => dispatch('chooseOutput')}>Choose folder</button>
+        <button type="button" class="secondary" title="Choose export folder" on:click={() => dispatch('chooseOutput')}>
+          Choose folder
+        </button>
         <IconButton icon="export" title="Start export" variant="primary" showLabel disabled={!canExport} on:click={() => dispatch('confirm')}>
           Export
         </IconButton>

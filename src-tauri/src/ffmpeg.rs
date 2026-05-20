@@ -37,6 +37,8 @@ pub struct ExportParams {
     crop: Option<CropRect>,
     /// Playback/export gain multiplier (0.0–2.0, default 1.0).
     volume: Option<f64>,
+    /// Re-encode segment boundaries for frame-accurate cuts (disables stream-copy).
+    accurate_trim: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -220,7 +222,7 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
             .map_err(|err| format!("Failed to create output directory: {err}"))?;
     }
 
-    let preset_name = presets::builtin_presets()
+    let preset_name = presets::all_preset_infos()
         .into_iter()
         .find(|preset| preset.id == preset_id)
         .map(|preset| preset.name)
@@ -235,7 +237,9 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
 
     let crop = normalize_crop(params.crop.as_ref(), metadata.width, metadata.height);
     let volume = normalize_volume(params.volume);
-    let use_lossless = profile.lossless && crop.is_none() && !volume_is_adjusted(volume);
+    let accurate_trim = params.accurate_trim.unwrap_or(false);
+    let use_lossless =
+        profile.lossless && crop.is_none() && !volume_is_adjusted(volume) && !accurate_trim;
 
     if use_lossless {
         if segments.len() == 1 {

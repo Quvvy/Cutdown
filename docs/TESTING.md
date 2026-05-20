@@ -60,8 +60,16 @@ npm run tauri -- build
 | History | Export adds row; Reveal / Open / Copy path work | |
 | History | Clear history removes all rows | |
 | Upload | Catbox upload copies HTTPS link to clipboard | |
+| Upload | File Garden sign-in + upload copies HTTPS link (account required) | |
+| Upload | Custom HTTP multipart upload returns share URL | |
+| Upload | Upload menu lists enabled providers; default provider used | |
+| Settings | Add/edit/remove upload targets; set default provider | |
 | UI | Escape closes Export / Settings / History | |
 | UI | Backdrop click closes modals | |
+| UI | `?` opens keyboard shortcuts modal | |
+| UI | Drop video file onto window opens clip | |
+| UI | Recent menu lists and opens prior sources | |
+| Export | Accurate trim re-encodes boundaries on Lossless preset | |
 
 ## Known limitations (not failures)
 

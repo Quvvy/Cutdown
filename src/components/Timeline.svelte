@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createEventDispatcher, tick } from 'svelte';
+  import { createEventDispatcher, onMount, tick } from 'svelte';
   import IconButton from './IconButton.svelte';
   import { clamp, formatTime } from '../lib/format';
   import type { TimelineSegment } from '../stores/editor';
@@ -17,10 +17,18 @@
   export let audioCodec: string | null = null;
   export let audioChannels: number | null = null;
 
+  const TRACK_SPLIT_STORAGE_KEY = 'cutdown-track-split';
+  const RULER_HEIGHT = 25;
+  const RESIZE_BAR_HEIGHT = 6;
+  const MIN_VIDEO_TRACK_HEIGHT = 42;
+  const MIN_AUDIO_TRACK_HEIGHT = 38;
+
   let scrollArea: HTMLDivElement;
   let videoScroll: HTMLDivElement;
   let audioScroll: HTMLDivElement;
   let ruler: HTMLDivElement;
+  let timelineBody: HTMLDivElement;
+  let trackSplitRatio = 0.55;
   let activeSeek = false;
   let activeMarker: 'start' | 'end' | null = null;
   let activeResize = false;
@@ -302,6 +310,64 @@
     }
   }
 
+  function readTrackSplitRatio(): number {
+    const raw = localStorage.getItem(TRACK_SPLIT_STORAGE_KEY);
+    const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
+    return Number.isFinite(parsed) ? clamp(parsed, 0.22, 0.78) : 0.55;
+  }
+
+  function persistTrackSplitRatio(): void {
+    localStorage.setItem(TRACK_SPLIT_STORAGE_KEY, String(trackSplitRatio));
+  }
+
+  function usableTrackHeight(): number {
+    if (!timelineBody) {
+      return MIN_VIDEO_TRACK_HEIGHT + MIN_AUDIO_TRACK_HEIGHT;
+    }
+
+    return Math.max(
+      MIN_VIDEO_TRACK_HEIGHT + MIN_AUDIO_TRACK_HEIGHT,
+      timelineBody.clientHeight - RULER_HEIGHT - RESIZE_BAR_HEIGHT,
+    );
+  }
+
+  function emitTrackHeights(video: number, audio: number): void {
+    if (video === videoTrackHeight && audio === audioTrackHeight) {
+      return;
+    }
+
+    dispatch('trackHeightChange', { videoHeight: video, audioHeight: audio });
+  }
+
+  function layoutTracksFromBody(): void {
+    const usable = usableTrackHeight();
+    const video = clamp(
+      Math.round(usable * trackSplitRatio),
+      MIN_VIDEO_TRACK_HEIGHT,
+      usable - MIN_AUDIO_TRACK_HEIGHT,
+    );
+    const audio = usable - video;
+    trackSplitRatio = video / usable;
+    emitTrackHeights(video, audio);
+  }
+
+  onMount(() => {
+    trackSplitRatio = readTrackSplitRatio();
+    const observer = new ResizeObserver(() => {
+      if (!activeResize) {
+        layoutTracksFromBody();
+      }
+    });
+
+    if (timelineBody) {
+      observer.observe(timelineBody);
+    }
+
+    void tick().then(() => layoutTracksFromBody());
+
+    return () => observer.disconnect();
+  });
+
   function startTrackResize(event: PointerEvent): void {
     event.preventDefault();
     activeResize = true;
@@ -316,11 +382,14 @@
       return;
     }
 
+    const usable = usableTrackHeight();
     const delta = event.clientY - resizeStartY;
-    dispatch('trackHeightChange', {
-      videoHeight: clamp(resizeStartVideoHeight + delta, 42, 150),
-      audioHeight: clamp(resizeStartAudioHeight - delta, 38, 150),
-    });
+    const video = clamp(
+      resizeStartVideoHeight + delta,
+      MIN_VIDEO_TRACK_HEIGHT,
+      usable - MIN_AUDIO_TRACK_HEIGHT,
+    );
+    emitTrackHeights(video, usable - video);
   }
 
   function stopTrackResize(event: PointerEvent): void {
@@ -329,14 +398,22 @@
       target.releasePointerCapture(event.pointerId);
     }
 
+    if (activeResize) {
+      const usable = usableTrackHeight();
+      trackSplitRatio = clamp(videoTrackHeight / usable, 0.22, 0.78);
+      persistTrackSplitRatio();
+    }
+
     activeResize = false;
+    layoutTracksFromBody();
   }
 
   function toggleAudioExpanded(): void {
-    dispatch('trackHeightChange', {
-      videoHeight: videoTrackHeight,
-      audioHeight: audioTrackHeight < 92 ? 116 : 58,
-    });
+    const usable = usableTrackHeight();
+    trackSplitRatio =
+      audioTrackHeight < usable * 0.42 ? 0.58 : 0.38;
+    persistTrackSplitRatio();
+    layoutTracksFromBody();
   }
 
   function segmentSequenceStart(index: number): number {
@@ -462,7 +539,11 @@
     </div>
   </header>
 
-  <div class="timeline__body">
+  <div
+    class="timeline__body"
+    bind:this={timelineBody}
+    style={`--video-track-height: ${videoTrackHeight}px; --audio-track-height: ${audioTrackHeight}px`}
+  >
     <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
     <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>
       <div class="timeline__content" style={`width: ${timelineWidth}px`}>
@@ -508,12 +589,18 @@
       </div>
     </div>
 
-    <div class="timeline__track-head" style={`height: ${videoTrackHeight}px`}>
+    <div class="timeline__track-head timeline__track-head--video">
       <strong>Video</strong>
       <span>{segments.length} segment{segments.length === 1 ? '' : 's'}</span>
     </div>
-    <div bind:this={videoScroll} class="timeline__scroll timeline__scroll--track" role="region" aria-label="Video track" on:contextmenu={openContextMenu}>
-      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px; height: ${videoTrackHeight}px`}>
+    <div
+      bind:this={videoScroll}
+      class="timeline__scroll timeline__scroll--track"
+      role="region"
+      aria-label="Video track"
+      on:contextmenu={openContextMenu}
+    >
+      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px`}>
         {#each ticks as tick}
           <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
         {/each}
@@ -541,20 +628,30 @@
       </div>
     </div>
 
-    <button type="button" class="timeline__resize" aria-label="Resize tracks" on:pointerdown={startTrackResize}></button>
-    <div class="timeline__resize-fill"></div>
+    <button
+      type="button"
+      class="timeline__resize"
+      style="grid-column: 1 / -1"
+      aria-label="Resize tracks"
+      on:pointerdown={startTrackResize}
+    ></button>
 
     <button
       type="button"
       class="timeline__track-head timeline__track-head--audio"
-      style={`height: ${audioTrackHeight}px`}
       on:dblclick={toggleAudioExpanded}
     >
       <strong>Audio</strong>
       <span>{audioLabel}</span>
     </button>
-    <div bind:this={audioScroll} class="timeline__scroll timeline__scroll--track" role="region" aria-label="Audio track" on:contextmenu={openContextMenu}>
-      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px; height: ${audioTrackHeight}px`}>
+    <div
+      bind:this={audioScroll}
+      class="timeline__scroll timeline__scroll--track"
+      role="region"
+      aria-label="Audio track"
+      on:contextmenu={openContextMenu}
+    >
+      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px`}>
         {#each ticks as tick}
           <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
         {/each}

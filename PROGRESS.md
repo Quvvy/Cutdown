@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Cutdown is a multi-cut editor with I/O range editing, compression presets, watch-folder workflow, clip history, Catbox upload, session crop, clip volume, custom toolbar icons, and Windows tray integration.
+Cutdown is a multi-cut editor with I/O range editing, compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden, custom HTTP), session crop, clip volume, custom toolbar icons, and Windows tray integration.
 
 ## Completed
 
@@ -12,16 +12,19 @@ Cutdown is a multi-cut editor with I/O range editing, compression presets, watch
 - Discord preset with target-size retries.
 - Export progress percent from ffmpeg stderr.
 - Watch-folder monitoring with Windows toasts (2s debounce per path).
-- Settings: watch folder, default export folder, GPU preference, run at startup, Catbox options.
+- Settings: watch folder, default export folder, GPU preference, run at startup, upload targets.
 - Open With file associations and CLI launch path.
 - Editable auto-generated export filenames.
 - Minimize-to-tray on window close; left-click tray restores editor.
 - Clip history drawer (`%APPDATA%/Cutdown/history.json`, 50 entries).
-- Catbox upload with clipboard link.
+- Pluggable upload providers: Catbox, File Garden (email/password/TOTP session), custom HTTP multipart (self-hosted).
 - Session crop overlay (16:9, 9:16, free) with ffmpeg crop filter.
 - Clip volume slider (preview + export via ffmpeg `volume` filter).
 - Custom Fluent toolbar/timeline icons and styled range sliders.
 - Timeline zoom-to-range scroll fix.
+- Keyboard shortcuts modal (`?`).
+- Drag-and-drop open; recent source list in settings.
+- Accurate trim export option.
 - `npm run validate:release` smoke script.
 
 ## Validation
@@ -65,16 +68,16 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 | 4 Presets / Compression | Complete (v1) |
 | 5 Crop | Complete (session v1) |
 | 6 Watch Folder | MVP complete |
-| 7 Upload / Sharing | Complete (Catbox v1) |
+| 7 Upload / Sharing | Complete (v2: Catbox, File Garden, custom) |
 | 8 Clip History | Complete (drawer v1) |
 | 9 Windows Integration | Complete (Open With, startup, tray) |
 | 10 Performance Audit | Documented (informal baseline) |
-| 11 Trim Accuracy | Planned |
+| 11 Trim Accuracy | Partial (accurate trim export) |
 | 12 Audio Editing | Planned |
-| 13 Timeline Workflow | Planned |
+| 13 Timeline Workflow | Partial (`?` shortcuts modal) |
 | 14 Session / Project Save | Planned |
 | 15 Export & Presets v2 | Planned |
-| 16 Preview & Input v2 | Planned |
+| 16 Preview & Input v2 | Partial (drag-drop, recent sources) |
 | 17 OBS & Tray Workflow | Planned |
 | 18 Platform & Release | Planned |
 
@@ -82,7 +85,6 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 
 ### Milestone 11: Trim accuracy
 
-- Optional snap-to-keyframe for stream-copy cuts.
 - Optional “accurate cut” mode (re-encode segment boundaries) when frame-perfect in/out matters.
 - Document trade-offs in UI (speed vs accuracy).
 
@@ -108,7 +110,7 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 - User-defined export presets (CRF, resolution cap, bitrate).
 - Export queue (no concurrent export + upload).
 - Batch export from history or “one file per segment.”
-- Additional upload targets (e.g. Discord webhook) alongside Catbox.
+- Additional built-in upload targets (e.g. Discord webhook).
 - Video-copy + audio-filter-only path when only volume changes on lossless preset.
 
 ### Milestone 16: Preview & input v2

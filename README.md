@@ -19,9 +19,19 @@ The current milestone is a working local multi-cut editor with compression prese
 - Export kept segments as a sequence, or export the I/O range as a single trim.
 - Watch an OBS replay folder and get a toast when a new clip appears.
 - Use the system tray: close (X) minimizes to tray; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits.
-- Review recent exports in **History**, upload to Catbox, and copy share links.
+- Review recent exports in **History**, upload to **Catbox**, **File Garden**, or a **custom HTTP server**, and copy share links.
 - Crop the preview (16:9, 9:16, or free) before export.
 - Adjust clip volume for preview and export.
+
+### Upload targets
+
+Configure providers in **Settings → Upload targets**:
+
+- **Catbox** — anonymous or registered uploads via the Catbox API.
+- **File Garden** — sign in with email, password, and optional TOTP; session is stored locally.
+- **Custom HTTP** — POST multipart to your own media server (URL, file field name, optional `Authorization` header, plain-text or JSON URL response).
+
+Use the **Upload** menu in the bottom bar (after export) or in clip history to pick a target. Credentials live in `%APPDATA%/Cutdown/settings.json`.
 
 Current shortcuts:
 

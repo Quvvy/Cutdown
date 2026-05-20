@@ -1,3 +1,5 @@
+use crate::settings::{load_settings, CustomExportPreset};
+// CustomExportPreset lives in settings.rs; conversion helpers below.
 use serde::Serialize;
 
 pub const PRESET_LOSSLESS: &str = "lossless-trim";
@@ -15,6 +17,10 @@ pub struct PresetInfo {
     pub description: String,
     pub lossless: bool,
     pub requires_gpu: bool,
+    #[serde(default)]
+    pub custom: bool,
+    #[serde(default)]
+    pub target_bytes: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,7 +36,15 @@ pub struct EncodeProfile {
 
 #[tauri::command]
 pub fn list_presets() -> Vec<PresetInfo> {
-    builtin_presets()
+    all_preset_infos()
+}
+
+pub fn all_preset_infos() -> Vec<PresetInfo> {
+    let mut presets = builtin_presets();
+    for custom in &load_settings().custom_export_presets {
+        presets.push(custom.to_preset_info());
+    }
+    presets
 }
 
 pub fn resolve_preset_id(preset_id: Option<String>) -> String {
@@ -57,6 +71,10 @@ pub fn resolve_encode_profile(
             scale_filter: None,
             target_bytes: None,
         });
+    }
+
+    if let Some(custom) = find_custom_preset(preset_id) {
+        return custom_to_profile(&custom, prefer_gpu, gpu_encoders, total_duration_secs, video_width, video_height);
     }
 
     let video_codec = pick_video_encoder(prefer_gpu, gpu_encoders);
@@ -108,6 +126,181 @@ pub fn resolve_encode_profile(
     };
 
     Ok(profile)
+}
+
+pub fn normalize_custom_export_presets(presets: &mut Vec<CustomExportPreset>) -> Result<(), String> {
+    let mut seen = std::collections::HashSet::new();
+
+    for preset in presets.iter_mut() {
+        preset.id = preset.id.trim().to_string();
+        preset.name = preset.name.trim().to_string();
+        preset.description = preset.description.trim().to_string();
+
+        if preset.id.is_empty() {
+            return Err("Each custom export preset needs an id.".to_string());
+        }
+
+        if preset.name.is_empty() {
+            return Err("Each custom export preset needs a name.".to_string());
+        }
+
+        if is_builtin_preset_id(&preset.id) {
+            return Err(format!(
+                "Custom preset id \"{}\" conflicts with a built-in preset.",
+                preset.id
+            ));
+        }
+
+        if !seen.insert(preset.id.clone()) {
+            return Err(format!("Duplicate custom export preset id: {}", preset.id));
+        }
+
+        if preset.lossless {
+            continue;
+        }
+
+        match preset.mode.as_str() {
+            "bitrate" => {
+                if preset.video_bitrate_kbps.unwrap_or(0) == 0 {
+                    return Err(format!(
+                        "Preset \"{}\" needs a video bitrate (kbps) for bitrate mode.",
+                        preset.name
+                    ));
+                }
+            }
+            "crf" => {
+                if preset.crf.is_none() {
+                    return Err(format!(
+                        "Preset \"{}\" needs a CRF value for quality mode.",
+                        preset.name
+                    ));
+                }
+            }
+            "target_size" => {
+                if preset.target_bytes.unwrap_or(0) == 0 {
+                    return Err(format!(
+                        "Preset \"{}\" needs a target file size for target-size mode.",
+                        preset.name
+                    ));
+                }
+            }
+            other => {
+                return Err(format!(
+                    "Preset \"{}\" has unknown mode \"{other}\".",
+                    preset.name
+                ));
+            }
+        }
+
+        if preset.audio_bitrate_kbps.is_none() {
+            preset.audio_bitrate_kbps = Some(128);
+        }
+    }
+
+    Ok(())
+}
+
+fn find_custom_preset(preset_id: &str) -> Option<CustomExportPreset> {
+    load_settings()
+        .custom_export_presets
+        .into_iter()
+        .find(|preset| preset.id == preset_id)
+}
+
+fn custom_to_profile(
+    preset: &CustomExportPreset,
+    prefer_gpu: bool,
+    gpu_encoders: &[String],
+    total_duration_secs: f64,
+    video_width: u32,
+    video_height: u32,
+) -> Result<EncodeProfile, String> {
+    if preset.lossless {
+        return Ok(EncodeProfile {
+            lossless: true,
+            video_codec: "copy".to_string(),
+            video_args: Vec::new(),
+            audio_codec: "copy".to_string(),
+            audio_args: Vec::new(),
+            scale_filter: None,
+            target_bytes: None,
+        });
+    }
+
+    let video_codec = pick_video_encoder(prefer_gpu, gpu_encoders);
+    let encoder_speed = preset
+        .encoder_speed
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("fast");
+    let audio_kbps = preset.audio_bitrate_kbps.unwrap_or(128);
+    let scale_filter = optional_scale_from_preset(preset, video_width, video_height);
+
+    let profile = match preset.mode.as_str() {
+        "bitrate" => {
+            let video_kbps = preset.video_bitrate_kbps.unwrap_or(2500);
+            EncodeProfile {
+                lossless: false,
+                video_codec: video_codec.clone(),
+                video_args: encoder_args(&video_codec, video_kbps, encoder_speed),
+                audio_codec: "aac".to_string(),
+                audio_args: vec!["-b:a".to_string(), format!("{audio_kbps}k")],
+                scale_filter,
+                target_bytes: None,
+            }
+        }
+        "crf" => {
+            let crf = preset.crf.unwrap_or(20);
+            EncodeProfile {
+                lossless: false,
+                video_codec: "libx264".to_string(),
+                video_args: vec![
+                    "-crf".to_string(),
+                    crf.to_string(),
+                    "-preset".to_string(),
+                    encoder_speed.to_string(),
+                ],
+                audio_codec: "aac".to_string(),
+                audio_args: vec!["-b:a".to_string(), format!("{audio_kbps}k")],
+                scale_filter,
+                target_bytes: None,
+            }
+        }
+        "target_size" => {
+            let target_bytes = preset.target_bytes.unwrap_or(DISCORD_TARGET_BYTES);
+            let video_kbps = discord_video_bitrate_kbps(total_duration_secs, audio_kbps);
+            EncodeProfile {
+                lossless: false,
+                video_codec: video_codec.clone(),
+                video_args: encoder_args(&video_codec, video_kbps, encoder_speed),
+                audio_codec: "aac".to_string(),
+                audio_args: vec!["-b:a".to_string(), format!("{audio_kbps}k")],
+                scale_filter,
+                target_bytes: Some(target_bytes),
+            }
+        }
+        other => return Err(format!("Unknown custom preset mode: {other}")),
+    };
+
+    Ok(profile)
+}
+
+fn optional_scale_from_preset(
+    preset: &CustomExportPreset,
+    video_width: u32,
+    video_height: u32,
+) -> Option<String> {
+    match (preset.max_width, preset.max_height) {
+        (Some(width), Some(height)) => optional_scale_filter(width, height, video_width, video_height),
+        _ => None,
+    }
+}
+
+fn is_builtin_preset_id(id: &str) -> bool {
+    matches!(
+        id,
+        PRESET_LOSSLESS | PRESET_DISCORD | PRESET_ARCHIVE | PRESET_TWITTER
+    )
 }
 
 fn pick_video_encoder(prefer_gpu: bool, gpu_encoders: &[String]) -> String {
@@ -210,6 +403,8 @@ pub fn builtin_presets() -> Vec<PresetInfo> {
             description: "Fast stream-copy trim with no re-encode.".to_string(),
             lossless: true,
             requires_gpu: false,
+            custom: false,
+            target_bytes: None,
         },
         PresetInfo {
             id: PRESET_DISCORD.to_string(),
@@ -217,6 +412,8 @@ pub fn builtin_presets() -> Vec<PresetInfo> {
             description: "H.264/AAC sized for ~9 MB uploads.".to_string(),
             lossless: false,
             requires_gpu: false,
+            custom: false,
+            target_bytes: Some(DISCORD_TARGET_BYTES),
         },
         PresetInfo {
             id: PRESET_ARCHIVE.to_string(),
@@ -224,6 +421,8 @@ pub fn builtin_presets() -> Vec<PresetInfo> {
             description: "High-quality H.264 re-encode for keeping clips.".to_string(),
             lossless: false,
             requires_gpu: false,
+            custom: false,
+            target_bytes: None,
         },
         PresetInfo {
             id: PRESET_TWITTER.to_string(),
@@ -231,6 +430,49 @@ pub fn builtin_presets() -> Vec<PresetInfo> {
             description: "720p H.264 with platform-friendly limits.".to_string(),
             lossless: false,
             requires_gpu: false,
+            custom: false,
+            target_bytes: None,
         },
     ]
+}
+
+impl CustomExportPreset {
+    pub fn to_preset_info(&self) -> PresetInfo {
+        PresetInfo {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            description: if self.description.is_empty() {
+                custom_preset_summary(self)
+            } else {
+                self.description.clone()
+            },
+            lossless: self.lossless,
+            requires_gpu: !self.lossless,
+            custom: true,
+            target_bytes: if self.mode == "target_size" {
+                self.target_bytes
+            } else {
+                None
+            },
+        }
+    }
+}
+
+fn custom_preset_summary(preset: &CustomExportPreset) -> String {
+    if preset.lossless {
+        return "Custom lossless stream-copy.".to_string();
+    }
+
+    match preset.mode.as_str() {
+        "bitrate" => format!(
+            "Custom H.264/AAC at {} kbps video.",
+            preset.video_bitrate_kbps.unwrap_or(2500)
+        ),
+        "crf" => format!("Custom H.264/AAC at CRF {}.", preset.crf.unwrap_or(20)),
+        "target_size" => {
+            let megabytes = preset.target_bytes.unwrap_or(DISCORD_TARGET_BYTES) as f64 / (1024.0 * 1024.0);
+            format!("Custom H.264/AAC targeting about {megabytes:.0} MB.")
+        }
+        _ => "Custom export preset.".to_string(),
+    }
 }

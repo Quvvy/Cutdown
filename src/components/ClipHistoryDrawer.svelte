@@ -12,7 +12,7 @@
     reveal: { path: string };
     openClip: { path: string };
     copyPath: { path: string };
-    upload: { path: string };
+    upload: { path: string; providerId?: string | null };
     remove: { path: string };
     clear: void;
   }>();
@@ -58,7 +58,7 @@
               <button
                 type="button"
                 class="secondary"
-                title="Upload to Catbox and copy link"
+                title="Upload and copy link"
                 disabled={busyPath === entry.outputPath}
                 on:click={() => dispatch('upload', { path: entry.outputPath })}
               >
