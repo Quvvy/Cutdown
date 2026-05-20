@@ -142,6 +142,10 @@
     }
   }
 
+  export function pausePlayback(): void {
+    video?.pause();
+  }
+
   async function handleLoadedMetadata(): Promise<void> {
     loadError = '';
     videoWidth = video.videoWidth || 0;

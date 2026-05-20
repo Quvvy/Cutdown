@@ -15,20 +15,21 @@ The current milestone is a working local multi-cut editor with compression prese
 - Select/delete unwanted segments.
 - Set an I/O range on the source timeline and use it for editing and export.
 - Undo/redo segment edits.
-- Export with **Lossless Trim** (stream-copy) or compressed presets: **Discord**, **Archive**, **Twitter/X**.
+- Export with **Lossless Trim** (stream-copy) or compressed presets: **Discord**, **Archive**, **Twitter/X**, plus **custom presets** you define in Settings.
 - Export kept segments as a sequence, or export the I/O range as a single trim.
 - Watch an OBS replay folder and get a toast when a new clip appears.
 - Use the system tray: close (X) minimizes to tray; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits.
 - Review recent exports in **History**, upload to **Catbox**, **File Garden**, or a **custom HTTP server**, and copy share links.
 - Crop the preview (16:9, 9:16, or free) before export.
-- Adjust clip volume for preview and export.
+- Adjust clip volume for preview and export, or **strip audio** on export.
+- **Fit**, zoom, and pan the preview; editor restores your last cut when you reopen the same source file.
 
 ### Upload targets
 
 Configure providers in **Settings → Upload targets**:
 
 - **Catbox** — anonymous or registered uploads via the Catbox API.
-- **File Garden** — sign in with email, password, and optional TOTP; session is stored locally.
+- **File Garden** — sign in with email and password via `api.filegarden.com`; session is stored locally.
 - **Custom HTTP** — POST multipart to your own media server (URL, file field name, optional `Authorization` header, plain-text or JSON URL response).
 
 Use the **Upload** menu in the bottom bar (after export) or in clip history to pick a target. Credentials live in `%APPDATA%/Cutdown/settings.json`.
@@ -40,11 +41,14 @@ Current shortcuts:
 - `Delete` / `Backspace`: delete selected segment.
 - `Ctrl+Z`: undo segment edit.
 - `Ctrl+Y` / `Ctrl+Shift+Z`: redo segment edit.
-- `L`: toggle preview loop inside the I/O range.
+- `Shift+L`: toggle preview loop inside the I/O range.
 - `Z`: zoom timeline to the I/O range.
 - `Space`: play/pause.
 - `Left` / `Right`: step by frame.
 - `Shift+Left` / `Shift+Right`: step by 5 seconds.
+- `J` / `K` / `L`: step back 1s, pause, step forward 1s.
+- `[` / `]`: snap playhead to range in / out.
+- `Ctrl+D`: duplicate selected segment.
 - `Escape`: close Export, Settings, or History panels.
 
 Range actions are also available from the transport bar, timeline context menu, and export modal (sequence vs I/O range).
@@ -52,7 +56,7 @@ Range actions are also available from the transport bar, timeline context menu, 
 Known limitations:
 
 - Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
-- Volume can be adjusted for preview and export; fade/strip/waveform editing is not implemented yet.
+- Volume can be adjusted for preview and export; fade and waveform editing are not implemented yet.
 - Preview support is currently limited by WebView2/HTML video decoding. ffmpeg may support files that the preview cannot play until proxy/remux preview support is added.
 
 ## Requirements

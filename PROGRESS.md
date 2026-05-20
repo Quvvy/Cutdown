@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Cutdown is a multi-cut editor with I/O range editing, compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden, custom HTTP), session crop, clip volume, custom toolbar icons, and Windows tray integration.
+Cutdown is a multi-cut editor with I/O range editing, built-in and custom compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden via `api.filegarden.com`, custom HTTP), per-source session restore, session crop, clip volume, preview fit/zoom/pan, custom toolbar icons, and Windows tray integration.
 
 ## Completed
 
@@ -17,7 +17,9 @@ Cutdown is a multi-cut editor with I/O range editing, compression presets, watch
 - Editable auto-generated export filenames.
 - Minimize-to-tray on window close; left-click tray restores editor.
 - Clip history drawer (`%APPDATA%/Cutdown/history.json`, 50 entries).
-- Pluggable upload providers: Catbox, File Garden (email/password/TOTP session), custom HTTP multipart (self-hosted).
+- Pluggable upload providers: Catbox, File Garden (legacy API at `api.filegarden.com`, email/password), custom HTTP multipart (self-hosted).
+- Custom export presets (CRF, bitrate, target size, lossless) in Settings and Export modal.
+- Preview fit-to-panel, zoom/pan, and workspace splitter resize.
 - Session crop overlay (16:9, 9:16, free) with ffmpeg crop filter.
 - Clip volume slider (preview + export via ffmpeg `volume` filter).
 - Custom Fluent toolbar/timeline icons and styled range sliders.
@@ -25,6 +27,8 @@ Cutdown is a multi-cut editor with I/O range editing, compression presets, watch
 - Keyboard shortcuts modal (`?`).
 - Drag-and-drop open; recent source list in settings.
 - Accurate trim export option.
+- Per-source session restore (segments, I/O, crop, volume).
+- Strip audio on export; J/K/L scrub; snap to I/O; segment duplicate and drag-reorder.
 - `npm run validate:release` smoke script.
 
 ## Validation
@@ -73,11 +77,11 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 | 9 Windows Integration | Complete (Open With, startup, tray) |
 | 10 Performance Audit | Documented (informal baseline) |
 | 11 Trim Accuracy | Partial (accurate trim export) |
-| 12 Audio Editing | Planned |
-| 13 Timeline Workflow | Partial (`?` shortcuts modal) |
-| 14 Session / Project Save | Planned |
-| 15 Export & Presets v2 | Planned |
-| 16 Preview & Input v2 | Partial (drag-drop, recent sources) |
+| 12 Audio Editing | Partial (strip audio on export) |
+| 13 Timeline Workflow | Partial (shortcuts modal, J/K/L, snap I/O, reorder/duplicate) |
+| 14 Session / Project Save | Partial (per-source session in AppData) |
+| 15 Export & Presets v2 | Partial (custom presets; queue/batch planned) |
+| 16 Preview & Input v2 | Partial (drag-drop, recent sources, fit/zoom/pan) |
 | 17 OBS & Tray Workflow | Planned |
 | 18 Platform & Release | Planned |
 
@@ -90,24 +94,24 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 
 ### Milestone 12: Audio editing
 
-- Strip/mute audio from export UI (backend already supports `AudioMode::Strip`).
+- Strip/mute audio from export UI (done).
 - Fade in/out on I/O range.
 - Optional waveform on the audio track lane.
 
 ### Milestone 13: Timeline workflow
 
-- Drag-reorder segments; duplicate segment.
-- J/K/L shuttle scrubbing; snap playhead to I/O markers.
-- In-app keyboard shortcut reference.
+- Drag-reorder segments; duplicate segment (done).
+- J/K/L shuttle scrubbing; snap playhead to I/O markers (done).
+- In-app keyboard shortcut reference (done via `?` modal).
 
 ### Milestone 14: Session / project save
 
-- Persist crop, volume, I/O, and segment list per source file.
-- Optional `.cutdown` project file or “restore last session” when reopening a clip.
+- Per-source session in `%APPDATA%/Cutdown/sessions.json` (done).
+- Optional `.cutdown` project file for sharing projects.
 
 ### Milestone 15: Export & presets v2
 
-- User-defined export presets (CRF, resolution cap, bitrate).
+- User-defined export presets (done).
 - Export queue (no concurrent export + upload).
 - Batch export from history or “one file per segment.”
 - Additional built-in upload targets (e.g. Discord webhook).

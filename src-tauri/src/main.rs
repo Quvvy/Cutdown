@@ -4,6 +4,7 @@ mod ffmpeg;
 mod launch;
 mod presets;
 mod settings;
+mod source_session;
 mod upload;
 mod upload_providers;
 mod watch_folder;
@@ -156,6 +157,8 @@ fn main() {
             upload::save_upload_providers,
             upload::get_upload_providers_for_editor,
             upload::copy_text_to_clipboard,
+            source_session::get_source_session,
+            source_session::save_source_session,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cutdown");

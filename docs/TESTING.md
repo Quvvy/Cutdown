@@ -34,6 +34,8 @@ npm run tauri -- build
 | Preview | Native WebView2 playback | |
 | Preview | Remux fallback (container-only issue) | |
 | Preview | Proxy fallback (codec issue) | |
+| Preview | Fit preview to panel shows full frame above timeline | |
+| Preview | Fit preview still correct after resizing workspace splitter | |
 | Edit | Split at playhead (`S`) | |
 | Edit | Multi-segment delete | |
 | Edit | I/O keep / trim outside / split I/O | |
@@ -70,6 +72,13 @@ npm run tauri -- build
 | UI | Drop video file onto window opens clip | |
 | UI | Recent menu lists and opens prior sources | |
 | Export | Accurate trim re-encodes boundaries on Lossless preset | |
+| Export | Custom preset (bitrate / CRF / target size / lossless) from Settings | |
+| Export | Strip audio exports video-only file | |
+| Edit | J / K / L shuttle scrub (step back, pause, step forward) | |
+| Edit | `[` / `]` snap playhead to I/O range markers | |
+| Edit | Ctrl+D duplicates selected segment | |
+| Edit | Drag segment on timeline to reorder | |
+| Session | Reopen same source restores segments, I/O, crop, volume | |
 
 ## Known limitations (not failures)
 

@@ -66,7 +66,18 @@
     keepRange: void;
     trimOutsideRange: void;
     toggleRangeLoop: void;
+    reorderSegment: { id: string; toIndex: number };
   }>();
+
+  let segmentDrag:
+    | {
+        id: string;
+        fromIndex: number;
+        startX: number;
+        active: boolean;
+      }
+    | null = null;
+  let segmentDragTargetIndex: number | null = null;
 
   function zoomLevelForSequenceSeconds(sequenceSeconds: number): number {
     if (sequenceSeconds <= 0) {
@@ -269,16 +280,97 @@
     activeMarker = null;
   }
 
+  function xToSequenceSecondsOnTrack(clientX: number): number {
+    if (!videoScroll) {
+      return 0;
+    }
+
+    const rect = videoScroll.getBoundingClientRect();
+    const localX = clientX - rect.left + videoScroll.scrollLeft;
+    return clamp(localX / pixelsPerSecond, 0, outputDuration);
+  }
+
+  function segmentIndexForSequenceTime(sequenceTime: number): number {
+    let cursor = 0;
+
+    for (let index = 0; index < segments.length; index += 1) {
+      const segmentLength = Math.max(0, segments[index].sourceEnd - segments[index].sourceStart);
+      if (sequenceTime <= cursor + segmentLength / 2) {
+        return index;
+      }
+
+      cursor += segmentLength;
+    }
+
+    return Math.max(0, segments.length - 1);
+  }
+
+  function startSegmentDrag(segment: TimelineSegment, index: number, event: PointerEvent): void {
+    if (disabled || event.button !== 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    dispatch('selectSegment', { id: segment.id });
+    segmentDrag = {
+      id: segment.id,
+      fromIndex: index,
+      startX: event.clientX,
+      active: false,
+    };
+    segmentDragTargetIndex = index;
+    videoScroll?.setPointerCapture(event.pointerId);
+  }
+
+  function updateSegmentDrag(event: PointerEvent): void {
+    if (!segmentDrag) {
+      return;
+    }
+
+    if (!segmentDrag.active && Math.abs(event.clientX - segmentDrag.startX) > 8) {
+      segmentDrag = { ...segmentDrag, active: true };
+    }
+
+    if (segmentDrag.active) {
+      segmentDragTargetIndex = segmentIndexForSequenceTime(xToSequenceSecondsOnTrack(event.clientX));
+    }
+  }
+
+  function stopSegmentDrag(event: PointerEvent): void {
+    if (!segmentDrag) {
+      return;
+    }
+
+    if (videoScroll?.hasPointerCapture(event.pointerId)) {
+      videoScroll.releasePointerCapture(event.pointerId);
+    }
+
+    if (
+      segmentDrag.active &&
+      segmentDragTargetIndex !== null &&
+      segmentDragTargetIndex !== segmentDrag.fromIndex
+    ) {
+      dispatch('reorderSegment', { id: segmentDrag.id, toIndex: segmentDragTargetIndex });
+    }
+
+    segmentDrag = null;
+    segmentDragTargetIndex = null;
+  }
+
   function handlePointerMove(event: PointerEvent): void {
     updateSeek(event);
     updateMarker(event);
     updateTrackResize(event);
+    updateSegmentDrag(event);
   }
 
   function handlePointerUp(event: PointerEvent): void {
     stopSeek(event);
     stopMarkerDrag(event);
     stopTrackResize(event);
+    stopSegmentDrag(event);
   }
 
   function updateZoom(nextZoom: number): void {
@@ -607,14 +699,16 @@
         {#if normalizedRange}
           <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
         {/if}
-        {#each segmentLayouts as layout (layout.segment.id)}
+        {#each segmentLayouts as layout, index (layout.segment.id)}
           <button
             aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
             class:selected={layout.segment.id === selectedSegmentId}
+            class:timeline__segment--drag-target={segmentDrag?.active && segmentDragTargetIndex === index}
+            class:timeline__segment--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
             class="timeline__segment timeline__segment--video"
             style={segmentStyle(layout)}
             type="button"
-            on:pointerdown={(event) => selectSegment(layout.segment, event)}
+            on:pointerdown={(event) => startSegmentDrag(layout.segment, index, event)}
             on:dblclick={(event) => {
               event.stopPropagation();
               dispatch('seek', { seconds: layout.segment.sourceStart });

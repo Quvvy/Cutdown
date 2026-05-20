@@ -92,12 +92,25 @@
     strategy: 'Preview remux' | 'Preview proxy';
   };
 
+  type SourceSession = {
+    sourcePath: string;
+    segments: TimelineSegment[];
+    selectedSegmentId: string | null;
+    rangeStart: number | null;
+    rangeEnd: number | null;
+    cropEnabled: boolean;
+    cropRect: NormalizedCropRect;
+    clipVolume: number;
+    currentTime: number | null;
+  };
+
   let preview:
     | {
         seekTo(seconds: number): void;
         togglePlayback(): void;
         fitToView(): Promise<void>;
         remeasureViewport(): void;
+        pausePlayback(): void;
         zoomIn(): void;
         zoomOut(): void;
         resetView(): void;
@@ -116,6 +129,8 @@
   let recentSources: string[] = [];
   let dragOver = false;
   let accurateTrimExport = false;
+  let stripAudioExport = false;
+  let persistSessionTimer: ReturnType<typeof setTimeout> | null = null;
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
   let cropEnabled = false;
@@ -433,6 +448,47 @@
     redoHistory = [];
   }
 
+  function schedulePersistSession(): void {
+    if (!$editor.currentFile || !metadata) {
+      return;
+    }
+
+    if (persistSessionTimer) {
+      clearTimeout(persistSessionTimer);
+    }
+
+    persistSessionTimer = setTimeout(() => {
+      persistSessionTimer = null;
+      void persistSession();
+    }, 500);
+  }
+
+  async function persistSession(): Promise<void> {
+    const file = get(editor).currentFile;
+    if (!file || !metadata) {
+      return;
+    }
+
+    try {
+      await invoke('save_source_session', {
+        session: {
+          sourcePath: file,
+          segments: get(editor).segments,
+          selectedSegmentId: get(editor).selectedSegmentId,
+          rangeStart,
+          rangeEnd,
+          cropEnabled,
+          cropRect,
+          clipVolume,
+          currentTime: get(editor).currentTime,
+        },
+        duration: metadata.duration,
+      });
+    } catch {
+      // Session persistence is best-effort.
+    }
+  }
+
   function undoSegmentEdit(): void {
     const snapshot = segmentHistory[segmentHistory.length - 1];
 
@@ -457,6 +513,7 @@
         message: 'Undid last edit.',
       },
     }));
+    schedulePersistSession();
   }
 
   function redoSegmentEdit(): void {
@@ -483,6 +540,7 @@
         message: 'Redid edit.',
       },
     }));
+    schedulePersistSession();
   }
 
   async function chooseClip(): Promise<void> {
@@ -522,12 +580,19 @@
     }
 
     await cleanupPreview($editor.previewTempPath);
+    if (persistSessionTimer) {
+      clearTimeout(persistSessionTimer);
+      persistSessionTimer = null;
+    }
+
     segmentHistory = [];
     redoHistory = [];
     rangeStart = null;
     rangeEnd = null;
     rangeLoopPlayback = false;
     clipVolume = 1;
+    cropEnabled = false;
+    cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
     exportMode = 'sequence';
     editor.update((state) => ({
       ...state,
@@ -547,18 +612,45 @@
 
     try {
       const probed = await invoke<VideoMetadata>('probe_video', { path: selected });
-      rangeStart = 0;
-      rangeEnd = probed.duration;
-      editor.update((state) => ({
-        ...state,
-        metadata: probed,
-        segments: [createFullSegment(probed.duration)],
-        selectedSegmentId: null,
-        exportStatus: {
-          state: 'idle',
-          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
-        },
-      }));
+      const saved = await invoke<SourceSession | null>('get_source_session', {
+        path: selected,
+        duration: probed.duration,
+      });
+
+      if (saved?.segments?.length) {
+        rangeStart = saved.rangeStart ?? 0;
+        rangeEnd = saved.rangeEnd ?? probed.duration;
+        clipVolume = clamp(saved.clipVolume ?? 1, 0, 1);
+        cropEnabled = saved.cropEnabled;
+        cropRect = saved.cropRect;
+        editor.update((state) => ({
+          ...state,
+          metadata: probed,
+          segments: saved.segments,
+          selectedSegmentId: saved.selectedSegmentId,
+          currentTime: clamp(saved.currentTime ?? 0, 0, probed.duration),
+          exportStatus: {
+            state: 'idle',
+            message: `Restored session for ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
+          },
+        }));
+        await tick();
+        seekTo(get(editor).currentTime);
+      } else {
+        rangeStart = 0;
+        rangeEnd = probed.duration;
+        editor.update((state) => ({
+          ...state,
+          metadata: probed,
+          segments: [createFullSegment(probed.duration)],
+          selectedSegmentId: null,
+          exportStatus: {
+            state: 'idle',
+            message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
+          },
+        }));
+      }
+
       syncExportDefaultsForClip();
       void invoke<string[]>('push_recent_source', { path: selected }).then((sources) => {
         recentSources = sources;
@@ -625,6 +717,7 @@
         message: `Split at ${formatTime(splitTime)}.`,
       },
     }));
+    schedulePersistSession();
   }
 
   function splitAtCurrentTime(): void {
@@ -657,6 +750,68 @@
         message: 'Deleted selected segment.',
       },
     }));
+    schedulePersistSession();
+  }
+
+  function duplicateSelectedSegment(): void {
+    if (!$editor.selectedSegmentId) {
+      return;
+    }
+
+    const selected = $editor.segments.find((segment) => segment.id === $editor.selectedSegmentId);
+    if (!selected) {
+      return;
+    }
+
+    const duplicate = {
+      id: crypto.randomUUID(),
+      sourceStart: selected.sourceStart,
+      sourceEnd: selected.sourceEnd,
+    };
+
+    pushUndoSnapshot();
+    editor.update((state) => {
+      const index = state.segments.findIndex((segment) => segment.id === selected.id);
+      const nextSegments = [...state.segments];
+      nextSegments.splice(index + 1, 0, duplicate);
+
+      return {
+        ...state,
+        segments: nextSegments,
+        selectedSegmentId: duplicate.id,
+        exportStatus: {
+          state: 'idle',
+          message: 'Duplicated selected segment.',
+        },
+      };
+    });
+    schedulePersistSession();
+  }
+
+  function reorderSegment(id: string, toIndex: number): void {
+    pushUndoSnapshot();
+    editor.update((state) => {
+      const fromIndex = state.segments.findIndex((segment) => segment.id === id);
+      if (fromIndex < 0) {
+        return state;
+      }
+
+      const nextSegments = [...state.segments];
+      const [moved] = nextSegments.splice(fromIndex, 1);
+      const targetIndex = clamp(toIndex, 0, nextSegments.length);
+      nextSegments.splice(targetIndex, 0, moved);
+
+      return {
+        ...state,
+        segments: nextSegments,
+        selectedSegmentId: id,
+        exportStatus: {
+          state: 'idle',
+          message: 'Reordered segment.',
+        },
+      };
+    });
+    schedulePersistSession();
   }
 
   function splitAtRangeMarkers(): void {
@@ -667,6 +822,7 @@
     pushUndoSnapshot();
     splitAtTime(normalizedRange.start);
     splitAtTime(normalizedRange.end);
+    schedulePersistSession();
   }
 
   function keepOnlyRange(): void {
@@ -690,6 +846,7 @@
         message: `Kept range ${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}.`,
       },
     }));
+    schedulePersistSession();
   }
 
   function deleteOutsideRange(): void {
@@ -736,11 +893,13 @@
         },
       };
     });
+    schedulePersistSession();
   }
 
   function handleVolumeInput(event: Event): void {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     clipVolume = clamp(value / 100, 0, 1);
+    schedulePersistSession();
   }
 
   function toggleRangeLoop(): void {
@@ -773,11 +932,14 @@
       rangeStart = rangeStart ?? 0;
       rangeEnd = nextTime;
     }
+
+    schedulePersistSession();
   }
 
   function clearRange(): void {
     rangeStart = null;
     rangeEnd = null;
+    schedulePersistSession();
   }
 
   function updateTrackHeights(event: CustomEvent<{ videoHeight: number; audioHeight: number }>): void {
@@ -869,6 +1031,7 @@
       width,
       height,
     };
+    schedulePersistSession();
   }
 
   async function refreshClipHistory(): Promise<void> {
@@ -1043,6 +1206,12 @@
       return;
     }
 
+    if (event.ctrlKey && event.key.toLowerCase() === 'd') {
+      event.preventDefault();
+      duplicateSelectedSegment();
+      return;
+    }
+
     if (!canExport) {
       return;
     }
@@ -1063,6 +1232,36 @@
       return;
     }
 
+    if (event.key.toLowerCase() === 'j') {
+      event.preventDefault();
+      seekTo($editor.currentTime - 1);
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'k') {
+      event.preventDefault();
+      preview?.pausePlayback();
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'l') {
+      event.preventDefault();
+      seekTo($editor.currentTime + 1);
+      return;
+    }
+
+    if (event.key === '[' && canUseRange && normalizedRange) {
+      event.preventDefault();
+      seekTo(normalizedRange.start);
+      return;
+    }
+
+    if (event.key === ']' && canUseRange && normalizedRange) {
+      event.preventDefault();
+      seekTo(normalizedRange.end);
+      return;
+    }
+
     if (event.key.toLowerCase() === 's') {
       splitAtCurrentTime();
       return;
@@ -1073,7 +1272,7 @@
       return;
     }
 
-    if (event.key.toLowerCase() === 'l' && canUseRange) {
+    if (event.shiftKey && event.key.toLowerCase() === 'l' && canUseRange) {
       toggleRangeLoop();
       return;
     }
@@ -1220,7 +1419,7 @@
         params: {
           inputPath: $editor.currentFile,
           outputPath,
-          audioMode: 'preserve',
+          audioMode: stripAudioExport ? 'strip' : 'preserve',
           segments: exportSegments,
           presetId: exportPresetId,
           preferGpu: preferGpuEncoding,
@@ -1381,7 +1580,10 @@
         variant="secondary"
         active={cropEnabled}
         disabled={!$editor.currentFile}
-        on:click={() => (cropEnabled = !cropEnabled)}
+        on:click={() => {
+          cropEnabled = !cropEnabled;
+          schedulePersistSession();
+        }}
       />
       <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 16:9 aspect" on:click={() => applyAspectCrop('16:9')}>16:9</button>
       <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 9:16 aspect" on:click={() => applyAspectCrop('9:16')}>9:16</button>
@@ -1423,7 +1625,10 @@
       volume={clipVolume}
       {cropEnabled}
       bind:cropRect
-      on:cropChange={(event) => (cropRect = event.detail.rect)}
+      on:cropChange={(event) => {
+        cropRect = event.detail.rect;
+        schedulePersistSession();
+      }}
       on:metadata={() => {}}
       on:error={(event) => void handlePreviewError(event.detail.message)}
       on:timeupdate={(event) => {
@@ -1472,26 +1677,27 @@
     on:keepRange={keepOnlyRange}
     on:trimOutsideRange={deleteOutsideRange}
     on:toggleRangeLoop={toggleRangeLoop}
+    on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.toIndex)}
   />
   </div>
   </section>
 
   <section class="transport-bar" aria-label="Editor controls">
-    <div>
+    <div class="transport-bar__stat">
       <span>Selected</span>
       <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : 'None'}</strong>
       {#if selectedSegment}
         <small>{formatTime(selectedSegment.sourceStart)} - {formatTime(selectedSegment.sourceEnd)}</small>
       {/if}
     </div>
-    <div>
+    <div class="transport-bar__stat">
       <span>Range</span>
       <strong>{normalizedRange ? formatTime(rangeDuration) : 'None'}</strong>
       {#if normalizedRange}
         <small>{formatTime(normalizedRange.start)} - {formatTime(normalizedRange.end)}</small>
       {/if}
     </div>
-    <div>
+    <div class="transport-bar__stat">
       <span>Output</span>
       <strong>{formatTime(outputDuration)}</strong>
       <small>{segments.length} segment{segments.length === 1 ? '' : 's'}</small>
@@ -1521,7 +1727,7 @@
         icon="loop"
         variant="secondary"
         active={rangeLoopPlayback}
-        title={rangeLoopPlayback ? 'Disable range loop (L)' : 'Loop playback in I/O range (L)'}
+        title={rangeLoopPlayback ? 'Disable range loop (Shift+L)' : 'Loop playback in I/O range (Shift+L)'}
         disabled={!canUseRange}
         on:click={toggleRangeLoop}
       />
@@ -1611,6 +1817,8 @@
   presets={exportPresets}
   presetId={exportPresetId}
   bind:accurateTrim={accurateTrimExport}
+  bind:stripAudio={stripAudioExport}
+  hasAudio={Boolean(metadata?.audioCodec)}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
   on:exportModeChange={(event) => (exportMode = event.detail.mode)}

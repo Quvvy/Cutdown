@@ -15,6 +15,8 @@
   export let presets: ExportPresetInfo[] = [];
   export let presetId = 'lossless-trim';
   export let accurateTrim = false;
+  export let stripAudio = false;
+  export let hasAudio = true;
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -134,8 +136,20 @@
             <dd class="modal__mode">
               <label>
                 <input type="checkbox" bind:checked={accurateTrim} />
-                Accurate trim (re-encode boundaries; slower than lossless stream-copy)
+                Accurate trim (re-encode segment boundaries for frame-perfect cuts; slower than stream-copy)
               </label>
+            </dd>
+          </div>
+          <div>
+            <dt>Audio</dt>
+            <dd class="modal__mode">
+              <label>
+                <input type="checkbox" bind:checked={stripAudio} disabled={!hasAudio} />
+                Strip audio (export video only)
+              </label>
+              {#if !hasAudio}
+                <p class="modal__hint">This clip has no audio track.</p>
+              {/if}
             </dd>
           </div>
         </dl>
