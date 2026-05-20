@@ -1,15 +1,17 @@
+mod clip_history;
 mod encoder_detect;
 mod ffmpeg;
 mod launch;
 mod presets;
 mod settings;
+mod upload;
 mod watch_folder;
 mod windows_integration;
 
 use launch::LaunchState;
 use settings::{AppSettings, UpdateSettingsParams};
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Runtime, WindowEvent};
 
 pub fn show_editor_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
@@ -77,6 +79,18 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             "quit" => app.exit(0),
             _ => {}
         })
+        .on_tray_icon_event(|tray, event| {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
+                if let Err(err) = show_editor_window(tray.app_handle()) {
+                    eprintln!("failed to show editor window: {err}");
+                }
+            }
+        })
         .build(app)?;
 
     Ok(())
@@ -121,6 +135,11 @@ fn main() {
             presets::list_presets,
             encoder_detect::detect_gpu_encoders,
             windows_integration::set_run_at_startup,
+            clip_history::list_clip_history,
+            clip_history::clear_clip_history,
+            clip_history::remove_clip_history_entry,
+            upload::upload_to_catbox,
+            upload::copy_text_to_clipboard,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cutdown");

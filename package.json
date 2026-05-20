@@ -13,6 +13,8 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@iconify-icons/fluent": "^1.2.38",
+    "@iconify/svelte": "^3.1.6",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0",
     "@tauri-apps/plugin-notification": "^2.0.0",

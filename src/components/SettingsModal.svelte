@@ -10,6 +10,8 @@
   export let exportPresetId = 'lossless-trim';
   export let preferGpuEncoding = true;
   export let runAtStartup = false;
+  export let catboxUserHash = '';
+  export let catboxApiUrl = '';
   export let ffmpegStatus = '';
   export let gpuEncoders: string[] = [];
 
@@ -22,6 +24,8 @@
       lastPresetId: string;
       preferGpuEncoding: boolean;
       runAtStartup: boolean;
+      catboxUserHash: string;
+      catboxApiUrl: string;
     };
   }>();
 
@@ -58,6 +62,8 @@
       lastPresetId: string;
       preferGpuEncoding: boolean;
       runAtStartup: boolean;
+      catboxUserHash: string | null;
+      catboxApiUrl: string | null;
     }>('save_app_settings', {
       watchFolder,
       watchFolderEnabled,
@@ -65,6 +71,8 @@
       lastPresetId: exportPresetId,
       preferGpuEncoding,
       runAtStartup,
+      catboxUserHash: catboxUserHash.trim() || null,
+      catboxApiUrl: catboxApiUrl.trim() || null,
     });
 
     dispatch('saved', {
@@ -74,17 +82,21 @@
       lastPresetId: saved.lastPresetId,
       preferGpuEncoding: saved.preferGpuEncoding,
       runAtStartup: saved.runAtStartup,
+      catboxUserHash: saved.catboxUserHash ?? '',
+      catboxApiUrl: saved.catboxApiUrl ?? '',
     });
     dispatch('close');
   }
 </script>
 
 {#if visible}
-  <div class="modal-backdrop">
-    <section class="modal modal--wide" aria-label="Settings">
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={() => dispatch('close')}>
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <section class="modal modal--wide" aria-label="Settings" on:click|stopPropagation>
       <header>
         <h2>Settings</h2>
-        <button type="button" class="icon-button" on:click={() => dispatch('close')}>Close</button>
+        <button type="button" class="icon-button" title="Close" on:click={() => dispatch('close')}>Close</button>
       </header>
 
       <dl>
@@ -109,7 +121,7 @@
           <dt>Default export folder</dt>
           <dd class="modal__mode">
             <span>{defaultExportDir || 'Same folder as source clip'}</span>
-            <button type="button" class="secondary" on:click={browseExportFolder}>Browse</button>
+            <button type="button" class="secondary" title="Browse for default export folder" on:click={browseExportFolder}>Browse</button>
           </dd>
         </div>
         <div>
@@ -131,14 +143,39 @@
             </label>
           </dd>
         </div>
+        <div>
+          <dt>Catbox upload</dt>
+          <dd class="modal__output">
+            <label class="modal__stack">
+              <span>User hash (optional)</span>
+              <input type="text" class="modal__text-input" bind:value={catboxUserHash} spellcheck="false" />
+            </label>
+            <label class="modal__stack">
+              <span>API URL</span>
+              <input
+                type="text"
+                class="modal__text-input"
+                bind:value={catboxApiUrl}
+                placeholder="https://catbox.moe/user/api.php"
+                spellcheck="false"
+              />
+            </label>
+          </dd>
+        </div>
       </dl>
 
       <footer>
-        <button type="button" class="secondary" on:click={browseWatchFolder}>Browse watch folder</button>
-        <button type="button" class="secondary" disabled={!watchFolder} on:click={() => ((watchFolder = null), (watchFolderEnabled = false))}>
+        <button type="button" class="secondary" title="Browse for OBS replay folder" on:click={browseWatchFolder}>Browse watch folder</button>
+        <button
+          type="button"
+          class="secondary"
+          disabled={!watchFolder}
+          title="Clear watch folder selection"
+          on:click={() => ((watchFolder = null), (watchFolderEnabled = false))}
+        >
           Clear watch folder
         </button>
-        <button type="button" on:click={saveSettings}>Save</button>
+        <button type="button" title="Save settings" on:click={saveSettings}>Save</button>
       </footer>
     </section>
   </div>

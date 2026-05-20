@@ -6,7 +6,9 @@
   import { isPermissionGranted, requestPermission, sendNotification } from '@tauri-apps/plugin-notification';
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
+  import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
   import ExportModal from './components/ExportModal.svelte';
+  import IconButton from './components/IconButton.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import Timeline from './components/Timeline.svelte';
@@ -19,6 +21,7 @@
     sanitizeExportFileName,
     splitOutputPath,
   } from './lib/format';
+  import type { ClipHistoryEntry, NormalizedCropRect } from './lib/types';
   import {
     createFullSegment,
     editor,
@@ -63,6 +66,8 @@
     lastPresetId: string;
     preferGpuEncoding: boolean;
     runAtStartup: boolean;
+    catboxUserHash: string | null;
+    catboxApiUrl: string | null;
   };
 
   type PreviewResult = {
@@ -79,10 +84,19 @@
   let timeline:
     | {
         zoomToSourceRange(start: number, end: number): void;
+        zoomToFitView(): void;
       }
     | undefined;
   let exportModalOpen = false;
   let settingsModalOpen = false;
+  let historyDrawerOpen = false;
+  let clipHistory: ClipHistoryEntry[] = [];
+  let historyBusyPath: string | null = null;
+  let cropEnabled = false;
+  let cropAspect: 'free' | '16:9' | '9:16' = 'free';
+  let cropRect: NormalizedCropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
+  let catboxUserHash = '';
+  let catboxApiUrl = '';
   let exportPresets: PresetInfo[] = [];
   let exportPresetId = 'lossless-trim';
   let gpuEncoders: string[] = [];
@@ -91,6 +105,7 @@
   let runAtStartup = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
+  let clipVolume = 1;
   let exportProgressPercent: number | null = null;
   let outputPath = '';
   let outputDirectory = '';
@@ -162,7 +177,10 @@
       exportPresetId = settings.lastPresetId || 'lossless-trim';
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
+      catboxUserHash = settings.catboxUserHash ?? '';
+      catboxApiUrl = settings.catboxApiUrl ?? '';
       exportPresets = presets;
+      clipHistory = await invoke<ClipHistoryEntry[]>('list_clip_history');
       gpuEncoders = encoders;
       ffmpegAvailable = ffmpeg.available;
       ffmpegStatus =
@@ -378,6 +396,7 @@
     rangeStart = null;
     rangeEnd = null;
     rangeLoopPlayback = false;
+    clipVolume = 1;
     exportMode = 'sequence';
     editor.update((state) => ({
       ...state,
@@ -585,6 +604,11 @@
     });
   }
 
+  function handleVolumeInput(event: Event): void {
+    const value = Number((event.currentTarget as HTMLInputElement).value);
+    clipVolume = clamp(value / 100, 0, 1);
+  }
+
   function toggleRangeLoop(): void {
     if (!canUseRange) {
       return;
@@ -628,7 +652,104 @@
   }
 
   function zoomToFit(): void {
-    timelineZoom = 0;
+    timeline?.zoomToFitView();
+  }
+
+  function closeModals(): void {
+    exportModalOpen = false;
+    settingsModalOpen = false;
+    historyDrawerOpen = false;
+  }
+
+  function exportCropPixels(): { x: number; y: number; width: number; height: number } | null {
+    if (!cropEnabled || !metadata) {
+      return null;
+    }
+
+    const even = (value: number) => value - (value % 2);
+    return {
+      x: even(Math.round(cropRect.x * metadata.width)),
+      y: even(Math.round(cropRect.y * metadata.height)),
+      width: even(Math.round(cropRect.width * metadata.width)),
+      height: even(Math.round(cropRect.height * metadata.height)),
+    };
+  }
+
+  function applyAspectCrop(aspect: 'free' | '16:9' | '9:16'): void {
+    cropAspect = aspect;
+
+    if (aspect === 'free' || !metadata) {
+      return;
+    }
+
+    const frameRatio = metadata.width / metadata.height;
+    const targetRatio = aspect === '16:9' ? 16 / 9 : 9 / 16;
+    let width = 1;
+    let height = 1;
+
+    if (frameRatio > targetRatio) {
+      width = targetRatio / frameRatio;
+      height = 1;
+    } else {
+      width = 1;
+      height = frameRatio / targetRatio;
+    }
+
+    cropRect = {
+      x: (1 - width) / 2,
+      y: (1 - height) / 2,
+      width,
+      height,
+    };
+  }
+
+  async function refreshClipHistory(): Promise<void> {
+    clipHistory = await invoke<ClipHistoryEntry[]>('list_clip_history');
+  }
+
+  async function removeHistoryEntry(outputPath: string): Promise<void> {
+    clipHistory = await invoke<ClipHistoryEntry[]>('remove_clip_history_entry', { outputPath });
+  }
+
+  async function clearHistory(): Promise<void> {
+    await invoke('clear_clip_history');
+    clipHistory = [];
+  }
+
+  async function uploadClip(path: string): Promise<void> {
+    historyBusyPath = path;
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'running',
+        message: 'Uploading to Catbox...',
+      },
+    }));
+
+    try {
+      const url = await invoke<string>('upload_to_catbox', { filePath: path });
+      await invoke('copy_text_to_clipboard', { text: url });
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'success',
+          message: `Upload complete. Link copied: ${url}`,
+          outputPath: state.exportStatus.outputPath,
+          outputSize: state.exportStatus.outputSize,
+        },
+      }));
+      await notify('Upload link copied to clipboard.', 'Catbox upload');
+    } catch (error) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      historyBusyPath = null;
+    }
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -638,6 +759,14 @@
       target?.isContentEditable ||
       (target instanceof HTMLInputElement &&
         !['button', 'checkbox', 'radio', 'range'].includes(target.type));
+
+    if (event.key === 'Escape') {
+      if (exportModalOpen || settingsModalOpen || historyDrawerOpen) {
+        event.preventDefault();
+        closeModals();
+        return;
+      }
+    }
 
     if (isTextInput) {
       return;
@@ -831,6 +960,7 @@
     }));
 
     try {
+      const crop = exportCropPixels();
       const result = await invoke<ExportResult>('export_clip', {
         params: {
           inputPath: $editor.currentFile,
@@ -839,10 +969,14 @@
           segments: exportSegments,
           presetId: exportPresetId,
           preferGpu: preferGpuEncoding,
+          sourcePath: $editor.currentFile,
+          crop,
+          volume: clipVolume,
         },
       });
 
       exportModalOpen = false;
+      await refreshClipHistory();
       exportProgressPercent = 100;
       await invoke('set_last_preset_id', { presetId: exportPresetId });
       const parent = result.outputPath.replace(/[\\/][^\\/]+$/, '');
@@ -965,18 +1099,31 @@
 
 <main class="shell">
   <section class="toolbar" aria-label="Editor toolbar">
-    <button type="button" class="tool-button" on:click={chooseClip}>Open</button>
-    <button type="button" class="tool-button" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit}>Undo</button>
-    <button type="button" class="tool-button" disabled={redoHistory.length === 0} on:click={redoSegmentEdit}>Redo</button>
-    <button type="button" class="tool-button" disabled={!canExport} on:click={splitAtCurrentTime}>Split</button>
-    <button type="button" class="tool-button" disabled={!$editor.currentFile} on:click={zoomToFit}>Fit</button>
+    <IconButton icon="open" title="Open video file" on:click={chooseClip} />
+    <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
+    <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
+    <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
     <div class="toolbar__spacer"></div>
     <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
-    <button type="button" class="tool-button" on:click={() => (settingsModalOpen = true)}>Settings</button>
-    <button type="button" class="tool-button" disabled={!canExport} on:click={openExportModal}>Export</button>
+    <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
+    <IconButton icon="settings" title="Settings" on:click={() => (settingsModalOpen = true)} />
+    <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport} on:click={openExportModal} />
   </section>
 
   <section class="preview-panel">
+    <div class="preview-panel__tools">
+      <IconButton
+        icon="crop"
+        title={cropEnabled ? 'Disable crop overlay' : 'Enable crop overlay'}
+        variant="secondary"
+        active={cropEnabled}
+        disabled={!$editor.currentFile}
+        on:click={() => (cropEnabled = !cropEnabled)}
+      />
+      <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 16:9 aspect" on:click={() => applyAspectCrop('16:9')}>16:9</button>
+      <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 9:16 aspect" on:click={() => applyAspectCrop('9:16')}>9:16</button>
+      <button type="button" class="secondary" disabled={!cropEnabled} title="Free crop aspect" on:click={() => applyAspectCrop('free')}>Free</button>
+    </div>
     <VideoPreview
       bind:this={preview}
       src={$editor.videoSrc}
@@ -984,6 +1131,10 @@
       loopEnabled={rangeLoopPlayback}
       loopStart={normalizedRange?.start ?? null}
       loopEnd={normalizedRange?.end ?? null}
+      volume={clipVolume}
+      {cropEnabled}
+      bind:cropRect
+      on:cropChange={(event) => (cropRect = event.detail.rect)}
       on:metadata={() => {}}
       on:error={(event) => void handlePreviewError(event.detail.message)}
       on:timeupdate={(event) => {
@@ -1045,21 +1196,36 @@
       <strong>{formatTime(outputDuration)}</strong>
       <small>{segments.length} segment{segments.length === 1 ? '' : 's'}</small>
     </div>
+    <div class="transport-bar__volume">
+      <label for="clip-volume">Volume</label>
+      <input
+        id="clip-volume"
+        class="app-slider"
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value={Math.round(clipVolume * 100)}
+        disabled={!$editor.currentFile || !metadata?.audioCodec}
+        aria-label="Clip volume"
+        style={`--slider-fill: ${Math.round(clipVolume * 100)}%`}
+        on:input={handleVolumeInput}
+      />
+      <span>{Math.round(clipVolume * 100)}%</span>
+    </div>
     <div class="transport-bar__actions">
-      <button type="button" class="secondary" disabled={!canUseRange} on:click={splitAtRangeMarkers}>Split I/O</button>
-      <button type="button" class="secondary" disabled={!canUseRange} on:click={keepOnlyRange}>Keep range</button>
-      <button type="button" class="secondary" disabled={!canUseRange} on:click={deleteOutsideRange}>Trim outside</button>
-      <button type="button" class="secondary" disabled={!canUseRange} on:click={zoomToRange}>Zoom range</button>
-      <button
-        type="button"
-        class="secondary"
-        class:active={rangeLoopPlayback}
+      <button type="button" class="secondary" title="Split at I/O markers" disabled={!canUseRange} on:click={splitAtRangeMarkers}>Split I/O</button>
+      <button type="button" class="secondary" title="Keep only I/O range" disabled={!canUseRange} on:click={keepOnlyRange}>Keep range</button>
+      <button type="button" class="secondary" title="Trim outside I/O range" disabled={!canUseRange} on:click={deleteOutsideRange}>Trim outside</button>
+      <IconButton
+        icon="loop"
+        variant="secondary"
+        active={rangeLoopPlayback}
+        title={rangeLoopPlayback ? 'Disable range loop (L)' : 'Loop playback in I/O range (L)'}
         disabled={!canUseRange}
         on:click={toggleRangeLoop}
-      >
-        {rangeLoopPlayback ? 'Loop on' : 'Loop range'}
-      </button>
-      <button type="button" class="secondary" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>Delete</button>
+      />
+      <button type="button" class="secondary" title="Delete selected segment (Del)" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>Delete</button>
     </div>
   </section>
 
@@ -1075,11 +1241,6 @@
       {:else}
         <span>Open a clip to start cutting</span>
       {/if}
-      <span><kbd>S</kbd> split</span>
-      <span><kbd>I</kbd>/<kbd>O</kbd> range</span>
-      <span><kbd>L</kbd> loop</span>
-      <span><kbd>Z</kbd> zoom range</span>
-      <span><kbd>Ctrl</kbd>+wheel zoom</span>
     </div>
     <div class="bottom-bar__status">
       <ProgressBar
@@ -1088,7 +1249,16 @@
         percent={exportProgressPercent}
       />
       {#if $editor.exportStatus.outputPath}
-        <button type="button" class="secondary" on:click={revealExport}>Open Folder</button>
+        <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open Folder</button>
+        <button
+          type="button"
+          class="secondary"
+          title="Upload to Catbox and copy link"
+          disabled={historyBusyPath === $editor.exportStatus.outputPath}
+          on:click={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
+        >
+          Upload
+        </button>
       {/if}
     </div>
   </footer>
@@ -1120,6 +1290,8 @@
   {exportPresetId}
   {preferGpuEncoding}
   {runAtStartup}
+  {catboxUserHash}
+  {catboxApiUrl}
   {ffmpegStatus}
   {gpuEncoders}
   on:close={() => (settingsModalOpen = false)}
@@ -1130,5 +1302,20 @@
     exportPresetId = event.detail.lastPresetId;
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
+    catboxUserHash = event.detail.catboxUserHash;
+    catboxApiUrl = event.detail.catboxApiUrl;
   }}
+/>
+
+<ClipHistoryDrawer
+  open={historyDrawerOpen}
+  entries={clipHistory}
+  busyPath={historyBusyPath}
+  on:close={() => (historyDrawerOpen = false)}
+  on:reveal={(event) => void invoke('reveal_in_explorer', { path: event.detail.path })}
+  on:openClip={(event) => void openClipPath(event.detail.path)}
+  on:copyPath={(event) => void invoke('copy_text_to_clipboard', { text: event.detail.path })}
+  on:upload={(event) => void uploadClip(event.detail.path)}
+  on:remove={(event) => void removeHistoryEntry(event.detail.path)}
+  on:clear={() => void clearHistory()}
 />

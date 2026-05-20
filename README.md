@@ -18,7 +18,9 @@ The current milestone is a working local multi-cut editor with compression prese
 - Export with **Lossless Trim** (stream-copy) or compressed presets: **Discord**, **Archive**, **Twitter/X**.
 - Export kept segments as a sequence, or export the I/O range as a single trim.
 - Watch an OBS replay folder and get a toast when a new clip appears.
-- Use a Windows tray menu for `Open Editor` and `Quit`.
+- Use the system tray: close (X) minimizes to tray; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits.
+- Review recent exports in **History**, upload to Catbox, and copy share links.
+- Crop the preview (16:9, 9:16, or free) before export.
 
 Current shortcuts:
 
@@ -32,6 +34,7 @@ Current shortcuts:
 - `Space`: play/pause.
 - `Left` / `Right`: step by frame.
 - `Shift+Left` / `Shift+Right`: step by 5 seconds.
+- `Escape`: close Export, Settings, or History panels.
 
 Range actions are also available from the transport bar, timeline context menu, and export modal (sequence vs I/O range).
 
@@ -142,7 +145,7 @@ Status: v1 complete (built-in presets, GPU detection, Discord size targeting).
 
 ### Milestone 5: Crop
 
-Status: not started.
+Status: session crop v1 complete (preview overlay + ffmpeg export).
 
 ### Milestone 6: Watch Folder Workflow
 
@@ -154,7 +157,7 @@ Status: partial (Open With associations, launch path, default export folder, run
 
 ### Milestone 7–8, 10
 
-Upload/sharing, clip history, and performance audit remain planned. See [PROGRESS.md](PROGRESS.md).
+Catbox upload, clip history, and an informal performance baseline are documented in [PROGRESS.md](PROGRESS.md).
 
 ## Project Structure
 

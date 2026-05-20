@@ -16,6 +16,13 @@ npm run validate:release
 
 This runs `npm run check`, `cargo check`, and reports bundled ffmpeg status.
 
+Release installer build:
+
+```powershell
+npm run prepare:ffmpeg
+npm run tauri -- build
+```
+
 ## Manual matrix
 
 | Area | Case | Pass |
@@ -39,16 +46,28 @@ This runs `npm run check`, `cargo check`, and reports bundled ffmpeg status.
 | Export | Twitter preset at 720p max | |
 | Export | Progress bar shows percent on re-encode | |
 | Export | GPU encoder used when enabled (check Settings) | |
+| Export | Default `*-cutdown.mp4` filename on Export open | |
+| Export | Custom filename + choose folder (no full save path required) | |
+| Export | Crop overlay 16:9 / 9:16 / free + cropped export matches preview | |
 | Audio | Preserved on stream-copy export | |
 | Watch | New file in watch folder → toast → opens in editor | |
 | Windows | Open With launches Cutdown with file loaded | |
 | Windows | Default export folder used in save dialog | |
 | Windows | Run at startup toggle (optional) | |
+| Tray | Close (X) hides window; app stays in tray | |
+| Tray | Left-click tray icon restores main window | |
+| Tray | Tray menu Open Editor / Quit works | |
+| History | Export adds row; Reveal / Open / Copy path work | |
+| History | Clear history removes all rows | |
+| Upload | Catbox upload copies HTTPS link to clipboard | |
+| UI | Escape closes Export / Settings / History | |
+| UI | Backdrop click closes modals | |
 
 ## Known limitations (not failures)
 
 - Stream-copy trims may not be frame-perfect (keyframe boundaries).
 - Preview may require remux/proxy for some codecs; export still uses the source file.
 - Discord size targeting is single-pass with up to two bitrate retries, not a full two-pass encode.
+- Crop with Lossless Trim preset forces a high-quality H.264 re-encode.
 
 Log new failures in [PROGRESS.md](../PROGRESS.md) under **Known Issues**.

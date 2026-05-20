@@ -12,6 +12,10 @@ pub struct AppSettings {
     pub last_preset_id: String,
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
+    #[serde(default)]
+    pub catbox_user_hash: Option<String>,
+    #[serde(default)]
+    pub catbox_api_url: Option<String>,
 }
 
 impl Default for AppSettings {
@@ -24,6 +28,8 @@ impl Default for AppSettings {
             last_preset_id: crate::presets::PRESET_LOSSLESS.to_string(),
             prefer_gpu_encoding: true,
             run_at_startup: false,
+            catbox_user_hash: None,
+            catbox_api_url: None,
         }
     }
 }
@@ -37,6 +43,8 @@ pub struct UpdateSettingsParams {
     pub last_preset_id: Option<String>,
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
+    pub catbox_user_hash: Option<String>,
+    pub catbox_api_url: Option<String>,
 }
 
 pub fn settings_path() -> Result<PathBuf, String> {
@@ -119,6 +127,12 @@ pub fn update_settings(params: UpdateSettingsParams) -> Result<AppSettings, Stri
         .filter(|value| !value.trim().is_empty());
     settings.prefer_gpu_encoding = params.prefer_gpu_encoding;
     settings.run_at_startup = params.run_at_startup;
+    settings.catbox_user_hash = params
+        .catbox_user_hash
+        .filter(|value| !value.trim().is_empty());
+    settings.catbox_api_url = params
+        .catbox_api_url
+        .filter(|value| !value.trim().is_empty());
 
     if let Some(preset_id) = params.last_preset_id.filter(|value| !value.trim().is_empty()) {
         settings.last_preset_id = preset_id;

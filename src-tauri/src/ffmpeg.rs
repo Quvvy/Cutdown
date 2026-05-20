@@ -1,4 +1,8 @@
-use crate::presets::{self, apply_bitrate_scale, resolve_encode_profile, resolve_preset_id, EncodeProfile};
+use crate::clip_history::{append_entry, ClipHistoryEntry};
+use crate::presets::{
+    self, apply_bitrate_scale, resolve_encode_profile, resolve_preset_id, EncodeProfile,
+};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -29,6 +33,19 @@ pub struct ExportParams {
     audio_mode: Option<AudioMode>,
     preset_id: Option<String>,
     prefer_gpu: Option<bool>,
+    source_path: Option<String>,
+    crop: Option<CropRect>,
+    /// Playback/export gain multiplier (0.0–2.0, default 1.0).
+    volume: Option<f64>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CropRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -216,7 +233,11 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
         None,
     );
 
-    if profile.lossless {
+    let crop = normalize_crop(params.crop.as_ref(), metadata.width, metadata.height);
+    let volume = normalize_volume(params.volume);
+    let use_lossless = profile.lossless && crop.is_none() && !volume_is_adjusted(volume);
+
+    if use_lossless {
         if segments.len() == 1 {
             let segment = &segments[0];
             let segment_duration = segment.end - segment.start;
@@ -228,13 +249,17 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
                 segment.start,
                 segment_duration,
                 audio_mode,
+                volume,
             )
             .map_err(|err| format!("Single-segment export failed: {err}"))?;
         } else {
-            export_multi_segment_lossless(&app, &input, &output, &segments, audio_mode)
+            export_multi_segment_lossless(&app, &input, &output, &segments, audio_mode, volume)
                 .map_err(|err| format!("Multi-segment export failed: {err}"))?;
         }
     } else {
+        if profile.lossless {
+            profile = lossless_crop_profile();
+        }
         export_with_reencode(
             &app,
             &input,
@@ -242,6 +267,8 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
             &segments,
             audio_mode,
             &mut profile,
+            crop.as_ref(),
+            volume,
         )
         .map_err(|err| format!("Re-encode export failed: {err}"))?;
     }
@@ -268,6 +295,8 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
                 &segments,
                 audio_mode,
                 &mut profile,
+                crop.as_ref(),
+                volume,
             )?;
             file_size = fs::metadata(&output)
                 .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
@@ -277,8 +306,20 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
 
     emit_export_progress(&app, "complete", "Export complete.", Some(100.0));
 
+    let output_path = output.to_string_lossy().to_string();
+    let _ = append_entry(ClipHistoryEntry {
+        output_path: output_path.clone(),
+        source_path: params
+            .source_path
+            .filter(|value| !value.trim().is_empty()),
+        preset_id: preset_id.clone(),
+        exported_at: Utc::now().to_rfc3339(),
+        file_size,
+        duration,
+    });
+
     Ok(ExportResult {
-        output_path: output.to_string_lossy().to_string(),
+        output_path,
         file_size,
         duration,
     })
@@ -291,6 +332,8 @@ fn export_with_reencode(
     segments: &[ExportSegment],
     audio_mode: AudioMode,
     profile: &EncodeProfile,
+    crop: Option<&CropRect>,
+    volume: f64,
 ) -> Result<(), String> {
     if segments.len() == 1 {
         let segment = &segments[0];
@@ -302,9 +345,20 @@ fn export_with_reencode(
             segment.end - segment.start,
             profile,
             audio_mode,
+            crop,
+            volume,
         )
     } else {
-        export_multi_segment_reencode(app, input, output, segments, profile, audio_mode)
+        export_multi_segment_reencode(
+            app,
+            input,
+            output,
+            segments,
+            profile,
+            audio_mode,
+            crop,
+            volume,
+        )
     }
 }
 
@@ -314,8 +368,9 @@ fn export_multi_segment_lossless(
     output: &Path,
     segments: &[ExportSegment],
     audio_mode: AudioMode,
+    volume: f64,
 ) -> Result<(), String> {
-    export_multi_segment(app, input, output, segments, audio_mode)
+    export_multi_segment(app, input, output, segments, audio_mode, volume)
 }
 
 fn export_multi_segment_reencode(
@@ -325,6 +380,8 @@ fn export_multi_segment_reencode(
     segments: &[ExportSegment],
     profile: &EncodeProfile,
     audio_mode: AudioMode,
+    crop: Option<&CropRect>,
+    volume: f64,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir().join(format!(
         "cutdown-reencode-{}-{}",
@@ -355,6 +412,8 @@ fn export_multi_segment_reencode(
                 segment_duration,
                 profile,
                 audio_mode,
+                crop,
+                volume,
             )?;
             segment_paths.push(segment_path);
         }
@@ -400,6 +459,8 @@ fn export_reencoded_segment(
     duration: f64,
     profile: &EncodeProfile,
     audio_mode: AudioMode,
+    crop: Option<&CropRect>,
+    volume: f64,
 ) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
@@ -415,10 +476,8 @@ fn export_reencoded_segment(
         .arg("-t")
         .arg(format_seconds(duration));
 
-    if let Some(scale) = &profile.scale_filter {
-        if !scale.is_empty() {
-            command.args(["-vf", scale]);
-        }
+    if let Some(filter) = build_video_filter(profile, crop) {
+        command.args(["-vf", &filter]);
     }
 
     command.arg("-c:v").arg(&profile.video_codec);
@@ -426,14 +485,7 @@ fn export_reencoded_segment(
         command.arg(arg);
     }
 
-    if matches!(audio_mode, AudioMode::Strip) {
-        command.arg("-an");
-    } else {
-        command.arg("-c:a").arg(&profile.audio_codec);
-        for arg in &profile.audio_args {
-            command.arg(arg);
-        }
-    }
+    append_audio_output(&mut command, audio_mode, volume, Some(profile));
 
     command.args(["-movflags", "+faststart"]).arg(output);
 
@@ -465,6 +517,7 @@ fn export_multi_segment(
     output: &Path,
     segments: &[ExportSegment],
     audio_mode: AudioMode,
+    volume: f64,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir().join(format!(
         "cutdown-{}-{}",
@@ -499,6 +552,7 @@ fn export_multi_segment(
                 segment.start,
                 segment_duration,
                 audio_mode,
+                volume,
             )?;
             segment_paths.push(segment_path);
         }
@@ -545,6 +599,7 @@ fn export_segment(
     start: f64,
     duration: f64,
     audio_mode: AudioMode,
+    volume: f64,
 ) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
@@ -558,11 +613,16 @@ fn export_segment(
         .arg("-i")
         .arg(input)
         .arg("-t")
-        .arg(format_seconds(duration))
-        .args(["-c", "copy", "-avoid_negative_ts", "make_zero"]);
+        .arg(format_seconds(duration));
 
-    if matches!(audio_mode, AudioMode::Strip) {
-        command.arg("-an");
+    if volume_is_adjusted(volume) && !matches!(audio_mode, AudioMode::Strip) {
+        command.arg("-c:v").arg("copy");
+        append_audio_output(&mut command, audio_mode, volume, None);
+    } else {
+        command.args(["-c", "copy", "-avoid_negative_ts", "make_zero"]);
+        if matches!(audio_mode, AudioMode::Strip) {
+            command.arg("-an");
+        }
     }
 
     command.arg(output);
@@ -878,6 +938,108 @@ fn parse_ffmpeg_timestamp(raw: &str) -> Option<f64> {
             Some(minutes * 60.0 + seconds)
         }
         _ => None,
+    }
+}
+
+fn normalize_crop(
+    crop: Option<&CropRect>,
+    video_width: u32,
+    video_height: u32,
+) -> Option<CropRect> {
+    let crop = crop?;
+    if crop.width < 2 || crop.height < 2 || video_width < 2 || video_height < 2 {
+        return None;
+    }
+
+    let even = |value: u32| -> u32 { value - (value % 2) };
+    let max_w = even(video_width);
+    let max_h = even(video_height);
+    let width = even(crop.width.min(max_w));
+    let height = even(crop.height.min(max_h));
+    let x = even(crop.x.min(max_w.saturating_sub(width)));
+    let y = even(crop.y.min(max_h.saturating_sub(height)));
+
+    if width < 2 || height < 2 {
+        return None;
+    }
+
+    Some(CropRect { x, y, width, height })
+}
+
+fn build_video_filter(profile: &EncodeProfile, crop: Option<&CropRect>) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if let Some(crop) = crop {
+        parts.push(format!(
+            "crop={}:{}:{}:{}",
+            crop.width, crop.height, crop.x, crop.y
+        ));
+    }
+
+    if let Some(scale) = &profile.scale_filter {
+        if !scale.is_empty() {
+            parts.push(scale.clone());
+        }
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(","))
+    }
+}
+
+fn normalize_volume(volume: Option<f64>) -> f64 {
+    match volume {
+        Some(value) if value.is_finite() => value.clamp(0.0, 2.0),
+        _ => 1.0,
+    }
+}
+
+fn volume_is_adjusted(volume: f64) -> bool {
+    (volume - 1.0).abs() > 0.001
+}
+
+fn append_audio_output(
+    command: &mut Command,
+    audio_mode: AudioMode,
+    volume: f64,
+    profile: Option<&EncodeProfile>,
+) {
+    if matches!(audio_mode, AudioMode::Strip) {
+        command.arg("-an");
+        return;
+    }
+
+    if volume_is_adjusted(volume) {
+        command.args(["-af", &format!("volume={volume:.4}")]);
+    }
+
+    if let Some(profile) = profile {
+        command.arg("-c:a").arg(&profile.audio_codec);
+        for arg in &profile.audio_args {
+            command.arg(arg);
+        }
+        return;
+    }
+
+    command.args(["-c:a", "aac", "-b:a", "192k"]);
+}
+
+fn lossless_crop_profile() -> EncodeProfile {
+    EncodeProfile {
+        lossless: false,
+        video_codec: "libx264".to_string(),
+        video_args: vec![
+            "-crf".to_string(),
+            "16".to_string(),
+            "-preset".to_string(),
+            "fast".to_string(),
+        ],
+        audio_codec: "aac".to_string(),
+        audio_args: vec!["-b:a".to_string(), "192k".to_string()],
+        scale_filter: None,
+        target_bytes: None,
     }
 }
 

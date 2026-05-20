@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
   import { formatBytes, formatTime, sanitizeExportFileName } from '../lib/format';
+  import IconButton from './IconButton.svelte';
 
   type PresetInfo = {
     id: string;
@@ -48,11 +49,13 @@
 </script>
 
 {#if open}
-  <div class="modal-backdrop">
-    <section class="modal" aria-label="Export clip">
+  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+  <div class="modal-backdrop" on:click={() => dispatch('close')}>
+    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+    <section class="modal" aria-label="Export clip" on:click|stopPropagation>
       <header>
         <h2>Export clip</h2>
-        <button type="button" class="icon-button" on:click={() => dispatch('close')}>Close</button>
+        <button type="button" class="icon-button" title="Close" on:click={() => dispatch('close')}>Close</button>
       </header>
 
       <dl>
@@ -123,8 +126,10 @@
       <p class="modal__note">Existing files at the selected output path will be replaced.</p>
 
       <footer>
-        <button type="button" class="secondary" on:click={() => dispatch('chooseOutput')}>Choose folder</button>
-        <button type="button" disabled={!canExport} on:click={() => dispatch('confirm')}>Export</button>
+        <button type="button" class="secondary" title="Choose export folder" on:click={() => dispatch('chooseOutput')}>Choose folder</button>
+        <IconButton icon="export" title="Start export" variant="primary" showLabel disabled={!canExport} on:click={() => dispatch('confirm')}>
+          Export
+        </IconButton>
       </footer>
     </section>
   </div>

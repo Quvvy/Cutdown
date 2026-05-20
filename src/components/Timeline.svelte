@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, tick } from 'svelte';
+  import IconButton from './IconButton.svelte';
   import { clamp, formatTime } from '../lib/format';
   import type { TimelineSegment } from '../stores/editor';
 
@@ -40,6 +41,8 @@
     width: number;
   };
 
+  const MAX_ZOOM = 320;
+
   const dispatch = createEventDispatcher<{
     seek: { seconds: number };
     selectSegment: { id: string };
@@ -57,7 +60,29 @@
     toggleRangeLoop: void;
   }>();
 
-  export function zoomToSourceRange(start: number, end: number): void {
+  function zoomLevelForSequenceSeconds(sequenceSeconds: number): number {
+    if (sequenceSeconds <= 0) {
+      return 28;
+    }
+
+    const viewport = scrollArea?.clientWidth ?? 640;
+    return clamp((viewport / sequenceSeconds - 1.5) / 0.42, 0, MAX_ZOOM);
+  }
+
+  export function zoomToFitView(): void {
+    if (disabled || outputDuration <= 0) {
+      return;
+    }
+
+    const nextZoom = zoomLevelForSequenceSeconds(outputDuration);
+    dispatch('zoomChange', { zoom: nextZoom });
+
+    if (scrollArea) {
+      scrollArea.scrollLeft = 0;
+    }
+  }
+
+  export async function zoomToSourceRange(start: number, end: number): Promise<void> {
     if (disabled || outputDuration <= 0) {
       return;
     }
@@ -65,13 +90,14 @@
     const seqStart = sourceToSequenceTime(start);
     const seqEnd = sourceToSequenceTime(end);
     const rangeSeconds = Math.max(0.05, seqEnd - seqStart);
-    const viewport = scrollArea?.clientWidth ?? 640;
-    const nextZoom = clamp((viewport / rangeSeconds - 1.5) / 0.42, 0, 100);
+    const nextZoom = zoomLevelForSequenceSeconds(rangeSeconds);
 
     dispatch('zoomChange', { zoom: nextZoom });
+    await tick();
 
     if (scrollArea) {
-      scrollArea.scrollLeft = Math.max(0, seqStart * (1.5 + nextZoom * 0.42) - 24);
+      scrollArea.scrollLeft = Math.max(0, seqStart * pixelsPerSecond - 24);
+      syncTrackScroll();
     }
   }
 
@@ -248,7 +274,7 @@
   }
 
   function updateZoom(nextZoom: number): void {
-    dispatch('zoomChange', { zoom: clamp(nextZoom, 0, 100) });
+    dispatch('zoomChange', { zoom: clamp(nextZoom, 0, MAX_ZOOM) });
   }
 
   function handleZoomInput(event: Event): void {
@@ -415,18 +441,24 @@
     <div class="timeline__zoom">
       <span>Zoom</span>
       <input
+        class="app-slider"
         type="range"
         min="0"
-        max="100"
+        max={MAX_ZOOM}
         value={zoom}
         disabled={disabled}
         aria-label="Timeline zoom"
+        style={`--slider-fill: ${(zoom / MAX_ZOOM) * 100}%`}
         on:input={handleZoomInput}
       />
-      <button type="button" class="timeline__mini-button" disabled={disabled} on:click={() => dispatch('zoomFit')}>Fit</button>
-      <button type="button" class="timeline__mini-button" disabled={disabled || !normalizedRange} on:click={() => dispatch('zoomRange')}>
-        Range
-      </button>
+      <IconButton icon="scaleFit" title="Fit timeline to window" variant="mini" disabled={disabled} on:click={() => dispatch('zoomFit')} />
+      <IconButton
+        icon="zoomRange"
+        title="Zoom to I/O range"
+        variant="mini"
+        disabled={disabled || !normalizedRange}
+        on:click={() => dispatch('zoomRange')}
+      />
     </div>
   </header>
 
