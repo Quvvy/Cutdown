@@ -21,6 +21,7 @@ The current milestone is a working local multi-cut editor with compression prese
 - Use the system tray: close (X) minimizes to tray; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits.
 - Review recent exports in **History**, upload to Catbox, and copy share links.
 - Crop the preview (16:9, 9:16, or free) before export.
+- Adjust clip volume for preview and export.
 
 Current shortcuts:
 
@@ -41,7 +42,7 @@ Range actions are also available from the transport bar, timeline context menu, 
 Known limitations:
 
 - Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
-- Audio is preserved by default during stream-copy export, but there is no audio editing yet.
+- Volume can be adjusted for preview and export; fade/strip/waveform editing is not implemented yet.
 - Preview support is currently limited by WebView2/HTML video decoding. ffmpeg may support files that the preview cannot play until proxy/remux preview support is added.
 
 ## Requirements
@@ -155,9 +156,13 @@ Status: MVP complete.
 
 Status: partial (Open With associations, launch path, default export folder, run at startup).
 
-### Milestone 7–8, 10
+### Milestone 7–10
 
-Catbox upload, clip history, and an informal performance baseline are documented in [PROGRESS.md](PROGRESS.md).
+Catbox upload, clip history, performance baseline, volume control, and UI polish are documented in [PROGRESS.md](PROGRESS.md).
+
+### Milestone 11–18 (planned)
+
+See [PROGRESS.md](PROGRESS.md) for the full backlog: trim accuracy, audio editing, timeline workflow, session save, export/presets v2, preview improvements, OBS integration, and cross-platform release hardening.
 
 ## Project Structure
 

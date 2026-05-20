@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Cutdown is a multi-cut editor with I/O range editing, compression presets, watch-folder workflow, clip history, Catbox upload, session crop, and Windows tray integration.
+Cutdown is a multi-cut editor with I/O range editing, compression presets, watch-folder workflow, clip history, Catbox upload, session crop, clip volume, custom toolbar icons, and Windows tray integration.
 
 ## Completed
 
@@ -19,6 +19,9 @@ Cutdown is a multi-cut editor with I/O range editing, compression presets, watch
 - Clip history drawer (`%APPDATA%/Cutdown/history.json`, 50 entries).
 - Catbox upload with clipboard link.
 - Session crop overlay (16:9, 9:16, free) with ffmpeg crop filter.
+- Clip volume slider (preview + export via ffmpeg `volume` filter).
+- Custom Fluent toolbar/timeline icons and styled range sliders.
+- Timeline zoom-to-range scroll fix.
 - `npm run validate:release` smoke script.
 
 ## Validation
@@ -66,3 +69,71 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 | 8 Clip History | Complete (drawer v1) |
 | 9 Windows Integration | Complete (Open With, startup, tray) |
 | 10 Performance Audit | Documented (informal baseline) |
+| 11 Trim Accuracy | Planned |
+| 12 Audio Editing | Planned |
+| 13 Timeline Workflow | Planned |
+| 14 Session / Project Save | Planned |
+| 15 Export & Presets v2 | Planned |
+| 16 Preview & Input v2 | Planned |
+| 17 OBS & Tray Workflow | Planned |
+| 18 Platform & Release | Planned |
+
+## Upcoming milestones (detail)
+
+### Milestone 11: Trim accuracy
+
+- Optional snap-to-keyframe for stream-copy cuts.
+- Optional “accurate cut” mode (re-encode segment boundaries) when frame-perfect in/out matters.
+- Document trade-offs in UI (speed vs accuracy).
+
+### Milestone 12: Audio editing
+
+- Strip/mute audio from export UI (backend already supports `AudioMode::Strip`).
+- Fade in/out on I/O range.
+- Optional waveform on the audio track lane.
+
+### Milestone 13: Timeline workflow
+
+- Drag-reorder segments; duplicate segment.
+- J/K/L shuttle scrubbing; snap playhead to I/O markers.
+- In-app keyboard shortcut reference.
+
+### Milestone 14: Session / project save
+
+- Persist crop, volume, I/O, and segment list per source file.
+- Optional `.cutdown` project file or “restore last session” when reopening a clip.
+
+### Milestone 15: Export & presets v2
+
+- User-defined export presets (CRF, resolution cap, bitrate).
+- Export queue (no concurrent export + upload).
+- Batch export from history or “one file per segment.”
+- Additional upload targets (e.g. Discord webhook) alongside Catbox.
+- Video-copy + audio-filter-only path when only volume changes on lossless preset.
+
+### Milestone 16: Preview & input v2
+
+- Drag-and-drop file onto the editor window.
+- Recent source files list (complement export history).
+- Proactive proxy for heavy codecs or large files.
+- Playback speed (0.5× / 1× / 2×).
+
+### Milestone 17: OBS & tray workflow
+
+- OBS WebSocket: load latest replay or tie into replay-buffer naming.
+- Tray actions: open watch folder, export-complete notification while minimized.
+
+### Milestone 18: Platform & release
+
+- macOS / Linux ports (tray, file associations, shell integration per OS).
+- Tauri auto-updater and signed release CI.
+- Rust integration tests for probe + single-segment export.
+- Svelte 5 migration (deferred npm advisory).
+
+## Suggested v0.2 priority
+
+| Tier | Focus |
+|------|--------|
+| **High** | Milestone 11 (trim accuracy), 16 drag-and-drop + recent sources, 13 shortcut cheatsheet |
+| **Medium** | 15 custom presets + export queue, 12 strip audio / waveform, 14 session save |
+| **Longer** | 17 OBS WebSocket, 18 cross-platform + auto-update + automated export tests |
