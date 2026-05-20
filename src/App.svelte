@@ -27,6 +27,7 @@
     parseCustomPresetsFromSettings,
     type CustomExportPreset,
   } from './lib/exportPresets';
+  import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
     kindLabel,
     parseProvidersFromSettings,
@@ -37,6 +38,7 @@
     createFullSegment,
     editor,
     totalSegmentDuration,
+    type EditorState,
     type TimelineSegment,
     type VideoMetadata,
   } from './stores/editor';
@@ -85,6 +87,9 @@
     uploadProviders: UploadProvider[];
     defaultUploadProviderId: string | null;
     customExportPresets: CustomExportPreset[];
+    obsWebsocketHost: string | null;
+    obsWebsocketPort: number | null;
+    obsWebsocketPassword: string | null;
   };
 
   type PreviewResult = {
@@ -130,6 +135,15 @@
   let dragOver = false;
   let accurateTrimExport = false;
   let stripAudioExport = false;
+  let exportBatchPerSegment = false;
+  let queueUploadAfterExport = false;
+  let fadeInSeconds = 0;
+  let fadeOutSeconds = 0;
+  let previewPlaybackRate = 1;
+  let exportQueueProcessing = false;
+  let obsWebsocketHost = '127.0.0.1';
+  let obsWebsocketPort = 4455;
+  let obsWebsocketPassword = '';
   let persistSessionTimer: ReturnType<typeof setTimeout> | null = null;
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
@@ -327,6 +341,9 @@
       customExportPresets = parseCustomPresetsFromSettings(settings.customExportPresets);
       clipHistory = await invoke<ClipHistoryEntry[]>('list_clip_history');
       recentSources = settings.recentSources ?? [];
+      obsWebsocketHost = settings.obsWebsocketHost ?? '127.0.0.1';
+      obsWebsocketPort = settings.obsWebsocketPort ?? 4455;
+      obsWebsocketPassword = settings.obsWebsocketPassword ?? '';
       gpuEncoders = encoders;
       ffmpegAvailable = ffmpeg.available;
       ffmpegStatus =
@@ -413,6 +430,31 @@
       : null;
   $: rangeDuration = normalizedRange ? normalizedRange.end - normalizedRange.start : 0;
   $: canUseRange = Boolean(normalizedRange && rangeDuration > 0.05);
+  $: selectedExportPreset = exportPresets.find((preset) => preset.id === exportPresetId) ?? null;
+  $: streamCopyBlockers = (() => {
+    if (!selectedExportPreset?.lossless) {
+      return [];
+    }
+
+    const blockers: string[] = [];
+    if (exportCropPixels()) {
+      blockers.push('crop');
+    }
+    if (Math.abs(clipVolume - 1) > 0.001) {
+      blockers.push('volume');
+    }
+    if (accurateTrimExport) {
+      blockers.push('accurate trim');
+    }
+    if (stripAudioExport) {
+      blockers.push('strip audio');
+    }
+    if (fadeInSeconds > 0 || fadeOutSeconds > 0) {
+      blockers.push('audio fade');
+    }
+    return blockers;
+  })();
+  $: usesStreamCopy = Boolean(selectedExportPreset?.lossless && streamCopyBlockers.length === 0);
   $: outputPath = joinOutputPath(outputDirectory, outputFileName);
   $: updateWindowTitle(fileName);
 
@@ -652,6 +694,15 @@
       }
 
       syncExportDefaultsForClip();
+      if (needsProxyPreview(probed)) {
+        editor.update((state) => ({
+          ...state,
+          exportStatus: {
+            state: 'idle',
+            message: `${state.exportStatus.message} Heavy codec or large file — use Proxy preview if playback stutters.`,
+          },
+        }));
+      }
       void invoke<string[]>('push_recent_source', { path: selected }).then((sources) => {
         recentSources = sources;
       });
@@ -1355,10 +1406,155 @@
     exportModalOpen = true;
   }
 
+  function buildExportSegmentRanges(): Array<{ start: number; end: number }> {
+    if (exportMode === 'range' && canUseRange && normalizedRange) {
+      return [{ start: normalizedRange.start, end: normalizedRange.end }];
+    }
+
+    return segments.map((segment) => ({
+      start: segment.sourceStart,
+      end: segment.sourceEnd,
+    }));
+  }
+
+  function buildQueuedExportJobs(): ExportJob[] {
+    const exportSegments = buildExportSegmentRanges();
+    if (exportSegments.length === 0) {
+      return [];
+    }
+
+    if (exportBatchPerSegment && exportMode === 'sequence' && exportSegments.length > 1) {
+      return buildPerSegmentJobs(outputDirectory, outputFileName, exportSegments);
+    }
+
+    return [
+      {
+        id: crypto.randomUUID(),
+        outputPath,
+        segments: exportSegments,
+        label: 'Export',
+      },
+    ];
+  }
+
+  async function confirmOverwrite(paths: string[]): Promise<boolean> {
+    for (const path of paths) {
+      const exists = await invoke<boolean>('path_exists', { path }).catch(() => false);
+      if (!exists) {
+        continue;
+      }
+
+      const overwrite = await confirm(`Replace existing file?\n${path}`, {
+        title: 'Overwrite output',
+        kind: 'warning',
+      });
+
+      if (!overwrite) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  async function notifyExportComplete(title: string, body: string): Promise<void> {
+    try {
+      const visible = await getCurrentWindow().isVisible();
+      if (!visible) {
+        await notify(body, title);
+      }
+    } catch {
+      // Notification while minimized is best-effort.
+    }
+  }
+
+  async function runExportJob(job: ExportJob): Promise<ExportResult> {
+    const preset = exportPresets.find((item) => item.id === exportPresetId);
+    const presetLabel = preset?.name ?? exportPresetId;
+
+    exportProgressPercent = 0;
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'running',
+        message: `Exporting ${job.label} with ${presetLabel}...`,
+      },
+    }));
+
+    const crop = exportCropPixels();
+    const result = await invoke<ExportResult>('export_clip', {
+      params: {
+        inputPath: $editor.currentFile,
+        outputPath: job.outputPath,
+        audioMode: stripAudioExport ? 'strip' : 'preserve',
+        segments: job.segments,
+        presetId: exportPresetId,
+        preferGpu: preferGpuEncoding,
+        sourcePath: $editor.currentFile,
+        crop,
+        volume: clipVolume,
+        accurateTrim: accurateTrimExport,
+        fadeInSeconds: fadeInSeconds > 0 ? fadeInSeconds : null,
+        fadeOutSeconds: fadeOutSeconds > 0 ? fadeOutSeconds : null,
+      },
+    });
+
+    exportProgressPercent = 100;
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'success',
+        message: `Exported ${job.label}: ${formatBytes(result.fileSize)} in ${formatTime(result.duration)}.`,
+        outputPath: result.outputPath,
+        outputSize: result.fileSize,
+      },
+    }));
+
+    await notifyExportComplete('Export complete', `Exported ${formatBytes(result.fileSize)} clip.`);
+
+    if (queueUploadAfterExport) {
+      await uploadClip(result.outputPath, selectedUploadProviderId);
+    }
+
+    return result;
+  }
+
+  async function processExportQueue(jobs: ExportJob[]): Promise<void> {
+    if (exportQueueProcessing || jobs.length === 0) {
+      return;
+    }
+
+    exportQueueProcessing = true;
+
+    try {
+      for (const job of jobs) {
+        await runExportJob(job);
+      }
+
+      await refreshClipHistory();
+      await invoke('set_last_preset_id', { presetId: exportPresetId });
+      const parent = jobs[jobs.length - 1]?.outputPath.replace(/[\\/][^\\/]+$/, '');
+      if (parent) {
+        await invoke('set_last_export_dir', { path: parent });
+      }
+    } catch (error) {
+      exportProgressPercent = null;
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }));
+    } finally {
+      exportQueueProcessing = false;
+    }
+  }
+
   async function exportClip(): Promise<void> {
     outputFileName = sanitizeExportFileName(outputFileName);
 
-    if (!$editor.currentFile || !outputPath || !outputDirectory) {
+    if (!$editor.currentFile || !outputDirectory) {
       return;
     }
 
@@ -1373,84 +1569,104 @@
       return;
     }
 
-    try {
-      const exists = await invoke<boolean>('path_exists', { path: outputPath }).catch(() => false);
-      if (exists) {
-        const overwrite = await confirm(`Replace existing file?\n${outputPath}`, {
-          title: 'Overwrite output',
-          kind: 'warning',
-        });
-
-        if (!overwrite) {
-          return;
-        }
-      }
-    } catch {
-      // Overwrite confirmation is best-effort when the helper is unavailable.
-    }
-
-    let exportSegments =
-      exportMode === 'range' && canUseRange && normalizedRange
-        ? [{ start: normalizedRange.start, end: normalizedRange.end }]
-        : segments.map((segment) => ({
-            start: segment.sourceStart,
-            end: segment.sourceEnd,
-          }));
-
-    if (exportSegments.length === 0) {
+    const jobs = buildQueuedExportJobs();
+    if (jobs.length === 0) {
       return;
     }
 
-    const preset = exportPresets.find((item) => item.id === exportPresetId);
-    const presetLabel = preset?.name ?? exportPresetId;
+    if (!(await confirmOverwrite(jobs.map((job) => job.outputPath)))) {
+      return;
+    }
 
-    exportProgressPercent = 0;
+    exportModalOpen = false;
+    await processExportQueue(jobs);
+  }
+
+  function needsProxyPreview(meta: VideoMetadata): boolean {
+    const codec = meta.codec.toLowerCase();
+    return (
+      meta.fileSize > 500_000_000 ||
+      codec.includes('hevc') ||
+      codec.includes('h265') ||
+      codec.includes('vp9') ||
+      codec.includes('av1')
+    );
+  }
+
+  async function prepareProxyPreview(): Promise<void> {
+    if (!$editor.currentFile || previewFallbackRunning) {
+      return;
+    }
+
+    previewFallbackRunning = true;
     editor.update((state) => ({
       ...state,
-      exportStatus: {
-        state: 'running',
-        message: `Exporting with ${presetLabel}...`,
-      },
+      exportStatus: { state: 'running', message: 'Building proxy preview...' },
     }));
 
     try {
-      const crop = exportCropPixels();
-      const result = await invoke<ExportResult>('export_clip', {
-        params: {
-          inputPath: $editor.currentFile,
-          outputPath,
-          audioMode: stripAudioExport ? 'strip' : 'preserve',
-          segments: exportSegments,
-          presetId: exportPresetId,
-          preferGpu: preferGpuEncoding,
-          sourcePath: $editor.currentFile,
-          crop,
-          volume: clipVolume,
-          accurateTrim: accurateTrimExport,
-        },
+      const result = await invoke<PreviewResult>('prepare_preview', {
+        params: { inputPath: $editor.currentFile, forceProxy: true },
       });
-
-      exportModalOpen = false;
-      await refreshClipHistory();
-      exportProgressPercent = 100;
-      await invoke('set_last_preset_id', { presetId: exportPresetId });
-      const parent = result.outputPath.replace(/[\\/][^\\/]+$/, '');
-      if (parent) {
-        await invoke('set_last_export_dir', { path: parent });
-      }
-
+      await cleanupPreview($editor.previewTempPath);
+      editor.update((state) => ({
+        ...state,
+        videoSrc: convertFileSrc(result.previewPath),
+        previewTempPath: result.previewPath,
+        previewStrategy: result.strategy as EditorState['previewStrategy'],
+        exportStatus: {
+          state: 'idle',
+          message: `Proxy preview ready (${result.strategy}).`,
+        },
+      }));
+    } catch (error) {
       editor.update((state) => ({
         ...state,
         exportStatus: {
-          state: 'success',
-          message: `Exported ${formatBytes(result.fileSize)} in ${formatTime(result.duration)}.`,
-          outputPath: result.outputPath,
-          outputSize: result.fileSize,
+          state: 'error',
+          message: error instanceof Error ? error.message : String(error),
         },
       }));
-      await notify(`Exported ${formatBytes(result.fileSize)} clip.`, 'Export complete');
+    } finally {
+      previewFallbackRunning = false;
+    }
+  }
+
+  async function loadLatestReplay(): Promise<void> {
+    if (watchFolder) {
+      const latest = await invoke<{ path: string | null; message: string }>(
+        'find_latest_replay_in_folder',
+        { folder: watchFolder },
+      );
+      if (latest.path) {
+        await openClipPath(latest.path);
+        return;
+      }
+    }
+
+    try {
+      await invoke('save_obs_replay_buffer', {
+        host: obsWebsocketHost,
+        port: obsWebsocketPort,
+        password: obsWebsocketPassword || null,
+      });
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'idle',
+          message: 'OBS replay saved. Open your watch folder clip when it appears.',
+        },
+      }));
+      if (watchFolder) {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const latest = await invoke<{ path: string | null }>('find_latest_replay_in_folder', {
+          folder: watchFolder,
+        });
+        if (latest.path) {
+          await openClipPath(latest.path);
+        }
+      }
     } catch (error) {
-      exportProgressPercent = null;
       editor.update((state) => ({
         ...state,
         exportStatus: {
@@ -1459,6 +1675,109 @@
         },
       }));
     }
+  }
+
+  function currentProjectPayload(): Record<string, unknown> {
+    return {
+      version: 1,
+      sourcePath: $editor.currentFile ?? '',
+      segments: $editor.segments,
+      selectedSegmentId: $editor.selectedSegmentId,
+      rangeStart,
+      rangeEnd,
+      cropEnabled,
+      cropRect,
+      clipVolume,
+      currentTime: $editor.currentTime,
+      exportPresetId,
+      accurateTrim: accurateTrimExport,
+      stripAudio: stripAudioExport,
+    };
+  }
+
+  async function saveProject(): Promise<void> {
+    if (!$editor.currentFile) {
+      return;
+    }
+
+    const selected = await save({
+      defaultPath: $editor.currentFile.replace(/\.[^.]+$/i, '.cutdown'),
+      filters: [{ name: 'Cutdown project', extensions: ['cutdown'] }],
+    });
+
+    if (!selected) {
+      return;
+    }
+
+    await invoke('save_project_file', {
+      path: selected,
+      project: currentProjectPayload(),
+    });
+
+    editor.update((state) => ({
+      ...state,
+      exportStatus: { state: 'idle', message: `Project saved to ${selected}.` },
+    }));
+  }
+
+  async function openProject(): Promise<void> {
+    const selected = await open({
+      multiple: false,
+      filters: [{ name: 'Cutdown project', extensions: ['cutdown'] }],
+    });
+
+    if (!selected || typeof selected !== 'string') {
+      return;
+    }
+
+    const project = await invoke<{
+      sourcePath: string;
+      segments: TimelineSegment[];
+      selectedSegmentId: string | null;
+      rangeStart: number | null;
+      rangeEnd: number | null;
+      cropEnabled: boolean;
+      cropRect: NormalizedCropRect;
+      clipVolume: number;
+      currentTime: number | null;
+      exportPresetId: string | null;
+      accurateTrim: boolean;
+      stripAudio: boolean;
+    }>('load_project_file', { path: selected });
+
+    if (!(await invoke<boolean>('path_exists', { path: project.sourcePath }))) {
+      editor.update((state) => ({
+        ...state,
+        exportStatus: {
+          state: 'error',
+          message: 'Project source file is missing. Re-link the clip and try again.',
+        },
+      }));
+      return;
+    }
+
+    await openClipPath(project.sourcePath);
+    rangeStart = project.rangeStart;
+    rangeEnd = project.rangeEnd;
+    clipVolume = clamp(project.clipVolume ?? 1, 0, 1);
+    cropEnabled = project.cropEnabled;
+    cropRect = project.cropRect;
+    accurateTrimExport = project.accurateTrim;
+    stripAudioExport = project.stripAudio;
+    if (project.exportPresetId) {
+      exportPresetId = project.exportPresetId;
+    }
+
+    editor.update((state) => ({
+      ...state,
+      segments: project.segments,
+      selectedSegmentId: project.selectedSegmentId,
+      currentTime: clamp(project.currentTime ?? 0, 0, state.metadata?.duration ?? 0),
+      exportStatus: { state: 'idle', message: `Loaded project ${selected}.` },
+    }));
+    schedulePersistSession();
+    await tick();
+    seekTo(get(editor).currentTime);
   }
 
   async function handlePreviewError(message: string): Promise<void> {
@@ -1560,6 +1879,9 @@
 <main class="shell" class:shell--dragover={dragOver}>
   <section class="toolbar" aria-label="Editor toolbar">
     <IconButton icon="open" title="Open video file" on:click={chooseClip} />
+    <button type="button" class="secondary" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()}>Save</button>
+    <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
+    <button type="button" class="secondary" title="Load latest replay from watch folder or OBS" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
     <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
     <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
@@ -1614,9 +1936,15 @@
       >
         +
       </button>
+      <span class="preview-panel__divider" aria-hidden="true"></span>
+      <button type="button" class="secondary" class:active={previewPlaybackRate === 0.5} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 0.5)}>0.5×</button>
+      <button type="button" class="secondary" class:active={previewPlaybackRate === 1} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 1)}>1×</button>
+      <button type="button" class="secondary" class:active={previewPlaybackRate === 2} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 2)}>2×</button>
+      <button type="button" class="secondary" title="Build proxy preview for heavy codecs" disabled={!$editor.currentFile || previewFallbackRunning} on:click={() => void prepareProxyPreview()}>Proxy</button>
     </div>
     <VideoPreview
       bind:this={preview}
+      playbackRate={previewPlaybackRate}
       src={$editor.videoSrc}
       currentTime={$editor.currentTime}
       loopEnabled={rangeLoopPlayback}
@@ -1818,6 +2146,12 @@
   presetId={exportPresetId}
   bind:accurateTrim={accurateTrimExport}
   bind:stripAudio={stripAudioExport}
+  bind:batchPerSegment={exportBatchPerSegment}
+  bind:queueUploadAfterExport={queueUploadAfterExport}
+  bind:fadeInSeconds={fadeInSeconds}
+  bind:fadeOutSeconds={fadeOutSeconds}
+  {usesStreamCopy}
+  {streamCopyBlockers}
   hasAudio={Boolean(metadata?.audioCodec)}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
@@ -1859,10 +2193,16 @@
     uploadProviders = event.detail.uploadProviders;
     defaultUploadProviderId = event.detail.defaultUploadProviderId;
     customExportPresets = event.detail.customExportPresets;
+    obsWebsocketHost = event.detail.obsWebsocketHost ?? '127.0.0.1';
+    obsWebsocketPort = event.detail.obsWebsocketPort ?? 4455;
+    obsWebsocketPassword = event.detail.obsWebsocketPassword ?? '';
     selectedUploadProviderId = event.detail.defaultUploadProviderId;
     void refreshUploadProviderSummaries();
     void refreshExportPresets();
   }}
+  bind:obsWebsocketHost
+  bind:obsWebsocketPort
+  bind:obsWebsocketPassword
 />
 
 <ShortcutsModal open={shortcutsModalOpen} on:close={() => (shortcutsModalOpen = false)} />

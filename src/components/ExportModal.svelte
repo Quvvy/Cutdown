@@ -17,6 +17,12 @@
   export let accurateTrim = false;
   export let stripAudio = false;
   export let hasAudio = true;
+  export let batchPerSegment = false;
+  export let queueUploadAfterExport = false;
+  export let fadeInSeconds = 0;
+  export let fadeOutSeconds = 0;
+  export let usesStreamCopy = true;
+  export let streamCopyBlockers: string[] = [];
 
   const dispatch = createEventDispatcher<{
     close: void;
@@ -29,6 +35,12 @@
   $: selectedPreset = presets.find((preset) => preset.id === presetId) ?? null;
   $: exportDuration = exportMode === 'range' && canExportRange ? rangeDuration : duration;
   $: canExport = Boolean(outputFileName.trim()) && Boolean(outputDirectory);
+  $: canBatchPerSegment = exportMode === 'sequence' && segmentCount > 1;
+  $: trimHint = usesStreamCopy
+    ? 'Lossless stream-copy is active: fastest export, cuts land on nearest keyframes.'
+    : streamCopyBlockers.length > 0
+      ? `Stream-copy disabled because of: ${streamCopyBlockers.join(', ')}. Export will re-encode.`
+      : 'This preset re-encodes video for size or quality targets.';
   $: sizeEstimate =
     selectedPreset?.targetBytes && exportDuration > 0
       ? `Target upload size about ${formatBytes(selectedPreset.targetBytes)} for ${formatTime(exportDuration)}.`
@@ -86,6 +98,23 @@
             </dd>
           </div>
           <div>
+            <dt>Batch</dt>
+            <dd class="modal__mode">
+              <label>
+                <input
+                  type="checkbox"
+                  bind:checked={batchPerSegment}
+                  disabled={!canBatchPerSegment}
+                />
+                Export each kept segment as its own file
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={queueUploadAfterExport} />
+                Queue upload after each export completes
+              </label>
+            </dd>
+          </div>
+          <div>
             <dt>Export mode</dt>
             <dd class="modal__mode">
               <label>
@@ -134,9 +163,39 @@
           <div>
             <dt>Trim quality</dt>
             <dd class="modal__mode">
+              <p class="modal__hint">{trimHint}</p>
               <label>
                 <input type="checkbox" bind:checked={accurateTrim} />
-                Accurate trim (re-encode segment boundaries for frame-perfect cuts; slower than stream-copy)
+                Accurate trim (re-encode segment boundaries for frame-perfect in/out)
+              </label>
+            </dd>
+          </div>
+          <div>
+            <dt>Audio fades</dt>
+            <dd class="modal__mode modal__mode--fades">
+              <label>
+                <span>Fade in (s)</span>
+                <input
+                  class="modal__number-input"
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="0.1"
+                  bind:value={fadeInSeconds}
+                  disabled={stripAudio || !hasAudio}
+                />
+              </label>
+              <label>
+                <span>Fade out (s)</span>
+                <input
+                  class="modal__number-input"
+                  type="number"
+                  min="0"
+                  max="10"
+                  step="0.1"
+                  bind:value={fadeOutSeconds}
+                  disabled={stripAudio || !hasAudio}
+                />
               </label>
             </dd>
           </div>

@@ -39,6 +39,10 @@ pub struct ExportParams {
     volume: Option<f64>,
     /// Re-encode segment boundaries for frame-accurate cuts (disables stream-copy).
     accurate_trim: Option<bool>,
+    /// Fade in duration in seconds at the start of the exported output.
+    fade_in_seconds: Option<f64>,
+    /// Fade out duration in seconds at the end of the exported output.
+    fade_out_seconds: Option<f64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -238,8 +242,15 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
     let crop = normalize_crop(params.crop.as_ref(), metadata.width, metadata.height);
     let volume = normalize_volume(params.volume);
     let accurate_trim = params.accurate_trim.unwrap_or(false);
-    let use_lossless =
-        profile.lossless && crop.is_none() && !volume_is_adjusted(volume) && !accurate_trim;
+    let fade_in = normalize_fade(params.fade_in_seconds);
+    let fade_out = normalize_fade(params.fade_out_seconds);
+    let export_duration = duration;
+    let use_lossless = profile.lossless
+        && crop.is_none()
+        && !volume_is_adjusted(volume)
+        && !accurate_trim
+        && fade_in <= 0.0
+        && fade_out <= 0.0;
 
     if use_lossless {
         if segments.len() == 1 {
@@ -254,6 +265,9 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
                 segment_duration,
                 audio_mode,
                 volume,
+                fade_in,
+                fade_out,
+                export_duration,
             )
             .map_err(|err| format!("Single-segment export failed: {err}"))?;
         } else {
@@ -270,9 +284,12 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
             &output,
             &segments,
             audio_mode,
-            &mut profile,
+            &profile,
             crop.as_ref(),
             volume,
+            fade_in,
+            fade_out,
+            export_duration,
         )
         .map_err(|err| format!("Re-encode export failed: {err}"))?;
     }
@@ -298,9 +315,12 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
                 &output,
                 &segments,
                 audio_mode,
-                &mut profile,
+                &profile,
                 crop.as_ref(),
                 volume,
+                fade_in,
+                fade_out,
+                export_duration,
             )?;
             file_size = fs::metadata(&output)
                 .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
@@ -338,6 +358,9 @@ fn export_with_reencode(
     profile: &EncodeProfile,
     crop: Option<&CropRect>,
     volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
 ) -> Result<(), String> {
     if segments.len() == 1 {
         let segment = &segments[0];
@@ -351,6 +374,9 @@ fn export_with_reencode(
             audio_mode,
             crop,
             volume,
+            fade_in,
+            fade_out,
+            segment.end - segment.start,
         )
     } else {
         export_multi_segment_reencode(
@@ -362,7 +388,11 @@ fn export_with_reencode(
             audio_mode,
             crop,
             volume,
-        )
+        )?;
+        if fade_in > 0.0 || fade_out > 0.0 {
+            apply_output_audio_fades(output, audio_mode, volume, fade_in, fade_out, output_duration)?;
+        }
+        Ok(())
     }
 }
 
@@ -418,6 +448,9 @@ fn export_multi_segment_reencode(
                 audio_mode,
                 crop,
                 volume,
+                0.0,
+                0.0,
+                segment_duration,
             )?;
             segment_paths.push(segment_path);
         }
@@ -465,6 +498,9 @@ fn export_reencoded_segment(
     audio_mode: AudioMode,
     crop: Option<&CropRect>,
     volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
 ) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
@@ -489,7 +525,15 @@ fn export_reencoded_segment(
         command.arg(arg);
     }
 
-    append_audio_output(&mut command, audio_mode, volume, Some(profile));
+    append_audio_output(
+        &mut command,
+        audio_mode,
+        volume,
+        Some(profile),
+        fade_in,
+        fade_out,
+        output_duration,
+    );
 
     command.args(["-movflags", "+faststart"]).arg(output);
 
@@ -557,6 +601,9 @@ fn export_multi_segment(
                 segment_duration,
                 audio_mode,
                 volume,
+                0.0,
+                0.0,
+                segment_duration,
             )?;
             segment_paths.push(segment_path);
         }
@@ -604,6 +651,9 @@ fn export_segment(
     duration: f64,
     audio_mode: AudioMode,
     volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
 ) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
@@ -619,9 +669,19 @@ fn export_segment(
         .arg("-t")
         .arg(format_seconds(duration));
 
-    if volume_is_adjusted(volume) && !matches!(audio_mode, AudioMode::Strip) {
+    if (volume_is_adjusted(volume) || fade_in > 0.0 || fade_out > 0.0)
+        && !matches!(audio_mode, AudioMode::Strip)
+    {
         command.arg("-c:v").arg("copy");
-        append_audio_output(&mut command, audio_mode, volume, None);
+        append_audio_output(
+            &mut command,
+            audio_mode,
+            volume,
+            None,
+            fade_in,
+            fade_out,
+            output_duration,
+        );
     } else {
         command.args(["-c", "copy", "-avoid_negative_ts", "make_zero"]);
         if matches!(audio_mode, AudioMode::Strip) {
@@ -1004,19 +1064,54 @@ fn volume_is_adjusted(volume: f64) -> bool {
     (volume - 1.0).abs() > 0.001
 }
 
+fn normalize_fade(seconds: Option<f64>) -> f64 {
+    match seconds {
+        Some(value) if value.is_finite() => value.clamp(0.0, 30.0),
+        _ => 0.0,
+    }
+}
+
+fn audio_filter_chain(volume: f64, fade_in: f64, fade_out: f64, output_duration: f64) -> Option<String> {
+    let mut parts = Vec::new();
+
+    if volume_is_adjusted(volume) {
+        parts.push(format!("volume={volume:.4}"));
+    }
+
+    if fade_in > 0.0 {
+        parts.push(format!("afade=t=in:st=0:d={fade_in:.3}"));
+    }
+
+    if fade_out > 0.0 && output_duration > fade_out {
+        parts.push(format!(
+            "afade=t=out:st={:.3}:d={fade_out:.3}",
+            (output_duration - fade_out).max(0.0)
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(","))
+    }
+}
+
 fn append_audio_output(
     command: &mut Command,
     audio_mode: AudioMode,
     volume: f64,
     profile: Option<&EncodeProfile>,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
 ) {
     if matches!(audio_mode, AudioMode::Strip) {
         command.arg("-an");
         return;
     }
 
-    if volume_is_adjusted(volume) {
-        command.args(["-af", &format!("volume={volume:.4}")]);
+    if let Some(filter) = audio_filter_chain(volume, fade_in, fade_out, output_duration) {
+        command.args(["-af", &filter]);
     }
 
     if let Some(profile) = profile {
@@ -1028,6 +1123,40 @@ fn append_audio_output(
     }
 
     command.args(["-c:a", "aac", "-b:a", "192k"]);
+}
+
+fn apply_output_audio_fades(
+    output: &Path,
+    audio_mode: AudioMode,
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
+) -> Result<(), String> {
+    if matches!(audio_mode, AudioMode::Strip) {
+        return Ok(());
+    }
+
+    let Some(filter) = audio_filter_chain(volume, fade_in, fade_out, output_duration) else {
+        return Ok(());
+    };
+
+    let temp_output = output.with_extension("fade-tmp.mp4");
+    let mut command = Command::new(ffmpeg_path());
+    command
+        .arg("-y")
+        .arg("-i")
+        .arg(output)
+        .args(["-af", &filter])
+        .arg("-c:v")
+        .arg("copy")
+        .args(["-c:a", "aac", "-b:a", "192k"])
+        .arg(&temp_output);
+
+    run_command_with_progress(None, command, "fade", None, "Applying audio fades.")?;
+
+    fs::rename(&temp_output, output)
+        .map_err(|err| format!("Failed to replace output after audio fade: {err}"))
 }
 
 fn lossless_crop_profile() -> EncodeProfile {

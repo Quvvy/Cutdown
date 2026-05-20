@@ -11,6 +11,7 @@
   export let cropEnabled = false;
   export let cropRect: NormalizedCropRect = { x: 0, y: 0, width: 1, height: 1 };
   export let volume = 1;
+  export let playbackRate = 1;
 
   let video: HTMLVideoElement;
   let viewport: HTMLDivElement;
@@ -50,6 +51,7 @@
 
   $: if (video) {
     video.volume = clamp(volume, 0, 1);
+    video.playbackRate = clamp(playbackRate, 0.25, 2);
   }
 
   $: fitScale =

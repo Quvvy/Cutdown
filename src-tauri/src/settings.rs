@@ -52,6 +52,12 @@ pub struct AppSettings {
     pub default_upload_provider_id: Option<String>,
     #[serde(default)]
     pub custom_export_presets: Vec<CustomExportPreset>,
+    #[serde(default)]
+    pub obs_websocket_host: Option<String>,
+    #[serde(default)]
+    pub obs_websocket_port: Option<u16>,
+    #[serde(default)]
+    pub obs_websocket_password: Option<String>,
 }
 
 const MAX_RECENT_SOURCES: usize = 10;
@@ -72,6 +78,9 @@ impl Default for AppSettings {
             upload_providers: Vec::new(),
             default_upload_provider_id: None,
             custom_export_presets: Vec::new(),
+            obs_websocket_host: Some("127.0.0.1".to_string()),
+            obs_websocket_port: Some(4455),
+            obs_websocket_password: None,
         }
     }
 }
@@ -101,6 +110,9 @@ pub struct SaveEditorSettingsParams {
     pub providers: Vec<UploadProvider>,
     pub default_upload_provider_id: Option<String>,
     pub custom_export_presets: Vec<CustomExportPreset>,
+    pub obs_websocket_host: Option<String>,
+    pub obs_websocket_port: Option<u16>,
+    pub obs_websocket_password: Option<String>,
 }
 
 pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSettings, String> {
@@ -120,6 +132,13 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
         .default_upload_provider_id
         .filter(|value| !value.trim().is_empty());
     settings.custom_export_presets = params.custom_export_presets;
+    settings.obs_websocket_host = params
+        .obs_websocket_host
+        .filter(|value| !value.trim().is_empty());
+    settings.obs_websocket_port = params.obs_websocket_port;
+    settings.obs_websocket_password = params
+        .obs_websocket_password
+        .filter(|value| !value.trim().is_empty());
 
     if let Some(preset_id) = params.last_preset_id.filter(|value| !value.trim().is_empty()) {
         settings.last_preset_id = preset_id;

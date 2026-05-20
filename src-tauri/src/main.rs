@@ -2,7 +2,9 @@ mod clip_history;
 mod encoder_detect;
 mod ffmpeg;
 mod launch;
+mod obs;
 mod presets;
+mod project;
 mod settings;
 mod source_session;
 mod upload;
@@ -69,8 +71,10 @@ fn save_editor_settings(
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let open_editor = MenuItem::with_id(app, "open_editor", "Open Editor", true, None::<&str>)?;
+    let open_watch_folder =
+        MenuItem::with_id(app, "open_watch_folder", "Open Watch Folder", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_editor, &quit])?;
+    let menu = Menu::with_items(app, &[&open_editor, &open_watch_folder, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Cutdown")
@@ -86,6 +90,16 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             "open_editor" => {
                 if let Err(err) = show_editor_window(app) {
                     eprintln!("failed to show editor window: {err}");
+                }
+            }
+            "open_watch_folder" => {
+                let folder = settings::load_settings()
+                    .watch_folder
+                    .filter(|path| !path.trim().is_empty());
+                if let Some(folder) = folder {
+                    if let Err(err) = obs::open_watch_folder_in_explorer(folder) {
+                        eprintln!("failed to open watch folder: {err}");
+                    }
                 }
             }
             "quit" => app.exit(0),
@@ -159,6 +173,11 @@ fn main() {
             upload::copy_text_to_clipboard,
             source_session::get_source_session,
             source_session::save_source_session,
+            project::save_project_file,
+            project::load_project_file,
+            obs::find_latest_replay_in_folder,
+            obs::save_obs_replay_buffer,
+            obs::open_watch_folder_in_explorer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cutdown");

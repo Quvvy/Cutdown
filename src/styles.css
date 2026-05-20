@@ -533,6 +533,11 @@ kbd {
   height: 25px;
 }
 
+.preview-panel__tools button.secondary.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
 .preview-panel .video-preview {
   flex: 1 1 auto;
   min-height: 0;
@@ -1479,6 +1484,25 @@ kbd {
   font-family: inherit;
   font-size: 0.9rem;
   gap: 8px;
+}
+
+.modal__mode--fades {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.modal__mode--fades label {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.modal__number-input {
+  background: var(--bg2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  padding: 4px 6px;
+  width: 100%;
 }
 
 .modal dd {

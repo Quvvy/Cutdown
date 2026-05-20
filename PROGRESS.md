@@ -28,6 +28,10 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 - Drag-and-drop open; recent source list in settings.
 - Accurate trim export option.
 - Per-source session restore (segments, I/O, crop, volume).
+- `.cutdown` project save/open; export batch per segment; queued upload after export.
+- Audio fade in/out on export; trim quality hints in export modal.
+- OBS WebSocket SaveReplayBuffer; latest replay from watch folder; tray Open Watch Folder.
+- Preview playback speed (0.5×–2×) and on-demand proxy preview.
 - Strip audio on export; J/K/L scrub; snap to I/O; segment duplicate and drag-reorder.
 - `npm run validate:release` smoke script.
 
@@ -76,13 +80,13 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 | 8 Clip History | Complete (drawer v1) |
 | 9 Windows Integration | Complete (Open With, startup, tray) |
 | 10 Performance Audit | Documented (informal baseline) |
-| 11 Trim Accuracy | Partial (accurate trim export) |
-| 12 Audio Editing | Partial (strip audio on export) |
+| 11 Trim Accuracy | Partial (accurate trim + export trim hints) |
+| 12 Audio Editing | Partial (strip audio, I/O fades on export) |
 | 13 Timeline Workflow | Partial (shortcuts modal, J/K/L, snap I/O, reorder/duplicate) |
-| 14 Session / Project Save | Partial (per-source session in AppData) |
-| 15 Export & Presets v2 | Partial (custom presets; queue/batch planned) |
-| 16 Preview & Input v2 | Partial (drag-drop, recent sources, fit/zoom/pan) |
-| 17 OBS & Tray Workflow | Planned |
+| 14 Session / Project Save | Partial (AppData session + `.cutdown` project files) |
+| 15 Export & Presets v2 | Partial (custom presets, batch export, queued upload) |
+| 16 Preview & Input v2 | Partial (drag-drop, recent, fit/zoom/pan, speed, proxy button) |
+| 17 OBS & Tray Workflow | Partial (WebSocket save replay, watch folder tray, latest replay) |
 | 18 Platform & Release | Planned |
 
 ## Upcoming milestones (detail)

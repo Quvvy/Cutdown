@@ -14,7 +14,15 @@ Use this checklist when validating a build before release or after editor/export
 npm run validate:release
 ```
 
-This runs `npm run check`, `cargo check`, and reports bundled ffmpeg status.
+This runs `npm run check`, `cargo check`, and reports bundled ffmpeg status. Run this before every release candidate; it satisfies the tooling portion of pre-release validation. Complete the manual matrix below on real OBS clips before tagging a release.
+
+### Pre-release checklist (automated)
+
+| Check | Command / tool | Pass |
+|-------|----------------|------|
+| TypeScript / Svelte | `npm run check` (via validate:release) | |
+| Rust compile | `cargo check` (via validate:release) | |
+| ffmpeg on PATH or bundled | validate:release output | |
 
 Release installer build:
 
@@ -79,6 +87,16 @@ npm run tauri -- build
 | Edit | Ctrl+D duplicates selected segment | |
 | Edit | Drag segment on timeline to reorder | |
 | Session | Reopen same source restores segments, I/O, crop, volume | |
+| Export | Batch per-segment export writes one file per kept segment | |
+| Export | Queue upload after export runs uploads sequentially | |
+| Export | Audio fade in/out on I/O or sequence export | |
+| Project | Save / open `.cutdown` project restores editor state | |
+| OBS | Latest replay opens newest file in watch folder | |
+| OBS | SaveReplayBuffer via WebSocket then opens watch-folder file | |
+| OBS | Tray menu Open Watch Folder opens Explorer | |
+| Preview | Playback speed 0.5× / 1× / 2× | |
+| Preview | Proxy preview button builds proxy for heavy codecs | |
+| Export | Trim hint explains stream-copy vs re-encode blockers | |
 
 ## Known limitations (not failures)
 

@@ -36,6 +36,9 @@
   export let customExportPresets: CustomExportPreset[] = [];
   export let ffmpegStatus = '';
   export let gpuEncoders: string[] = [];
+  export let obsWebsocketHost = '127.0.0.1';
+  export let obsWebsocketPort = 4455;
+  export let obsWebsocketPassword = '';
 
   let editingId: string | null = null;
   let editingPresetId: string | null = null;
@@ -53,6 +56,9 @@
       uploadProviders: UploadProvider[];
       defaultUploadProviderId: string | null;
       customExportPresets: CustomExportPreset[];
+      obsWebsocketHost: string | null;
+      obsWebsocketPort: number | null;
+      obsWebsocketPassword: string | null;
     };
   }>();
 
@@ -214,6 +220,9 @@
         uploadProviders: UploadProvider[];
         defaultUploadProviderId: string | null;
         customExportPresets: CustomExportPreset[];
+        obsWebsocketHost: string | null;
+        obsWebsocketPort: number | null;
+        obsWebsocketPassword: string | null;
       }>('save_editor_settings', {
         params: {
           watchFolder,
@@ -225,6 +234,9 @@
           providers,
           defaultUploadProviderId,
           customExportPresets: presets,
+          obsWebsocketHost,
+          obsWebsocketPort,
+          obsWebsocketPassword: obsWebsocketPassword || null,
         },
       });
 
@@ -244,6 +256,9 @@
         uploadProviders,
         defaultUploadProviderId,
         customExportPresets,
+        obsWebsocketHost: saved.obsWebsocketHost,
+        obsWebsocketPort: saved.obsWebsocketPort,
+        obsWebsocketPassword: saved.obsWebsocketPassword,
       });
       dispatch('close');
     } catch (error) {
@@ -288,6 +303,26 @@
           <dd class="modal__mode">
             <span>{defaultExportDir || 'Same folder as source clip'}</span>
             <button type="button" class="secondary" title="Browse for default export folder" on:click={browseExportFolder}>Browse</button>
+          </dd>
+        </div>
+        <div>
+          <dt>OBS WebSocket</dt>
+          <dd class="modal__output">
+            <label class="modal__stack">
+              <span>Host</span>
+              <input type="text" class="modal__text-input" bind:value={obsWebsocketHost} />
+            </label>
+            <label class="modal__stack">
+              <span>Port</span>
+              <input type="number" class="modal__text-input" min="1" max="65535" bind:value={obsWebsocketPort} />
+            </label>
+            <label class="modal__stack">
+              <span>Password (optional)</span>
+              <input type="password" class="modal__text-input" bind:value={obsWebsocketPassword} />
+            </label>
+            <p class="modal__hint">
+              Used by Latest replay in the toolbar to trigger SaveReplayBuffer when no watch-folder file is found.
+            </p>
           </dd>
         </div>
         <div>
