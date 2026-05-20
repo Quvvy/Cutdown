@@ -11,7 +11,14 @@
   import SettingsModal from './components/SettingsModal.svelte';
   import Timeline from './components/Timeline.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
-  import { clamp, formatBytes, formatTime } from './lib/format';
+  import {
+    clamp,
+    formatBytes,
+    formatTime,
+    joinOutputPath,
+    sanitizeExportFileName,
+    splitOutputPath,
+  } from './lib/format';
   import {
     createFullSegment,
     editor,
@@ -40,10 +47,22 @@
     message: string;
   };
 
+  type PresetInfo = {
+    id: string;
+    name: string;
+    description: string;
+    lossless: boolean;
+    requiresGpu: boolean;
+  };
+
   type AppSettings = {
     watchFolder: string | null;
     watchFolderEnabled: boolean;
     lastExportDir: string | null;
+    defaultExportDir: string | null;
+    lastPresetId: string;
+    preferGpuEncoding: boolean;
+    runAtStartup: boolean;
   };
 
   type PreviewResult = {
@@ -64,10 +83,18 @@
     | undefined;
   let exportModalOpen = false;
   let settingsModalOpen = false;
+  let exportPresets: PresetInfo[] = [];
+  let exportPresetId = 'lossless-trim';
+  let gpuEncoders: string[] = [];
+  let preferGpuEncoding = true;
+  let defaultExportDir: string | null = null;
+  let runAtStartup = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
   let exportProgressPercent: number | null = null;
   let outputPath = '';
+  let outputDirectory = '';
+  let outputFileName = 'cutdown.mp4';
   let watchFolder: string | null = null;
   let watchFolderEnabled = false;
   let ffmpegStatus = '';
@@ -121,15 +148,27 @@
 
   async function bootstrapApp(): Promise<void> {
     try {
-      const [settings, ffmpeg] = await Promise.all([
+      const [settings, ffmpeg, presets, encoders, launchPath] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<FfmpegCheckResult>('check_ffmpeg'),
+        invoke<PresetInfo[]>('list_presets'),
+        invoke<string[]>('detect_gpu_encoders'),
+        invoke<string | null>('get_launch_path'),
       ]);
 
       watchFolder = settings.watchFolder;
       watchFolderEnabled = settings.watchFolderEnabled;
+      defaultExportDir = settings.defaultExportDir ?? settings.lastExportDir;
+      exportPresetId = settings.lastPresetId || 'lossless-trim';
+      preferGpuEncoding = settings.preferGpuEncoding;
+      runAtStartup = settings.runAtStartup;
+      exportPresets = presets;
+      gpuEncoders = encoders;
       ffmpegAvailable = ffmpeg.available;
-      ffmpegStatus = ffmpeg.message;
+      ffmpegStatus =
+        encoders.length > 0
+          ? `${ffmpeg.message} GPU: ${encoders.join(', ')}.`
+          : ffmpeg.message;
 
       if (!ffmpeg.available) {
         editor.update((state) => ({
@@ -139,6 +178,10 @@
             message: ffmpeg.message,
           },
         }));
+      }
+
+      if (launchPath) {
+        await openClipPath(launchPath);
       }
     } catch (error) {
       ffmpegStatus = error instanceof Error ? error.message : String(error);
@@ -206,7 +249,14 @@
       : null;
   $: rangeDuration = normalizedRange ? normalizedRange.end - normalizedRange.start : 0;
   $: canUseRange = Boolean(normalizedRange && rangeDuration > 0.05);
+  $: outputPath = joinOutputPath(outputDirectory, outputFileName);
   $: updateWindowTitle(fileName);
+
+  function applyOutputPath(path: string): void {
+    const parts = splitOutputPath(path);
+    outputDirectory = parts.directory;
+    outputFileName = parts.fileName;
+  }
 
   function cloneSegments(source: TimelineSegment[]): TimelineSegment[] {
     return source.map((segment) => ({ ...segment }));
@@ -359,6 +409,7 @@
           message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
         },
       }));
+      syncExportDefaultsForClip();
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -658,40 +709,73 @@
     }
   }
 
-  function defaultOutputPath(): string {
+  function defaultExportFileName(): string {
     if (!$editor.currentFile) {
-      return '';
+      return 'cutdown.mp4';
     }
 
-    return $editor.currentFile.replace(/(\.[^.\\/]+)?$/, '-cutdown.mp4');
+    const leaf = $editor.currentFile.split(/[\\/]/).pop() ?? 'clip.mp4';
+    return leaf.replace(/(\.[^.]+)?$/i, '-cutdown.mp4');
+  }
+
+  function defaultExportDirectory(settings?: AppSettings | null): string {
+    return (
+      defaultExportDir ??
+      settings?.defaultExportDir ??
+      settings?.lastExportDir ??
+      $editor.currentFile?.replace(/[\\/][^\\/]+$/, '') ??
+      ''
+    );
+  }
+
+  function defaultOutputPath(): string {
+    return joinOutputPath(defaultExportDirectory(), defaultExportFileName());
+  }
+
+  function syncExportDefaultsForClip(settings?: AppSettings | null): void {
+    outputFileName = defaultExportFileName();
+    outputDirectory = defaultExportDirectory(settings);
   }
 
   async function chooseOutput(): Promise<void> {
     const settings = await invoke<AppSettings>('get_settings');
-    const defaultName = defaultOutputPath().split(/[\\/]/).pop() ?? 'cutdown.mp4';
-    const defaultDir = settings.lastExportDir ?? $editor.currentFile?.replace(/[\\/][^\\/]+$/, '') ?? undefined;
+    const defaultName = defaultExportFileName();
+    const defaultDir = defaultExportDirectory(settings) || undefined;
 
     const selected = await save({
-      defaultPath: outputPath || (defaultDir ? `${defaultDir}\\${defaultName}` : defaultOutputPath()),
+      defaultPath:
+        outputPath ||
+        (outputDirectory
+          ? joinOutputPath(outputDirectory, outputFileName)
+          : defaultDir
+            ? `${defaultDir}\\${defaultName}`
+            : defaultOutputPath()),
       filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
     });
 
     if (selected) {
-      outputPath = selected;
-      const parent = selected.replace(/[\\/][^\\/]+$/, '');
-      if (parent) {
-        await invoke('set_last_export_dir', { path: parent });
+      applyOutputPath(selected);
+      if (outputDirectory) {
+        await invoke('set_last_export_dir', { path: outputDirectory });
       }
     }
   }
 
   async function openExportModal(): Promise<void> {
-    outputPath = outputPath || defaultOutputPath();
+    const settings = await invoke<AppSettings>('get_settings').catch(() => null);
+    outputFileName = defaultExportFileName();
+
+    if (!outputDirectory) {
+      outputDirectory = defaultExportDirectory(settings);
+    }
+
     exportModalOpen = true;
   }
 
   async function exportClip(): Promise<void> {
-    if (!$editor.currentFile || !outputPath) {
+    outputFileName = sanitizeExportFileName(outputFileName);
+
+    if (!$editor.currentFile || !outputPath || !outputDirectory) {
       return;
     }
 
@@ -734,15 +818,15 @@
       return;
     }
 
+    const preset = exportPresets.find((item) => item.id === exportPresetId);
+    const presetLabel = preset?.name ?? exportPresetId;
+
     exportProgressPercent = 0;
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
-        message:
-          exportMode === 'range'
-            ? 'Exporting I/O range with lossless ffmpeg trim...'
-            : 'Running lossless ffmpeg trim...',
+        message: `Exporting with ${presetLabel}...`,
       },
     }));
 
@@ -753,11 +837,14 @@
           outputPath,
           audioMode: 'preserve',
           segments: exportSegments,
+          presetId: exportPresetId,
+          preferGpu: preferGpuEncoding,
         },
       });
 
       exportModalOpen = false;
       exportProgressPercent = 100;
+      await invoke('set_last_preset_id', { presetId: exportPresetId });
       const parent = result.outputPath.replace(/[\\/][^\\/]+$/, '');
       if (parent) {
         await invoke('set_last_export_dir', { path: parent });
@@ -1009,15 +1096,19 @@
 
 <ExportModal
   open={exportModalOpen}
-  {outputPath}
+  {outputDirectory}
+  bind:outputFileName
   segmentCount={segments.length}
   duration={outputDuration}
   {rangeDuration}
   canExportRange={canUseRange}
   {exportMode}
+  presets={exportPresets}
+  presetId={exportPresetId}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
   on:exportModeChange={(event) => (exportMode = event.detail.mode)}
+  on:presetChange={(event) => (exportPresetId = event.detail.presetId)}
   on:confirm={exportClip}
 />
 
@@ -1025,10 +1116,19 @@
   visible={settingsModalOpen}
   {watchFolder}
   {watchFolderEnabled}
+  {defaultExportDir}
+  {exportPresetId}
+  {preferGpuEncoding}
+  {runAtStartup}
   {ffmpegStatus}
+  {gpuEncoders}
   on:close={() => (settingsModalOpen = false)}
   on:saved={(event) => {
     watchFolder = event.detail.watchFolder;
     watchFolderEnabled = event.detail.watchFolderEnabled;
+    defaultExportDir = event.detail.defaultExportDir;
+    exportPresetId = event.detail.lastPresetId;
+    preferGpuEncoding = event.detail.preferGpuEncoding;
+    runAtStartup = event.detail.runAtStartup;
   }}
 />

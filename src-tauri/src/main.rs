@@ -1,12 +1,16 @@
 mod encoder_detect;
 mod ffmpeg;
+mod launch;
+mod presets;
 mod settings;
 mod watch_folder;
+mod windows_integration;
 
-use settings::AppSettings;
+use launch::LaunchState;
+use settings::{AppSettings, UpdateSettingsParams};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Manager, Runtime};
+use tauri::{AppHandle, Manager, Runtime, WindowEvent};
 
 pub fn show_editor_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let window = app
@@ -35,6 +39,16 @@ fn update_watch_folder(
     enabled: bool,
 ) -> Result<AppSettings, String> {
     let settings = settings::update_watch_folder_settings(path, enabled)?;
+    watch_folder::restart_watcher(app)?;
+    Ok(settings)
+}
+
+#[tauri::command]
+fn save_app_settings(
+    app: AppHandle,
+    params: UpdateSettingsParams,
+) -> Result<AppSettings, String> {
+    let settings = settings::update_settings(params)?;
     watch_folder::restart_watcher(app)?;
     Ok(settings)
 }
@@ -72,8 +86,20 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .manage(LaunchState::new())
         .setup(|app| {
             setup_tray(app)?;
+
+            if let Some(window) = app.get_webview_window("main") {
+                let window_for_close = window.clone();
+                window.on_window_event(move |event| {
+                    if let WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = window_for_close.hide();
+                    }
+                });
+            }
+
             watch_folder::manage_state(app)?;
             Ok(())
         })
@@ -81,6 +107,8 @@ fn main() {
             show_editor,
             path_exists,
             update_watch_folder,
+            save_app_settings,
+            launch::get_launch_path,
             ffmpeg::probe_video,
             ffmpeg::export_clip,
             ffmpeg::check_ffmpeg,
@@ -89,7 +117,10 @@ fn main() {
             ffmpeg::cleanup_preview,
             settings::get_settings,
             settings::set_last_export_dir,
-            encoder_detect::detect_gpu_encoders
+            settings::set_last_preset_id,
+            presets::list_presets,
+            encoder_detect::detect_gpu_encoders,
+            windows_integration::set_run_at_startup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Cutdown");

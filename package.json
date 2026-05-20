@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "prepare:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
+    "validate:release": "powershell -ExecutionPolicy Bypass -File scripts/validate-release.ps1",
     "tauri": "tauri"
   },
   "dependencies": {

@@ -6,16 +6,17 @@ The project uses Tauri v2, Svelte, TypeScript, Rust, plain CSS, and ffmpeg as th
 
 ## Current MVP
 
-The current milestone is a working local multi-cut editor and lossless export baseline:
+The current milestone is a working local multi-cut editor with compression presets:
 
-- Open a local video file from the editor (or from watch-folder notifications).
+- Open a local video file from the editor, watch-folder toast, or **Open With** on a video file.
 - Probe clip metadata through `ffprobe`.
 - Preview video with an HTML `video` element (native, remux, or proxy fallback).
 - Split the clip into multiple kept segments.
 - Select/delete unwanted segments.
 - Set an I/O range on the source timeline and use it for editing and export.
 - Undo/redo segment edits.
-- Export kept segments as a concatenated sequence, or export the I/O range as a single trim.
+- Export with **Lossless Trim** (stream-copy) or compressed presets: **Discord**, **Archive**, **Twitter/X**.
+- Export kept segments as a sequence, or export the I/O range as a single trim.
 - Watch an OBS replay folder and get a toast when a new clip appears.
 - Use a Windows tray menu for `Open Editor` and `Quit`.
 
@@ -75,6 +76,7 @@ Run validation:
 
 ```powershell
 npm run check
+npm run validate:release
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
 
@@ -94,6 +96,17 @@ npm run tauri -- build
 ## Runtime testing
 
 See [docs/TESTING.md](docs/TESTING.md) for the manual validation matrix (probe, preview, edit, export, watch folder).
+
+## Export presets
+
+| Preset | Use |
+|--------|-----|
+| Lossless Trim | Fast stream-copy, no quality loss (default) |
+| Discord | H.264/AAC sized for ~9 MB uploads |
+| Archive | High-quality H.264 for keeping clips |
+| Twitter / X | 720p-friendly H.264 export |
+
+Enable **Prefer GPU encoding** in Settings when NVENC/AMF/QSV is available.
 
 ## Watch folder (OBS replay buffer)
 
@@ -125,7 +138,7 @@ Status: first implementation complete.
 
 ### Milestone 4: Presets and Compression
 
-Status: not started.
+Status: v1 complete (built-in presets, GPU detection, Discord size targeting).
 
 ### Milestone 5: Crop
 
@@ -135,9 +148,13 @@ Status: not started.
 
 Status: MVP complete.
 
-### Milestone 7–10
+### Milestone 9: Windows Integration
 
-Upload/sharing, clip history, full Windows integration, and performance audit remain planned. See [PROGRESS.md](PROGRESS.md).
+Status: partial (Open With associations, launch path, default export folder, run at startup).
+
+### Milestone 7–8, 10
+
+Upload/sharing, clip history, and performance audit remain planned. See [PROGRESS.md](PROGRESS.md).
 
 ## Project Structure
 
@@ -146,8 +163,11 @@ src-tauri/
   src/
     main.rs
     ffmpeg.rs
+    presets.rs
     settings.rs
     watch_folder.rs
+    launch.rs
+    windows_integration.rs
     encoder_detect.rs
 src/
   App.svelte

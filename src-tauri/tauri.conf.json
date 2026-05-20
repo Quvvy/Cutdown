@@ -33,6 +33,13 @@
     "active": true,
     "targets": "nsis",
     "resources": ["../public/ffmpeg/*"],
+    "fileAssociations": [
+      {
+        "ext": ["mp4", "mkv", "mov", "webm", "ts", "avi", "flv"],
+        "description": "Video file",
+        "role": "Editor"
+      }
+    ],
     "windows": {
       "nsis": {
         "displayLanguageSelector": false

@@ -1,3 +1,4 @@
+use crate::presets::{self, apply_bitrate_scale, resolve_encode_profile, resolve_preset_id, EncodeProfile};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fs;
@@ -26,6 +27,8 @@ pub struct ExportParams {
     output_path: String,
     segments: Vec<ExportSegment>,
     audio_mode: Option<AudioMode>,
+    preset_id: Option<String>,
+    prefer_gpu: Option<bool>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -171,6 +174,8 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
     let input = PathBuf::from(&params.input_path);
     let output = PathBuf::from(&params.output_path);
     let audio_mode = params.audio_mode.unwrap_or(AudioMode::Preserve);
+    let preset_id = resolve_preset_id(params.preset_id);
+    let prefer_gpu = params.prefer_gpu.unwrap_or(true);
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
@@ -182,34 +187,93 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
         .map(|segment| segment.end - segment.start)
         .sum::<f64>();
 
+    let metadata = probe_video(params.input_path.clone())?;
+    let gpu_encoders = crate::encoder_detect::detect_gpu_encoders();
+    let mut profile = resolve_encode_profile(
+        &preset_id,
+        prefer_gpu,
+        &gpu_encoders,
+        duration,
+        metadata.width,
+        metadata.height,
+    )?;
+
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("Failed to create output directory: {err}"))?;
     }
 
-    emit_export_progress(&app, "starting", "Preparing export.", None);
+    let preset_name = presets::builtin_presets()
+        .into_iter()
+        .find(|preset| preset.id == preset_id)
+        .map(|preset| preset.name)
+        .unwrap_or_else(|| preset_id.clone());
 
-    if segments.len() == 1 {
-        let segment = &segments[0];
-        let segment_duration = segment.end - segment.start;
-        emit_export_progress(&app, "segment", "Exporting single segment.", Some(0.0));
-        export_segment(
-            Some(&app),
+    emit_export_progress(
+        &app,
+        "starting",
+        &format!("Preparing export with {preset_name}."),
+        None,
+    );
+
+    if profile.lossless {
+        if segments.len() == 1 {
+            let segment = &segments[0];
+            let segment_duration = segment.end - segment.start;
+            emit_export_progress(&app, "segment", "Exporting single segment.", Some(0.0));
+            export_segment(
+                Some(&app),
+                &input,
+                &output,
+                segment.start,
+                segment_duration,
+                audio_mode,
+            )
+            .map_err(|err| format!("Single-segment export failed: {err}"))?;
+        } else {
+            export_multi_segment_lossless(&app, &input, &output, &segments, audio_mode)
+                .map_err(|err| format!("Multi-segment export failed: {err}"))?;
+        }
+    } else {
+        export_with_reencode(
+            &app,
             &input,
             &output,
-            segment.start,
-            segment_duration,
+            &segments,
             audio_mode,
+            &mut profile,
         )
-        .map_err(|err| format!("Single-segment export failed: {err}"))?;
-    } else {
-        export_multi_segment(&app, &input, &output, &segments, audio_mode)
-            .map_err(|err| format!("Multi-segment export failed: {err}"))?;
+        .map_err(|err| format!("Re-encode export failed: {err}"))?;
     }
 
-    let file_size = fs::metadata(&output)
+    let mut file_size = fs::metadata(&output)
         .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
         .len();
+
+    if let Some(target_bytes) = profile.target_bytes {
+        let mut attempts = 0;
+        while file_size > target_bytes && attempts < 2 {
+            attempts += 1;
+            apply_bitrate_scale(&mut profile, 0.82);
+            emit_export_progress(
+                &app,
+                "retry",
+                &format!("Output exceeded target size, retrying ({attempts}/2)."),
+                Some(5.0),
+            );
+            export_with_reencode(
+                &app,
+                &input,
+                &output,
+                &segments,
+                audio_mode,
+                &mut profile,
+            )?;
+            file_size = fs::metadata(&output)
+                .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
+                .len();
+        }
+    }
 
     emit_export_progress(&app, "complete", "Export complete.", Some(100.0));
 
@@ -218,6 +282,168 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
         file_size,
         duration,
     })
+}
+
+fn export_with_reencode(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+    audio_mode: AudioMode,
+    profile: &EncodeProfile,
+) -> Result<(), String> {
+    if segments.len() == 1 {
+        let segment = &segments[0];
+        export_reencoded_segment(
+            Some(app),
+            input,
+            output,
+            segment.start,
+            segment.end - segment.start,
+            profile,
+            audio_mode,
+        )
+    } else {
+        export_multi_segment_reencode(app, input, output, segments, profile, audio_mode)
+    }
+}
+
+fn export_multi_segment_lossless(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+    audio_mode: AudioMode,
+) -> Result<(), String> {
+    export_multi_segment(app, input, output, segments, audio_mode)
+}
+
+fn export_multi_segment_reencode(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+    profile: &EncodeProfile,
+    audio_mode: AudioMode,
+) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "cutdown-reencode-{}-{}",
+        std::process::id(),
+        current_timestamp_millis()
+    ));
+    fs::create_dir_all(&temp_dir).map_err(|err| format!("Failed to create temp directory: {err}"))?;
+
+    let result = (|| {
+        let mut segment_paths = Vec::with_capacity(segments.len());
+        let total_segments = segments.len() as f64;
+
+        for (index, segment) in segments.iter().enumerate() {
+            let segment_duration = segment.end - segment.start;
+            let base_percent = (index as f64 / total_segments) * 90.0;
+            emit_export_progress(
+                app,
+                "segment",
+                &format!("Encoding segment {} of {}.", index + 1, segments.len()),
+                Some(base_percent),
+            );
+            let segment_path = temp_dir.join(format!("segment-{index:03}.mp4"));
+            export_reencoded_segment(
+                Some(app),
+                input,
+                &segment_path,
+                segment.start,
+                segment_duration,
+                profile,
+                audio_mode,
+            )?;
+            segment_paths.push(segment_path);
+        }
+
+        emit_export_progress(app, "concat", "Joining encoded segments.", Some(92.0));
+        let concat_list = temp_dir.join("segments.txt");
+        fs::write(&concat_list, concat_file_contents(&segment_paths))
+            .map_err(|err| format!("Failed to write concat list: {err}"))?;
+
+        let mut command = Command::new(ffmpeg_path());
+        command
+            .arg("-y")
+            .args(["-f", "concat", "-safe", "0"])
+            .arg("-i")
+            .arg(&concat_list)
+            .args(["-c", "copy"])
+            .arg(output);
+
+        run_command_with_progress(
+            Some(app),
+            command,
+            "concat",
+            None,
+            "Joining encoded segments.",
+        )
+    })();
+
+    let cleanup = fs::remove_dir_all(&temp_dir);
+    if result.is_ok() {
+        let _ = cleanup;
+    } else {
+        let _ = cleanup;
+    }
+
+    result
+}
+
+fn export_reencoded_segment(
+    app: Option<&tauri::AppHandle>,
+    input: &Path,
+    output: &Path,
+    start: f64,
+    duration: f64,
+    profile: &EncodeProfile,
+    audio_mode: AudioMode,
+) -> Result<(), String> {
+    if duration <= 0.0 {
+        return Err("Segment end must be after segment start.".to_string());
+    }
+
+    let mut command = Command::new(ffmpeg_path());
+    command
+        .arg("-y")
+        .arg("-ss")
+        .arg(format_seconds(start))
+        .arg("-i")
+        .arg(input)
+        .arg("-t")
+        .arg(format_seconds(duration));
+
+    if let Some(scale) = &profile.scale_filter {
+        if !scale.is_empty() {
+            command.args(["-vf", scale]);
+        }
+    }
+
+    command.arg("-c:v").arg(&profile.video_codec);
+    for arg in &profile.video_args {
+        command.arg(arg);
+    }
+
+    if matches!(audio_mode, AudioMode::Strip) {
+        command.arg("-an");
+    } else {
+        command.arg("-c:a").arg(&profile.audio_codec);
+        for arg in &profile.audio_args {
+            command.arg(arg);
+        }
+    }
+
+    command.args(["-movflags", "+faststart"]).arg(output);
+
+    run_command_with_progress(
+        app,
+        command,
+        "encode",
+        Some(duration),
+        "Encoding segment.",
+    )
 }
 
 fn valid_segments(segments: Vec<ExportSegment>) -> Result<Vec<ExportSegment>, String> {

@@ -28,3 +28,40 @@ export function formatBytes(bytes: number): string {
 export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
+
+export function splitOutputPath(path: string): { directory: string; fileName: string } {
+  if (!path) {
+    return { directory: '', fileName: 'cutdown.mp4' };
+  }
+
+  const normalized = path.replace(/\//g, '\\');
+  const fileName = normalized.split('\\').pop() ?? 'cutdown.mp4';
+  const directory = normalized.slice(0, normalized.length - fileName.length).replace(/\\$/, '');
+
+  return { directory, fileName };
+}
+
+export function joinOutputPath(directory: string, fileName: string): string {
+  const safeName = sanitizeExportFileName(fileName);
+
+  if (!directory) {
+    return safeName;
+  }
+
+  const trimmedDir = directory.replace(/\\+$/, '');
+  return `${trimmedDir}\\${safeName}`;
+}
+
+export function sanitizeExportFileName(fileName: string): string {
+  let cleaned = fileName.replace(/[<>:"|?*\\/]/g, '_').trim();
+
+  if (!cleaned) {
+    cleaned = 'cutdown.mp4';
+  }
+
+  if (!/\.[a-z0-9]{2,5}$/i.test(cleaned)) {
+    cleaned = `${cleaned}.mp4`;
+  }
+
+  return cleaned;
+}
