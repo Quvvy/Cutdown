@@ -838,13 +838,14 @@
   </div>
 
   {#if bookmarkMenu}
+    {@const bookmarkMenuId = bookmarkMenu.id}
     <div class="timeline-menu" role="menu" style={`left: ${bookmarkMenu.x}px; top: ${bookmarkMenu.y}px`}>
       <button type="button" on:click={() => {
-        dispatch('bookmarkEdit', { id: bookmarkMenu.id });
+        dispatch('bookmarkEdit', { id: bookmarkMenuId });
         closeContextMenu();
       }}>Edit label</button>
       <button type="button" on:click={() => {
-        dispatch('bookmarkRemove', { id: bookmarkMenu.id });
+        dispatch('bookmarkRemove', { id: bookmarkMenuId });
         closeContextMenu();
       }}>Delete marker</button>
     </div>
