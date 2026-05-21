@@ -10,6 +10,8 @@
   export let loopEnd: number | null = null;
   export let cropEnabled = false;
   export let cropRect: NormalizedCropRect = { x: 0, y: 0, width: 1, height: 1 };
+  export let lockAspectRatio = false;
+  export let lockedAspectRatio: number | null = null;
   export let volume = 1;
   export let playbackRate = 1;
 
@@ -35,6 +37,7 @@
   let panStartY = 0;
   let panOriginX = 0;
   let panOriginY = 0;
+  let userAdjustedView = false;
 
   const dispatch = createEventDispatcher<{
     timeupdate: { currentTime: number };
@@ -46,6 +49,7 @@
   $: if (src !== previousSrc) {
     previousSrc = src;
     loadError = '';
+    userAdjustedView = false;
     resetView();
   }
 
@@ -85,11 +89,19 @@
 
   export function remeasureViewport(): void {
     measureViewport();
+    if (!userAdjustedView) {
+      void fitToView();
+    }
   }
 
   onMount(() => {
     measureViewport();
-    const observer = new ResizeObserver(() => measureViewport());
+    const observer = new ResizeObserver(() => {
+      measureViewport();
+      if (!userAdjustedView && videoWidth > 0) {
+        void fitToView();
+      }
+    });
     if (viewport) {
       observer.observe(viewport);
     }
@@ -106,20 +118,24 @@
   }
 
   export async function fitToView(): Promise<void> {
+    userAdjustedView = false;
     resetView();
     await tick();
     measureViewport();
   }
 
   export function zoomIn(): void {
+    userAdjustedView = true;
     zoomFactor = Math.min(8, zoomFactor * 1.25);
   }
 
   export function zoomOut(): void {
+    userAdjustedView = true;
     zoomFactor = Math.max(0.25, zoomFactor / 1.25);
     if (zoomFactor <= 1.01) {
       panX = 0;
       panY = 0;
+      userAdjustedView = false;
     }
   }
 
@@ -179,8 +195,21 @@
   }
 
   function clampRect(rect: NormalizedCropRect): NormalizedCropRect {
-    const width = Math.min(1, Math.max(0.05, rect.width));
-    const height = Math.min(1, Math.max(0.05, rect.height));
+    let width = Math.min(1, Math.max(0.05, rect.width));
+    let height = Math.min(1, Math.max(0.05, rect.height));
+
+    if (lockAspectRatio && lockedAspectRatio && lockedAspectRatio > 0 && videoWidth > 0 && videoHeight > 0) {
+      const maxNormHeight = (width * videoWidth) / (videoHeight * lockedAspectRatio);
+      if (height > maxNormHeight) {
+        height = maxNormHeight;
+      }
+      const maxNormWidth = (height * videoHeight * lockedAspectRatio) / videoWidth;
+      if (width > maxNormWidth) {
+        width = maxNormWidth;
+      }
+      height = (width * videoWidth) / (videoHeight * lockedAspectRatio);
+    }
+
     const x = Math.min(1 - width, Math.max(0, rect.x));
     const y = Math.min(1 - height, Math.max(0, rect.y));
     return { x, y, width, height };
@@ -232,11 +261,24 @@
       return;
     }
 
+    let width = dragStartRect.width + dx;
+    let height = dragStartRect.height + dy;
+
+    if (lockAspectRatio && lockedAspectRatio && lockedAspectRatio > 0 && videoWidth > 0 && videoHeight > 0) {
+      const absDx = Math.abs(dx);
+      const absDy = Math.abs(dy);
+      if (absDx >= absDy) {
+        height = (width * videoWidth) / (videoHeight * lockedAspectRatio);
+      } else {
+        width = (height * videoHeight * lockedAspectRatio) / videoWidth;
+      }
+    }
+
     emitCrop({
       x: dragStartRect.x,
       y: dragStartRect.y,
-      width: dragStartRect.width + dx,
-      height: dragStartRect.height + dy,
+      width,
+      height,
     });
   }
 
@@ -279,6 +321,7 @@
       return;
     }
 
+    userAdjustedView = true;
     panX = panOriginX + (event.clientX - panStartX);
     panY = panOriginY + (event.clientY - panStartY);
   }
@@ -305,9 +348,11 @@
       zoomFactor = nextZoom;
       panX = 0;
       panY = 0;
+      userAdjustedView = false;
       return;
     }
 
+    userAdjustedView = true;
     zoomFactor = nextZoom;
   }
 

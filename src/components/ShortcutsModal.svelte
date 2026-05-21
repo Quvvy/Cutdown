@@ -1,18 +1,26 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
+  import DraggablePanel from './DraggablePanel.svelte';
 
   export let open = false;
 
+  let activeTab: 'shortcuts' | 'guide' = 'shortcuts';
+
   const dispatch = createEventDispatcher<{ close: void }>();
+
+  const tabs = [
+    { id: 'shortcuts' as const, label: 'Shortcuts' },
+    { id: 'guide' as const, label: 'Features' },
+  ];
 
   const shortcuts = [
     { keys: 'S', action: 'Split at playhead' },
     { keys: 'M', action: 'Add timeline marker at playhead' },
     { keys: ', / .', action: 'Previous / next marker' },
     { keys: 'Shift + M', action: 'Remove nearest marker at playhead' },
-    { keys: 'Del', action: 'Delete selected marker (when selected) or segment' },
-    { keys: 'I', action: 'Set range in point' },
-    { keys: 'O', action: 'Set range out point' },
+    { keys: 'Del', action: 'Delete selected marker or segment' },
+    { keys: 'Esc', action: 'Deselect segment, or close a panel' },
+    { keys: 'I / O', action: 'Set range in / out points' },
     { keys: 'Z', action: 'Zoom timeline to I/O range' },
     { keys: 'Shift + L', action: 'Toggle loop in I/O range' },
     { keys: 'Space', action: 'Play / pause preview' },
@@ -21,41 +29,101 @@
     { keys: 'Left / Right', action: 'Step one frame' },
     { keys: 'Shift + Left / Right', action: 'Step 5 seconds' },
     { keys: 'Ctrl + D', action: 'Duplicate selected segment' },
-    { keys: 'Delete / Backspace', action: 'Delete selected segment' },
-    { keys: 'Ctrl + Z', action: 'Undo segment edit' },
-    { keys: 'Ctrl + Y', action: 'Redo segment edit' },
-    { keys: 'Ctrl + Shift + Z', action: 'Redo segment edit' },
-    { keys: 'Escape', action: 'Close open panel or modal' },
-    { keys: '?', action: 'Open this shortcut list' },
+    { keys: 'Ctrl + Z / Y', action: 'Undo / redo segment edits' },
+    { keys: 'Alt + drag', action: 'Pan preview when zoomed' },
+    { keys: 'Preview + / −', action: 'Zoom preview in / out' },
+    { keys: '?', action: 'Open this help window' },
+  ];
+
+  const guideSections = [
+    {
+      title: 'Open clips',
+      items: [
+        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources.',
+        'Latest replay opens the newest file in your OBS watch folder (set in Settings → Folders).',
+        'Save and reopen .cutdown project files to restore cuts, range, crop, and markers.',
+      ],
+    },
+    {
+      title: 'Edit on the timeline',
+      items: [
+        'Split with S to cut the clip into kept segments. Delete removes the selected segment.',
+        'Click a segment to select it; click again, press Esc, use Deselect, or click empty track space to clear selection.',
+        'I/O range defines what gets exported as one trim or what stays when you trim outside.',
+        'Markers (M) label moments on the source timeline — useful for navigation, not export by themselves.',
+        'The audio track shows a waveform; selection uses a border so the waveform stays visible.',
+      ],
+    },
+    {
+      title: 'Preview & crop',
+      items: [
+        'Fit keeps the preview scaled to the panel when you resize the window.',
+        'Crop overlay supports locked aspect ratios including custom width:height.',
+        'Proxy helps preview heavy codecs (HEVC, large files) before export.',
+      ],
+    },
+    {
+      title: 'Export & share',
+      items: [
+        'Lossless Trim is fastest (stream-copy). Discord/Archive presets re-encode for size targets.',
+        'Export can write each kept segment as its own file, or export the I/O range as one clip.',
+        'After export, upload to Catbox, File Garden, or a custom server (Settings → Upload).',
+        'Clip history stores past exports with copy-path and copy-link actions.',
+      ],
+    },
+    {
+      title: 'Windows & tray',
+      items: [
+        'Closing the window minimizes to the system tray — use the tray icon to restore.',
+        'Restore the blue tray tip from Settings → General if you dismissed it.',
+      ],
+    },
   ];
 </script>
 
-{#if open}
-  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-  <div class="modal-backdrop" on:click={() => dispatch('close')}>
-    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-    <section class="modal modal--shortcuts" aria-label="Keyboard shortcuts" on:click|stopPropagation>
-      <header>
-        <h2>Keyboard shortcuts</h2>
-        <button type="button" class="icon-button" title="Close" on:click={() => dispatch('close')}>Close</button>
-      </header>
+<DraggablePanel open={open} title="Help" width={520} maxHeight="min(88vh, 760px)" on:close={() => dispatch('close')}>
+  <nav class="panel-nav" aria-label="Help sections">
+    {#each tabs as tab (tab.id)}
+      <button
+        type="button"
+        class="panel-nav__tab"
+        class:panel-nav__tab--active={activeTab === tab.id}
+        on:click={() => (activeTab = tab.id)}
+      >
+        {tab.label}
+      </button>
+    {/each}
+  </nav>
 
-      <table class="shortcuts-table">
-        <thead>
+  {#if activeTab === 'shortcuts'}
+    <table class="shortcuts-table">
+      <thead>
+        <tr>
+          <th scope="col">Key</th>
+          <th scope="col">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each shortcuts as row}
           <tr>
-            <th scope="col">Key</th>
-            <th scope="col">Action</th>
+            <td><kbd>{row.keys}</kbd></td>
+            <td>{row.action}</td>
           </tr>
-        </thead>
-        <tbody>
-          {#each shortcuts as row}
-            <tr>
-              <td><kbd>{row.keys}</kbd></td>
-              <td>{row.action}</td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
-    </section>
-  </div>
-{/if}
+        {/each}
+      </tbody>
+    </table>
+  {:else}
+    <div class="help-guide">
+      {#each guideSections as section}
+        <section class="help-guide__section">
+          <h3>{section.title}</h3>
+          <ul>
+            {#each section.items as item}
+              <li>{item}</li>
+            {/each}
+          </ul>
+        </section>
+      {/each}
+    </div>
+  {/if}
+</DraggablePanel>

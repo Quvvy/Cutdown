@@ -5,6 +5,7 @@ export type ClipHistoryEntry = {
   exportedAt: string;
   fileSize: number;
   duration: number;
+  shareUrl?: string | null;
 };
 
 export type NormalizedCropRect = {

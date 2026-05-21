@@ -9,8 +9,23 @@
   export let width = 0;
   export let height = 0;
   export let outputDuration = 0;
+  export let selectedSegmentId: string | null = null;
 
   let canvas: HTMLCanvasElement | undefined;
+
+  function sequenceRangeForSegment(segmentId: string): { start: number; end: number } | null {
+    let cursor = 0;
+
+    for (const segment of segments) {
+      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
+      if (segment.id === segmentId) {
+        return { start: cursor, end: cursor + segmentLength };
+      }
+      cursor += segmentLength;
+    }
+
+    return null;
+  }
 
   function sequenceToSourceTime(sequenceTime: number): number {
     let cursor = 0;
@@ -56,18 +71,31 @@
     context.clearRect(0, 0, width, height);
 
     const mid = height / 2;
-    context.fillStyle = 'rgba(95, 137, 176, 0.5)';
+    const selectedRange = selectedSegmentId ? sequenceRangeForSegment(selectedSegmentId) : null;
 
     for (let x = 0; x < width; x += 1) {
       const sequenceTime = x / pixelsPerSecond;
       const sourceTime = sequenceToSourceTime(sequenceTime);
       const peak = peakAtSourceTime(sourceTime);
       const barHeight = Math.max(1, peak * (height * 0.42));
+      const inSelected =
+        selectedRange !== null &&
+        sequenceTime >= selectedRange.start &&
+        sequenceTime <= selectedRange.end;
+      context.fillStyle = inSelected ? 'rgba(142, 196, 255, 0.82)' : 'rgba(95, 137, 176, 0.55)';
       context.fillRect(x, mid - barHeight, 1, barHeight * 2);
     }
   }
 
-  $: peaks, sourceDuration, segments, pixelsPerSecond, width, height, outputDuration, draw();
+  $: peaks,
+    sourceDuration,
+    segments,
+    selectedSegmentId,
+    pixelsPerSecond,
+    width,
+    height,
+    outputDuration,
+    draw();
 
   onMount(draw);
 </script>

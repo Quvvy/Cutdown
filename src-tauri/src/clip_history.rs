@@ -13,6 +13,8 @@ pub struct ClipHistoryEntry {
     pub exported_at: String,
     pub file_size: u64,
     pub duration: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_url: Option<String>,
 }
 
 pub fn history_path() -> Result<PathBuf, String> {
@@ -79,6 +81,30 @@ pub fn clear_clip_history() -> Result<(), String> {
 pub fn remove_clip_history_entry(output_path: String) -> Result<Vec<ClipHistoryEntry>, String> {
     let mut entries = load_entries();
     entries.retain(|entry| entry.output_path != output_path);
+    save_entries(&entries)?;
+    Ok(entries)
+}
+
+#[tauri::command]
+pub fn update_clip_history_share_url(
+    output_path: String,
+    share_url: String,
+) -> Result<Vec<ClipHistoryEntry>, String> {
+    let mut entries = load_entries();
+    let mut found = false;
+
+    for entry in entries.iter_mut() {
+        if entry.output_path == output_path {
+            entry.share_url = Some(share_url);
+            found = true;
+            break;
+        }
+    }
+
+    if !found {
+        return Err(format!("History entry not found for {output_path}"));
+    }
+
     save_entries(&entries)?;
     Ok(entries)
 }

@@ -340,6 +340,7 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
         exported_at: Utc::now().to_rfc3339(),
         file_size,
         duration,
+        share_url: None,
     });
 
     Ok(ExportResult {

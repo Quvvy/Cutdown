@@ -23,6 +23,7 @@
     serializeCustomPresets,
     type CustomExportPreset,
   } from '../lib/exportPresets';
+  import DraggablePanel from './DraggablePanel.svelte';
 
   export let visible = false;
   export let watchFolder: string | null = null;
@@ -38,9 +39,18 @@
   export let gpuEncoders: string[] = [];
   let editingId: string | null = null;
   let editingPresetId: string | null = null;
+  let activeTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
+
+  const tabs = [
+    { id: 'general' as const, label: 'General' },
+    { id: 'folders' as const, label: 'Folders' },
+    { id: 'presets' as const, label: 'Export presets' },
+    { id: 'upload' as const, label: 'Upload' },
+  ];
 
   const dispatch = createEventDispatcher<{
     close: void;
+    restoreTrayHint: void;
     error: { message: string };
     saved: {
       watchFolder: string | null;
@@ -256,70 +266,82 @@
   }
 </script>
 
-{#if visible}
-  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-  <div class="modal-backdrop" on:click={() => dispatch('close')}>
-    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-    <section class="modal modal--wide" aria-label="Settings" on:click|stopPropagation>
-      <header>
-        <h2>Settings</h2>
-        <button type="button" class="icon-button" title="Close" on:click={() => dispatch('close')}>Close</button>
-      </header>
+<DraggablePanel open={visible} title="Settings" width={580} on:close={() => dispatch('close')}>
+  <nav class="panel-nav" aria-label="Settings sections">
+    {#each tabs as tab (tab.id)}
+      <button
+        type="button"
+        class="panel-nav__tab"
+        class:panel-nav__tab--active={activeTab === tab.id}
+        on:click={() => (activeTab = tab.id)}
+      >
+        {tab.label}
+      </button>
+    {/each}
+  </nav>
 
-      <div class="modal__body">
-      <dl>
-        <div>
-          <dt>ffmpeg</dt>
-          <dd>{ffmpegStatus || 'Checking ffmpeg availability...'}</dd>
+  {#if activeTab === 'general'}
+    <div class="panel-section">
+      <h3 class="panel-section__title">System & encoding</h3>
+      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips.</p>
+      <div class="panel-info">{ffmpegStatus || 'Checking ffmpeg availability...'}</div>
+      <div class="panel-field">
+        <span>GPU encoders</span>
+        <div class="panel-info">
+          {gpuEncoders.length > 0 ? gpuEncoders.join(', ') : 'None detected (libx264 fallback)'}
         </div>
-        <div>
-          <dt>GPU encoders</dt>
-          <dd>{gpuEncoders.length > 0 ? gpuEncoders.join(', ') : 'None detected (libx264 fallback)'}</dd>
+      </div>
+      <label class="panel-field">
+        <span>Encoding</span>
+        <label class="modal__mode">
+          <input type="checkbox" bind:checked={preferGpuEncoding} />
+          Prefer GPU encoding when available
+        </label>
+      </label>
+      <div class="panel-field">
+        <span>Windows</span>
+        <label class="modal__mode">
+          <input type="checkbox" bind:checked={runAtStartup} />
+          Start Cutdown when Windows starts
+        </label>
+        <p class="modal__hint">
+          Closing the window minimizes Cutdown to the system tray. Left-click the tray icon or choose Open Editor to
+          restore.
+        </p>
+        <button type="button" class="secondary" on:click={() => dispatch('restoreTrayHint')}>
+          Show tray minimize tip again
+        </button>
+      </div>
+    </div>
+  {:else if activeTab === 'folders'}
+    <div class="panel-section">
+      <h3 class="panel-section__title">Folders</h3>
+      <p class="panel-section__lead">Where exports are saved and where OBS replay clips are watched.</p>
+      <div class="panel-field">
+        <span>Default export folder</span>
+        <div class="panel-field__row">
+          <span class="panel-field__path">{defaultExportDir || 'Same folder as the source clip'}</span>
+          <button type="button" class="secondary" on:click={browseExportFolder}>Browse</button>
         </div>
-        <div>
-          <dt>Encoding</dt>
-          <dd class="modal__mode">
-            <label>
-              <input type="checkbox" bind:checked={preferGpuEncoding} />
-              Prefer GPU encoding when available
-            </label>
-          </dd>
+      </div>
+      <div class="panel-field">
+        <span>Watch folder (OBS replay)</span>
+        <label class="modal__mode">
+          <input type="checkbox" bind:checked={watchFolderEnabled} disabled={!watchFolder} />
+          Notify when a new clip appears in the watch folder
+        </label>
+        <div class="panel-field__row">
+          <span class="panel-field__path">{watchFolder || 'No folder selected'}</span>
+          <button type="button" class="secondary" on:click={browseWatchFolder}>Browse</button>
         </div>
-        <div>
-          <dt>Default export folder</dt>
-          <dd class="modal__mode">
-            <span>{defaultExportDir || 'Same folder as source clip'}</span>
-            <button type="button" class="secondary" title="Browse for default export folder" on:click={browseExportFolder}>Browse</button>
-          </dd>
-        </div>
-        <div>
-          <dt>Watch folder</dt>
-          <dd class="modal__mode">
-            <label>
-              <input type="checkbox" bind:checked={watchFolderEnabled} disabled={!watchFolder} />
-              Enable watch folder notifications
-            </label>
-            <span>{watchFolder || 'No folder selected'}</span>
-            <p class="modal__hint">
-              Latest replay opens the newest video in this folder. New files can also trigger a toast when notifications are enabled.
-            </p>
-          </dd>
-        </div>
-        <div>
-          <dt>Windows</dt>
-          <dd class="modal__mode">
-            <label>
-              <input type="checkbox" bind:checked={runAtStartup} />
-              Start Cutdown when Windows starts
-            </label>
-          </dd>
-        </div>
-        <div>
-          <dt>Custom export presets</dt>
-          <dd class="modal__output preset-settings">
-            <p class="modal__hint">
-              Built-in presets stay available. Custom presets appear in the export dialog alongside them.
-            </p>
+        <p class="modal__hint">Latest replay opens the newest video here. Use the same folder OBS uses for replay buffer saves.</p>
+      </div>
+    </div>
+  {:else if activeTab === 'presets'}
+    <div class="panel-section">
+      <h3 class="panel-section__title">Custom export presets</h3>
+      <p class="panel-section__lead">Built-in presets stay available. Custom presets appear in the Export window.</p>
+      <div class="modal__output preset-settings">
             <div class="preset-settings__toolbar">
               <button type="button" class="secondary" on:click={addCustomPreset}>Add preset</button>
             </div>
@@ -491,11 +513,13 @@
                 {/if}
               </div>
             {/if}
-          </dd>
-        </div>
-        <div>
-          <dt>Upload targets</dt>
-          <dd class="modal__output upload-settings">
+      </div>
+    </div>
+  {:else if activeTab === 'upload'}
+    <div class="panel-section">
+      <h3 class="panel-section__title">Upload targets</h3>
+      <p class="panel-section__lead">Share exported clips via Catbox, File Garden, or your own HTTP server.</p>
+      <div class="modal__output upload-settings">
             <p class="modal__hint">
               Credentials are stored locally in settings.json. Use HTTPS for custom servers. Select the filled
               circle for your default target, then click Save.
@@ -679,24 +703,22 @@
                 {/if}
               </div>
             {/if}
-          </dd>
-        </div>
-      </dl>
       </div>
+    </div>
+  {/if}
 
-      <footer>
-        <button type="button" class="secondary" title="Browse for OBS replay folder" on:click={browseWatchFolder}>Browse watch folder</button>
-        <button
-          type="button"
-          class="secondary"
-          disabled={!watchFolder}
-          title="Clear watch folder selection"
-          on:click={() => ((watchFolder = null), (watchFolderEnabled = false))}
-        >
-          Clear watch folder
-        </button>
-        <button type="button" title="Save settings" on:click={saveSettings}>Save</button>
-      </footer>
-    </section>
-  </div>
-{/if}
+  <svelte:fragment slot="footer">
+    {#if activeTab === 'folders'}
+      <button
+        type="button"
+        class="secondary"
+        disabled={!watchFolder}
+        title="Clear watch folder selection"
+        on:click={() => ((watchFolder = null), (watchFolderEnabled = false))}
+      >
+        Clear watch folder
+      </button>
+    {/if}
+    <button type="button" class="primary" title="Save settings" on:click={saveSettings}>Save settings</button>
+  </svelte:fragment>
+</DraggablePanel>

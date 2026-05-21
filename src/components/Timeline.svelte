@@ -61,7 +61,7 @@
 
   const dispatch = createEventDispatcher<{
     seek: { seconds: number };
-    selectSegment: { id: string };
+    selectSegment: { id: string | null };
     rangeChange: { start: number; end: number };
     zoomChange: { zoom: number };
     trackHeightChange: { videoHeight: number; audioHeight: number };
@@ -329,7 +329,9 @@
     event.preventDefault();
     event.stopPropagation();
     closeContextMenu();
-    dispatch('selectSegment', { id: segment.id });
+    if (selectedSegmentId !== segment.id) {
+      dispatch('selectSegment', { id: segment.id });
+    }
     segmentDrag = {
       id: segment.id,
       fromIndex: index,
@@ -549,12 +551,35 @@
     return `left: ${layout.left}px; width: ${layout.width}px`;
   }
 
+  function toggleSegmentSelection(segmentId: string): void {
+    dispatch('selectSegment', { id: selectedSegmentId === segmentId ? null : segmentId });
+  }
+
   function selectSegment(segment: TimelineSegment, event: PointerEvent): void {
     event.preventDefault();
     event.stopPropagation();
     activeSeek = false;
     closeContextMenu();
-    dispatch('selectSegment', { id: segment.id });
+    toggleSegmentSelection(segment.id);
+  }
+
+  function deselectSegment(): void {
+    if (selectedSegmentId) {
+      dispatch('selectSegment', { id: null });
+    }
+  }
+
+  function onTrackBackgroundPointerDown(event: PointerEvent): void {
+    if (disabled || event.button !== 0) {
+      return;
+    }
+
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+
+    closeContextMenu();
+    deselectSegment();
   }
 
   function openContextMenu(event: MouseEvent): void {
@@ -664,6 +689,9 @@
     bind:this={timelineBody}
     style={`--video-track-height: ${videoTrackHeight}px; --audio-track-height: ${audioTrackHeight}px`}
   >
+    {#if disabled}
+      <div class="timeline__empty">Open a video or drop a file to start cutting.</div>
+    {/if}
     <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
     <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>
       <div class="timeline__content" style={`width: ${timelineWidth}px`}>
@@ -747,7 +775,11 @@
       aria-label="Video track"
       on:contextmenu={openContextMenu}
     >
-      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px`}>
+      <div
+        class="timeline__content timeline__content--track"
+        style={`width: ${timelineWidth}px`}
+        on:pointerdown={onTrackBackgroundPointerDown}
+      >
         {#each ticks as tick}
           <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
         {/each}
@@ -758,6 +790,7 @@
           <button
             aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
             class:selected={layout.segment.id === selectedSegmentId}
+            class:timeline__segment--sole={segments.length === 1}
             class:timeline__segment--drag-target={segmentDrag?.active && segmentDragTargetIndex === index}
             class:timeline__segment--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
             class="timeline__segment timeline__segment--video"
@@ -802,12 +835,17 @@
       aria-label="Audio track"
       on:contextmenu={openContextMenu}
     >
-      <div class="timeline__content timeline__content--track timeline__content--audio" style={`width: ${timelineWidth}px`}>
+      <div
+        class="timeline__content timeline__content--track timeline__content--audio"
+        style={`width: ${timelineWidth}px`}
+        on:pointerdown={onTrackBackgroundPointerDown}
+      >
         {#if waveformPeaks.length > 0 && audioCodec}
           <TimelineWaveform
             peaks={waveformPeaks}
             {sourceDuration}
             {segments}
+            {selectedSegmentId}
             pixelsPerSecond={pixelsPerSecond}
             width={timelineWidth}
             height={Math.max(24, audioTrackHeight - 8)}
@@ -855,6 +893,10 @@
     <div class="timeline-menu" role="menu" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
       <button type="button" on:click={() => runContextAction('split')}>Split here</button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}>Delete selected segment</button>
+      <button type="button" disabled={!selectedSegmentId} on:click={() => {
+        deselectSegment();
+        closeContextMenu();
+      }}>Deselect segment</button>
       <button type="button" on:click={() => runContextAction('fit')}>Zoom to fit</button>
       <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}>Zoom to range</button>
       <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}>Split at I and O</button>

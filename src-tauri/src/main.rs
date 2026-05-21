@@ -167,6 +167,7 @@ fn main() {
             clip_history::list_clip_history,
             clip_history::clear_clip_history,
             clip_history::remove_clip_history_entry,
+            clip_history::update_clip_history_share_url,
             upload::upload_file,
             upload::list_upload_providers,
             upload::save_upload_providers,

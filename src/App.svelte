@@ -7,13 +7,18 @@
   import { onMount, tick } from 'svelte';
   import { get } from 'svelte/store';
   import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
+  import ConfirmModal from './components/ConfirmModal.svelte';
+  import ExportActivity from './components/ExportActivity.svelte';
   import ExportModal from './components/ExportModal.svelte';
   import IconButton from './components/IconButton.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
+  import RelinkSourceModal from './components/RelinkSourceModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import MarkerLabelModal from './components/MarkerLabelModal.svelte';
   import ShortcutsModal from './components/ShortcutsModal.svelte';
   import Timeline from './components/Timeline.svelte';
+  import ToastHost from './components/ToastHost.svelte';
+  import UploadTargetModal from './components/UploadTargetModal.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
   import {
     clamp,
@@ -43,6 +48,7 @@
     type TimelineSegment,
     type VideoMetadata,
   } from './stores/editor';
+  import { pushToast } from './stores/toasts';
 
   type ExportResult = {
     outputPath: string;
@@ -144,8 +150,12 @@
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
   let cropEnabled = false;
-  let cropAspect: 'free' | '16:9' | '9:16' = 'free';
+  let cropAspect: 'free' | '16:9' | '9:16' | '4:3' | '1:1' | 'custom' = 'free';
+  let cropLockAspect = false;
+  let cropCustomAspectW = 16;
+  let cropCustomAspectH = 9;
   let cropRect: NormalizedCropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
+  let recentMenuOpen = false;
   let uploadProviders: UploadProvider[] = [];
   let uploadProviderSummaries: UploadProviderSummary[] = [];
   let defaultUploadProviderId: string | null = null;
@@ -200,7 +210,38 @@
   let markerLabelModalOpen = false;
   let editingBookmarkId: string | null = null;
   let currentWindowTitle = '';
+  let openingClip = false;
+  let lastShareUrl: string | null = null;
+  let statusDismissed = false;
+  let exportJobLabel = '';
+  let exportJobIndex = 1;
+  let exportJobTotal = 1;
+  let uploadTargetModalOpen = false;
+  let uploadTargetPath = '';
+  let watchFolderConfirmOpen = false;
+  let watchFolderPendingPath = '';
+  let clearHistoryConfirmOpen = false;
+  let relinkModalOpen = false;
+  let relinkMissingPath = '';
+  let relinkProjectName = '';
+  let pendingProject: {
+    sourcePath: string;
+    segments: TimelineSegment[];
+    selectedSegmentId: string | null;
+    rangeStart: number | null;
+    rangeEnd: number | null;
+    cropEnabled: boolean;
+    cropRect: NormalizedCropRect;
+    clipVolume: number;
+    currentTime: number | null;
+    bookmarks: TimelineBookmark[];
+    exportPresetId: string | null;
+    accurateTrim: boolean;
+    stripAudio: boolean;
+  } | null = null;
+  let trayHintDismissed = false;
 
+  const TRAY_HINT_KEY = 'cutdown-tray-hint-dismissed';
   const BOOKMARK_DEDUPE_SECONDS = 0.05;
   const BOOKMARK_REMOVE_TOLERANCE = 0.1;
 
@@ -267,11 +308,16 @@
 
     saveWorkspaceSplit();
     workspaceResizing = false;
-    void tick().then(() => preview?.remeasureViewport());
+    void tick().then(() => preview?.fitToView());
   }
 
   onMount(() => {
     loadWorkspaceSplit();
+    try {
+      trayHintDismissed = localStorage.getItem(TRAY_HINT_KEY) === '1';
+    } catch {
+      trayHintDismissed = false;
+    }
     void bootstrapApp();
 
     const unlistenExport = listen<ExportProgress>('export_progress', (event) => {
@@ -375,6 +421,88 @@
     }
   }
 
+  function dismissTrayHint(): void {
+    trayHintDismissed = true;
+    try {
+      localStorage.setItem(TRAY_HINT_KEY, '1');
+    } catch {
+      // Ignore storage failures.
+    }
+  }
+
+  function restoreTrayHint(): void {
+    trayHintDismissed = false;
+    try {
+      localStorage.removeItem(TRAY_HINT_KEY);
+    } catch {
+      // Ignore storage failures.
+    }
+    pushToast('Tray minimize tip restored.', 'info');
+  }
+
+  function toggleRecentMenu(): void {
+    recentMenuOpen = !recentMenuOpen;
+  }
+
+  function handleWindowClick(event: MouseEvent): void {
+    if (!recentMenuOpen) {
+      return;
+    }
+
+    const target = event.target as HTMLElement;
+    if (!target.closest('.toolbar-recent')) {
+      recentMenuOpen = false;
+    }
+  }
+
+  function openRecentSource(path: string): void {
+    recentMenuOpen = false;
+    void openClipPath(path);
+  }
+
+  $: cropLockedAspectRatio = (() => {
+    if (!cropLockAspect || cropAspect === 'free') {
+      return null;
+    }
+    if (cropAspect === '16:9') {
+      return 16 / 9;
+    }
+    if (cropAspect === '9:16') {
+      return 9 / 16;
+    }
+    if (cropAspect === '4:3') {
+      return 4 / 3;
+    }
+    if (cropAspect === '1:1') {
+      return 1;
+    }
+    const w = Math.max(1, cropCustomAspectW);
+    const h = Math.max(1, cropCustomAspectH);
+    return w / h;
+  })();
+
+  function dismissExportStatus(): void {
+    statusDismissed = true;
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        state: 'idle',
+        message: state.currentFile ? 'Ready to edit.' : 'Choose a clip to begin.',
+      },
+    }));
+  }
+
+  function openUploadPicker(path: string): void {
+    uploadTargetPath = path;
+    syncUploadProviderSelection();
+    uploadTargetModalOpen = true;
+  }
+
+  async function copyShareLink(url: string): Promise<void> {
+    await invoke('copy_text_to_clipboard', { text: url });
+    pushToast('Share link copied to clipboard.', 'success');
+  }
+
   async function notify(message: string, title = 'Cutdown'): Promise<void> {
     try {
       if (await isPermissionGranted()) {
@@ -391,17 +519,21 @@
 
   async function handleWatchFolderClip(path: string): Promise<void> {
     if (hasUnsavedEdits()) {
-      const proceed = await confirm('Replace the current clip with the new watch-folder file?', {
-        title: 'Open new clip',
-        kind: 'warning',
-      });
-
-      if (!proceed) {
-        return;
-      }
+      watchFolderPendingPath = path;
+      watchFolderConfirmOpen = true;
+      return;
     }
 
     await openClipPath(path);
+  }
+
+  function confirmWatchFolderReplace(): void {
+    watchFolderConfirmOpen = false;
+    const path = watchFolderPendingPath;
+    watchFolderPendingPath = '';
+    if (path) {
+      void openClipPath(path);
+    }
   }
 
   async function cleanupPreview(path: string | null): Promise<void> {
@@ -423,6 +555,12 @@
   $: outputDuration = totalSegmentDuration(segments);
   $: fileName = $editor.currentFile?.split(/[\\/]/).pop() ?? 'No file selected';
   $: canExport = Boolean($editor.currentFile && outputDuration > 0);
+  $: exportActivityVisible = exportQueueProcessing;
+  $: uploadTargetsConfigured = getEnabledUploadTargets().length > 0;
+  $: exportPresetDisplayName = exportPresets.find((preset) => preset.id === exportPresetId)?.name ?? exportPresetId;
+  $: statusDismissible =
+    !statusDismissed &&
+    ($editor.exportStatus.state === 'success' || $editor.exportStatus.state === 'error');
   $: normalizedRange =
     rangeStart !== null && rangeEnd !== null
       ? {
@@ -553,11 +691,8 @@
       ...state,
       segments: cloneSegments(snapshot.segments),
       selectedSegmentId: snapshot.selectedSegmentId,
-      exportStatus: {
-        state: 'idle',
-        message: 'Undid last edit.',
-      },
     }));
+    pushToast('Undid last edit.');
     schedulePersistSession();
   }
 
@@ -580,11 +715,8 @@
       ...state,
       segments: cloneSegments(snapshot.segments),
       selectedSegmentId: snapshot.selectedSegmentId,
-      exportStatus: {
-        state: 'idle',
-        message: 'Redid edit.',
-      },
     }));
+    pushToast('Redid edit.');
     schedulePersistSession();
   }
 
@@ -642,6 +774,8 @@
     cropEnabled = false;
     cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
     exportMode = 'sequence';
+    openingClip = true;
+    statusDismissed = false;
     editor.update((state) => ({
       ...state,
       currentFile: selected,
@@ -726,6 +860,9 @@
           message: error instanceof Error ? error.message : String(error),
         },
       }));
+      pushToast(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      openingClip = false;
     }
   }
 
@@ -740,6 +877,10 @@
     editor.update((state) => ({ ...state, selectedSegmentId: id }));
   }
 
+  function deselectSegment(): void {
+    selectSegment(null);
+  }
+
   function splitAtTime(splitTime: number): void {
     if (!canExport) {
       return;
@@ -750,6 +891,7 @@
     );
 
     if (!targetSegment) {
+      pushToast('Move the playhead inside a segment to split.', 'info');
       return;
     }
 
@@ -776,11 +918,8 @@
         ];
       }),
       selectedSegmentId: null,
-      exportStatus: {
-        state: 'idle',
-        message: `Split at ${formatTime(splitTime)}.`,
-      },
     }));
+    pushToast(`Split at ${formatTime(splitTime)}.`);
     schedulePersistSession();
   }
 
@@ -794,13 +933,7 @@
     }
 
     if ($editor.segments.length <= 1) {
-      editor.update((state) => ({
-        ...state,
-        exportStatus: {
-          state: 'idle',
-          message: 'At least one segment is required.',
-        },
-      }));
+      pushToast('At least one segment is required.', 'info');
       return;
     }
 
@@ -809,11 +942,8 @@
       ...state,
       segments: state.segments.filter((segment) => segment.id !== state.selectedSegmentId),
       selectedSegmentId: null,
-      exportStatus: {
-        state: 'idle',
-        message: 'Deleted selected segment.',
-      },
     }));
+    pushToast('Deleted selected segment.');
     schedulePersistSession();
   }
 
@@ -843,12 +973,9 @@
         ...state,
         segments: nextSegments,
         selectedSegmentId: duplicate.id,
-        exportStatus: {
-          state: 'idle',
-          message: 'Duplicated selected segment.',
-        },
       };
     });
+    pushToast('Duplicated selected segment.');
     schedulePersistSession();
   }
 
@@ -1017,6 +1144,7 @@
 
     const time = clamp(seconds, 0, metadata.duration);
     if (bookmarks.some((bookmark) => Math.abs(bookmark.time - time) < BOOKMARK_DEDUPE_SECONDS)) {
+      pushToast('A marker already exists at this time.', 'info');
       return;
     }
 
@@ -1052,10 +1180,7 @@
     }
 
     removeBookmark(selectedBookmarkId);
-    editor.update((state) => ({
-      ...state,
-      exportStatus: { state: 'idle', message: 'Marker deleted.' },
-    }));
+    pushToast('Marker deleted.');
   }
 
   function openBookmarkLabelEditor(id: string): void {
@@ -1212,15 +1337,33 @@
     };
   }
 
-  function applyAspectCrop(aspect: 'free' | '16:9' | '9:16'): void {
+  function applyAspectCrop(aspect: 'free' | '16:9' | '9:16' | '4:3' | '1:1' | 'custom'): void {
     cropAspect = aspect;
 
-    if (aspect === 'free' || !metadata) {
+    if (aspect === 'free') {
+      cropLockAspect = false;
+      schedulePersistSession();
+      return;
+    }
+
+    cropLockAspect = true;
+
+    if (!metadata) {
+      schedulePersistSession();
       return;
     }
 
     const frameRatio = metadata.width / metadata.height;
-    const targetRatio = aspect === '16:9' ? 16 / 9 : 9 / 16;
+    let targetRatio = 16 / 9;
+    if (aspect === '9:16') {
+      targetRatio = 9 / 16;
+    } else if (aspect === '4:3') {
+      targetRatio = 4 / 3;
+    } else if (aspect === '1:1') {
+      targetRatio = 1;
+    } else if (aspect === 'custom') {
+      targetRatio = Math.max(1, cropCustomAspectW) / Math.max(1, cropCustomAspectH);
+    }
     let width = 1;
     let height = 1;
 
@@ -1247,11 +1390,21 @@
 
   async function removeHistoryEntry(outputPath: string): Promise<void> {
     clipHistory = await invoke<ClipHistoryEntry[]>('remove_clip_history_entry', { outputPath });
+    pushToast('Removed from clip history.');
+  }
+
+  function requestClearHistory(): void {
+    if (clipHistory.length === 0) {
+      return;
+    }
+    clearHistoryConfirmOpen = true;
   }
 
   async function clearHistory(): Promise<void> {
+    clearHistoryConfirmOpen = false;
     await invoke('clear_clip_history');
     clipHistory = [];
+    pushToast('Clip history cleared.');
   }
 
   function uploadProviderName(providerId: string | null): string {
@@ -1318,26 +1471,35 @@
   }
 
   async function uploadClip(path: string, providerId?: string | null): Promise<void> {
+    const enabled = getEnabledUploadTargets();
+    if (enabled.length === 0) {
+      pushToast('No upload targets configured. Add one in Settings.', 'error');
+      settingsModalOpen = true;
+      return;
+    }
+
+    if (enabled.length > 1 && providerId === undefined) {
+      openUploadPicker(path);
+      return;
+    }
+
     const targetProviderId = resolveUploadProviderId(providerId);
     if (!targetProviderId) {
-      editor.update((state) => ({
-        ...state,
-        exportStatus: {
-          state: 'error',
-          message: 'No upload targets configured. Add one in Settings.',
-        },
-      }));
+      openUploadPicker(path);
       return;
     }
 
     selectedUploadProviderId = targetProviderId;
     const providerName = uploadProviderName(targetProviderId);
     historyBusyPath = path;
+    statusDismissed = false;
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
         message: `Uploading to ${providerName}...`,
+        outputPath: state.exportStatus.outputPath ?? path,
+        outputSize: state.exportStatus.outputSize,
       },
     }));
 
@@ -1347,27 +1509,38 @@
         providerId: targetProviderId,
       });
       await invoke('copy_text_to_clipboard', { text: url });
+      lastShareUrl = url;
+      clipHistory = await invoke<ClipHistoryEntry[]>('update_clip_history_share_url', {
+        outputPath: path,
+        shareUrl: url,
+      });
       await refreshUploadProviderSummaries();
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'success',
-          message: `Upload complete. Link copied: ${url}`,
-          outputPath: state.exportStatus.outputPath,
+          message: `Uploaded to ${providerName}. Link copied.`,
+          outputPath: state.exportStatus.outputPath ?? path,
           outputSize: state.exportStatus.outputSize,
         },
       }));
+      pushToast('Upload complete. Link copied to clipboard.', 'success');
       await notify('Upload link copied to clipboard.', `${providerName} upload`);
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message,
+          outputPath: state.exportStatus.outputPath,
+          outputSize: state.exportStatus.outputSize,
         },
       }));
+      pushToast(message, 'error');
     } finally {
       historyBusyPath = null;
+      uploadTargetModalOpen = false;
     }
   }
 
@@ -1389,6 +1562,12 @@
       ) {
         event.preventDefault();
         closeModals();
+        return;
+      }
+
+      if ($editor.selectedSegmentId) {
+        event.preventDefault();
+        deselectSegment();
         return;
       }
     }
@@ -1672,11 +1851,14 @@
     const presetLabel = preset?.name ?? exportPresetId;
 
     exportProgressPercent = 0;
+    statusDismissed = false;
+    exportJobLabel = job.label;
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
         message: `Exporting ${job.label} with ${presetLabel}...`,
+        outputPath: job.outputPath,
       },
     }));
 
@@ -1699,6 +1881,7 @@
     });
 
     exportProgressPercent = 100;
+    lastShareUrl = null;
     editor.update((state) => ({
       ...state,
       exportStatus: {
@@ -1708,6 +1891,7 @@
         outputSize: result.fileSize,
       },
     }));
+    pushToast(`Exported ${formatBytes(result.fileSize)} clip.`, 'success');
 
     await notifyExportComplete('Export complete', `Exported ${formatBytes(result.fileSize)} clip.`);
 
@@ -1724,10 +1908,13 @@
     }
 
     exportQueueProcessing = true;
+    exportJobTotal = jobs.length;
+    exportJobIndex = 0;
 
     try {
-      for (const job of jobs) {
-        await runExportJob(job);
+      for (let index = 0; index < jobs.length; index += 1) {
+        exportJobIndex = index + 1;
+        await runExportJob(jobs[index]);
       }
 
       await refreshClipHistory();
@@ -1738,15 +1925,22 @@
       }
     } catch (error) {
       exportProgressPercent = null;
+      const message = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message,
+          outputPath: state.exportStatus.outputPath,
+          outputSize: state.exportStatus.outputSize,
         },
       }));
+      pushToast(message, 'error');
     } finally {
       exportQueueProcessing = false;
+      exportJobIndex = 1;
+      exportJobTotal = 1;
+      exportJobLabel = '';
     }
   }
 
@@ -1958,16 +2152,34 @@
     }>('load_project_file', { path: selected });
 
     if (!(await invoke<boolean>('path_exists', { path: project.sourcePath }))) {
-      editor.update((state) => ({
-        ...state,
-        exportStatus: {
-          state: 'error',
-          message: 'Project source file is missing. Re-link the clip and try again.',
-        },
-      }));
+      pendingProject = project;
+      relinkMissingPath = project.sourcePath;
+      relinkProjectName = selected.split(/[\\/]/).pop() ?? selected;
+      relinkModalOpen = true;
       return;
     }
 
+    await applyLoadedProject(project, selected);
+  }
+
+  async function applyLoadedProject(
+    project: {
+      sourcePath: string;
+      segments: TimelineSegment[];
+      selectedSegmentId: string | null;
+      rangeStart: number | null;
+      rangeEnd: number | null;
+      cropEnabled: boolean;
+      cropRect: NormalizedCropRect;
+      clipVolume: number;
+      currentTime: number | null;
+      bookmarks: TimelineBookmark[];
+      exportPresetId: string | null;
+      accurateTrim: boolean;
+      stripAudio: boolean;
+    },
+    projectLabel: string,
+  ): Promise<void> {
     await openClipPath(project.sourcePath);
     rangeStart = project.rangeStart;
     rangeEnd = project.rangeEnd;
@@ -1990,11 +2202,35 @@
       segments: project.segments,
       selectedSegmentId: project.selectedSegmentId,
       currentTime: clamp(project.currentTime ?? 0, 0, state.metadata?.duration ?? 0),
-      exportStatus: { state: 'idle', message: `Loaded project ${selected}.` },
+      exportStatus: { state: 'idle', message: `Loaded project ${projectLabel}.` },
     }));
     schedulePersistSession();
     await tick();
     seekTo(get(editor).currentTime);
+    pushToast(`Loaded project ${projectLabel}.`, 'success');
+  }
+
+  async function relinkProjectSource(): Promise<void> {
+    const selected = await open({
+      multiple: false,
+      filters: [
+        {
+          name: 'Video',
+          extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'flv'],
+        },
+      ],
+    });
+
+    if (!selected || typeof selected !== 'string' || !pendingProject) {
+      return;
+    }
+
+    relinkModalOpen = false;
+    const project = { ...pendingProject, sourcePath: selected };
+    pendingProject = null;
+    await applyLoadedProject(project, relinkProjectName);
+    relinkMissingPath = '';
+    relinkProjectName = '';
   }
 
   async function handlePreviewError(message: string): Promise<void> {
@@ -2091,26 +2327,94 @@
   on:pointermove={updateWorkspaceResize}
   on:pointerup={stopWorkspaceResize}
   on:pointercancel={stopWorkspaceResize}
+  on:click={handleWindowClick}
 />
 
+<ToastHost />
+
 <main class="shell" class:shell--dragover={dragOver}>
+  {#if !ffmpegAvailable || !trayHintDismissed}
+    <div class="shell__alerts">
+      {#if !ffmpegAvailable}
+        <div class="ffmpeg-banner" role="alert">
+          <span>{ffmpegStatus || 'ffmpeg is not available. Export and probe are disabled until ffmpeg is installed or bundled.'}</span>
+          <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
+        </div>
+      {/if}
+      {#if !trayHintDismissed}
+        <div class="tray-hint-banner">
+          <span>Closing the window minimizes Cutdown to the system tray. Use the tray icon or Open Editor to restore.</span>
+          <button type="button" class="secondary" on:click={dismissTrayHint}>Dismiss</button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <section class="toolbar" aria-label="Editor toolbar">
     <IconButton icon="open" title="Open video file" on:click={chooseClip} />
+    <div class="toolbar-recent">
+      <button
+        type="button"
+        class="secondary"
+        class:active={recentMenuOpen}
+        title="Recently opened sources"
+        aria-expanded={recentMenuOpen}
+        on:click|stopPropagation={toggleRecentMenu}
+      >
+        Recent
+      </button>
+      {#if recentMenuOpen}
+        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+        <div class="toolbar-recent__menu" role="menu" on:click|stopPropagation={() => {}}>
+          {#if recentSources.length === 0}
+            <p class="toolbar-recent__empty">No recent sources yet.</p>
+          {:else}
+            <ul class="toolbar-recent__list">
+              {#each recentSources as source (source)}
+                <li>
+                  <button type="button" role="menuitem" title={source} on:click={() => openRecentSource(source)}>
+                    {source.split(/[\\/]/).pop() ?? source}
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      {/if}
+    </div>
     <IconButton icon="save" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
     <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
     <button type="button" class="secondary" title="Open newest video in watch folder" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
     <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
     <div class="toolbar__spacer"></div>
+    {#if $editor.currentFile}
+      <span class="toolbar__clip-name" title={$editor.currentFile}>{fileName}</span>
+    {/if}
     <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
-    <button type="button" class="tool-button" title="Keyboard shortcuts (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
+    <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
     <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
     <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
-    <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport} on:click={openExportModal} />
+    <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal} />
   </section>
+
+  <ExportActivity
+    visible={exportActivityVisible}
+    jobLabel={exportJobLabel}
+    jobIndex={exportJobIndex}
+    jobTotal={exportJobTotal}
+    presetName={exportPresetDisplayName}
+    percent={exportProgressPercent}
+    message={$editor.exportStatus.message}
+    outputPath={$editor.exportStatus.outputPath ?? null}
+    on:reveal={revealExport}
+  />
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style={`flex: ${workspaceSplitRatio} 1 0`}>
+    {#if openingClip}
+      <div class="opening-overlay" aria-busy="true"><span>Opening clip…</span></div>
+    {/if}
     <div class="preview-panel__tools">
       <IconButton
         icon="crop"
@@ -2123,9 +2427,91 @@
           schedulePersistSession();
         }}
       />
-      <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 16:9 aspect" on:click={() => applyAspectCrop('16:9')}>16:9</button>
-      <button type="button" class="secondary" disabled={!cropEnabled} title="Crop to 9:16 aspect" on:click={() => applyAspectCrop('9:16')}>9:16</button>
-      <button type="button" class="secondary" disabled={!cropEnabled} title="Free crop aspect" on:click={() => applyAspectCrop('free')}>Free</button>
+      <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
+        <input type="checkbox" bind:checked={cropLockAspect} disabled={!cropEnabled} />
+        Lock ratio
+      </label>
+      <button
+        type="button"
+        class="secondary"
+        class:active={cropAspect === '16:9'}
+        disabled={!cropEnabled}
+        title="Crop 16:9"
+        on:click={() => applyAspectCrop('16:9')}
+      >
+        16:9
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        class:active={cropAspect === '9:16'}
+        disabled={!cropEnabled}
+        title="Crop 9:16"
+        on:click={() => applyAspectCrop('9:16')}
+      >
+        9:16
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        class:active={cropAspect === '4:3'}
+        disabled={!cropEnabled}
+        title="Crop 4:3"
+        on:click={() => applyAspectCrop('4:3')}
+      >
+        4:3
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        class:active={cropAspect === '1:1'}
+        disabled={!cropEnabled}
+        title="Crop 1:1"
+        on:click={() => applyAspectCrop('1:1')}
+      >
+        1:1
+      </button>
+      <span class="preview-panel__crop-custom" class:preview-panel__crop-custom--disabled={!cropEnabled}>
+        <input
+          type="number"
+          class="preview-panel__crop-input"
+          min="1"
+          max="100"
+          bind:value={cropCustomAspectW}
+          disabled={!cropEnabled}
+          aria-label="Custom aspect width"
+        />
+        <span>:</span>
+        <input
+          type="number"
+          class="preview-panel__crop-input"
+          min="1"
+          max="100"
+          bind:value={cropCustomAspectH}
+          disabled={!cropEnabled}
+          aria-label="Custom aspect height"
+        />
+        <button
+          type="button"
+          class="secondary"
+          class:active={cropAspect === 'custom'}
+          disabled={!cropEnabled}
+          title="Apply custom aspect ratio"
+          on:click={() => applyAspectCrop('custom')}
+        >
+          Custom
+        </button>
+      </span>
+      <button
+        type="button"
+        class="secondary"
+        class:active={cropAspect === 'free'}
+        disabled={!cropEnabled}
+        title="Free crop (unlocked aspect)"
+        on:click={() => applyAspectCrop('free')}
+      >
+        Free
+      </button>
       <span class="preview-panel__divider" aria-hidden="true"></span>
       <IconButton
         icon="scaleFit"
@@ -2169,6 +2555,8 @@
       volume={clipVolume}
       {cropEnabled}
       bind:cropRect
+      lockAspectRatio={cropLockAspect}
+      lockedAspectRatio={cropLockedAspectRatio}
       on:cropChange={(event) => {
         cropRect = event.detail.rect;
         schedulePersistSession();
@@ -2272,6 +2660,15 @@
       >
         Split I/O
       </button>
+      <button
+        type="button"
+        class="secondary"
+        title="Deselect segment (Esc)"
+        disabled={!selectedSegment}
+        on:click={deselectSegment}
+      >
+        Deselect
+      </button>
       <IconButton
         icon="delete"
         title="Delete selected segment (Del)"
@@ -2370,9 +2767,6 @@
       <span>{Math.round(clipVolume * 100)}%</span>
     </div>
     <div class="transport-bar__actions">
-      <button type="button" class="secondary" title="Split at I/O markers" disabled={!canUseRange} on:click={splitAtRangeMarkers}>Split I/O</button>
-      <button type="button" class="secondary" title="Keep only I/O range" disabled={!canUseRange} on:click={keepOnlyRange}>Keep range</button>
-      <button type="button" class="secondary" title="Trim outside I/O range" disabled={!canUseRange} on:click={deleteOutsideRange}>Trim outside</button>
       <IconButton
         icon="loop"
         variant="secondary"
@@ -2403,53 +2797,36 @@
         active={$editor.exportStatus.state === 'running'}
         label={$editor.exportStatus.message}
         percent={exportProgressPercent}
+        state={$editor.exportStatus.state}
+        dismissible={statusDismissible}
+        on:dismiss={dismissExportStatus}
       />
-      {#if $editor.exportStatus.outputPath}
-        <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open Folder</button>
-        {@const uploadTargets = uploadProviderSummaries.filter((entry) => entry.enabled)}
-        {#if uploadTargets.length <= 1}
+      {#if $editor.exportStatus.outputPath && ($editor.exportStatus.state === 'success' || $editor.exportStatus.state === 'error')}
+        <div class="bottom-bar__result">
+          <span class="bottom-bar__result-name" title={$editor.exportStatus.outputPath}>
+            {$editor.exportStatus.outputPath.split(/[\\/]/).pop()}
+          </span>
           <button
             type="button"
             class="secondary"
-            title={uploadTargets[0]
-              ? `Upload to ${uploadTargets[0].name} and copy link`
-              : 'Configure an upload target in Settings'}
-            disabled={historyBusyPath === $editor.exportStatus.outputPath || uploadTargets.length === 0}
-            on:click={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
+            title="Copy output file path"
+            on:click={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
           >
-            Upload{uploadTargets[0] ? ` · ${uploadTargets[0].name}` : ''}
+            Copy path
           </button>
-        {:else}
-          <details class="bottom-bar__upload">
-            <summary class="bottom-bar__upload-summary">
-              <button
-                type="button"
-                class="secondary"
-                title={`Upload to ${uploadProviderName(resolveUploadProviderId())} and copy link`}
-                disabled={historyBusyPath === $editor.exportStatus.outputPath}
-                on:click|stopPropagation={() => void uploadClip($editor.exportStatus.outputPath ?? '')}
-              >
-                Upload · {uploadProviderName(resolveUploadProviderId())}
-              </button>
-            </summary>
-            <div class="bottom-bar__upload-menu" role="menu">
-              {#each uploadTargets as provider (provider.id)}
-                <button
-                  type="button"
-                  class="secondary"
-                  role="menuitem"
-                  disabled={historyBusyPath === $editor.exportStatus.outputPath}
-                  on:click={() => {
-                    selectedUploadProviderId = provider.id;
-                    void uploadClip($editor.exportStatus.outputPath ?? '', provider.id);
-                  }}
-                >
-                  {provider.name}{provider.isDefault ? ' (default)' : ''} · {kindLabel(provider.kind)}
-                </button>
-              {/each}
-            </div>
-          </details>
-        {/if}
+          {#if lastShareUrl}
+            <button type="button" class="secondary" title="Copy share link" on:click={() => void copyShareLink(lastShareUrl ?? '')}>
+              Copy link
+            </button>
+          {/if}
+          <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open folder</button>
+          <button type="button" class="secondary" title="Upload and copy share link" on:click={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}>
+            Upload
+          </button>
+          <button type="button" class="secondary" title="Open export settings" on:click={openExportModal}>Export again</button>
+        </div>
+      {:else if $editor.exportStatus.outputPath && $editor.exportStatus.state === 'running'}
+        <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open folder</button>
       {/if}
     </div>
   </footer>
@@ -2475,11 +2852,64 @@
   {usesStreamCopy}
   {streamCopyBlockers}
   hasAudio={Boolean(metadata?.audioCodec)}
+  exportBusy={exportQueueProcessing}
+  {uploadTargetsConfigured}
   on:close={() => (exportModalOpen = false)}
   on:chooseOutput={chooseOutput}
   on:exportModeChange={(event) => (exportMode = event.detail.mode)}
   on:presetChange={(event) => (exportPresetId = event.detail.presetId)}
+  on:openUploadSettings={() => {
+    exportModalOpen = false;
+    void openSettings();
+  }}
   on:confirm={exportClip}
+/>
+
+<UploadTargetModal
+  open={uploadTargetModalOpen}
+  filePath={uploadTargetPath}
+  providers={getEnabledUploadTargets()}
+  selectedProviderId={selectedUploadProviderId}
+  busy={historyBusyPath === uploadTargetPath}
+  on:close={() => (uploadTargetModalOpen = false)}
+  on:openSettings={() => {
+    uploadTargetModalOpen = false;
+    void openSettings();
+  }}
+  on:upload={(event) => void uploadClip(uploadTargetPath, event.detail.providerId)}
+/>
+
+<ConfirmModal
+  open={watchFolderConfirmOpen}
+  title="Open new clip"
+  message="Replace the current clip with the new watch-folder file? Unsaved segment edits will be lost."
+  confirmLabel="Replace clip"
+  on:close={() => {
+    watchFolderConfirmOpen = false;
+    watchFolderPendingPath = '';
+  }}
+  on:confirm={confirmWatchFolderReplace}
+/>
+
+<ConfirmModal
+  open={clearHistoryConfirmOpen}
+  title="Clear clip history"
+  message="Remove all entries from clip history? This does not delete exported files on disk."
+  confirmLabel="Clear history"
+  danger={true}
+  on:close={() => (clearHistoryConfirmOpen = false)}
+  on:confirm={() => void clearHistory()}
+/>
+
+<RelinkSourceModal
+  open={relinkModalOpen}
+  missingPath={relinkMissingPath}
+  projectName={relinkProjectName}
+  on:close={() => {
+    relinkModalOpen = false;
+    pendingProject = null;
+  }}
+  on:choose={() => void relinkProjectSource()}
 />
 
 <SettingsModal
@@ -2496,14 +2926,9 @@
   {ffmpegStatus}
   {gpuEncoders}
   on:close={() => (settingsModalOpen = false)}
+  on:restoreTrayHint={restoreTrayHint}
   on:error={(event) => {
-    editor.update((state) => ({
-      ...state,
-      exportStatus: {
-        state: 'error',
-        message: event.detail.message,
-      },
-    }));
+    pushToast(event.detail.message, 'error');
   }}
   on:saved={(event) => {
     watchFolder = event.detail.watchFolder;
@@ -2541,11 +2966,17 @@
   open={historyDrawerOpen}
   entries={clipHistory}
   busyPath={historyBusyPath}
+  uploadConfigured={uploadTargetsConfigured}
   on:close={() => (historyDrawerOpen = false)}
   on:reveal={(event) => void invoke('reveal_in_explorer', { path: event.detail.path })}
   on:openClip={(event) => void openClipPath(event.detail.path)}
   on:copyPath={(event) => void invoke('copy_text_to_clipboard', { text: event.detail.path })}
-  on:upload={(event) => void uploadClip(event.detail.path, event.detail.providerId)}
+  on:copyLink={(event) => void copyShareLink(event.detail.url)}
+  on:upload={(event) => openUploadPicker(event.detail.path)}
+  on:openSettings={() => {
+    historyDrawerOpen = false;
+    void openSettings();
+  }}
   on:remove={(event) => void removeHistoryEntry(event.detail.path)}
-  on:clear={() => void clearHistory()}
+  on:clear={requestClearHistory}
 />

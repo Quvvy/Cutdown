@@ -103,6 +103,21 @@ npm run tauri -- build
 | Preview | Playback speed 0.5× / 1× / 2× | |
 | Preview | Proxy preview button builds proxy for heavy codecs | |
 | Export | Trim hint explains stream-copy vs re-encode blockers | |
+| Export | Export activity panel shows job N of M during batch export | |
+| Export | Footer success/error styling persists until dismissed | |
+| Export | Post-export row: Copy path, Upload, Export again | |
+| Export | Export modal shows validation when folder/name missing | |
+| Export | Upload-after-export hint links to Settings when no providers | |
+| Upload | Upload target modal lists providers; link copied toast | |
+| History | Copy link when share URL saved; Shared badge on row | |
+| History | Clear history asks for confirmation | |
+| UI | Toast notifications for undo, markers, upload, errors | |
+| UI | ffmpeg missing banner blocks workflow until resolved | |
+| UI | Tray minimize hint banner dismisses and persists | |
+| UI | Opening overlay while probing metadata | |
+| Project | Missing source opens relink modal and file picker | |
+| Edit | Split outside segment shows toast (no silent no-op) | |
+| Edit | Timeline empty state when no clip open | |
 
 ## Known limitations (not failures)
 
