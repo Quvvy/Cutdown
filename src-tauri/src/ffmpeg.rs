@@ -14,14 +14,14 @@ use tauri::Emitter;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VideoMetadata {
-    duration: f64,
-    fps: f64,
-    codec: String,
-    width: u32,
-    height: u32,
-    file_size: u64,
-    audio_codec: Option<String>,
-    audio_channels: Option<u64>,
+    pub duration: f64,
+    pub fps: f64,
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub audio_codec: Option<String>,
+    pub audio_channels: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1273,4 +1273,90 @@ fn command_error(command: &str, stderr: &[u8]) -> String {
     } else {
         format!("{command} failed: {detail}")
     }
+}
+
+/// Downsampled peak envelope (0.0–1.0) for timeline waveform display.
+#[tauri::command]
+pub fn extract_waveform(path: String, bucket_count: Option<u32>) -> Result<Vec<f32>, String> {
+    let input = PathBuf::from(path.trim());
+    if !input.exists() {
+        return Err("Input video does not exist.".to_string());
+    }
+
+    let metadata = probe_video(input.to_string_lossy().to_string())?;
+    if metadata.audio_codec.is_none() {
+        return Ok(Vec::new());
+    }
+
+    let bucket_count = bucket_count.unwrap_or(2000).clamp(64, 8000) as usize;
+    let sample_rate = 4000u32;
+    let child = Command::new(ffmpeg_path())
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            input.to_string_lossy().as_ref(),
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            &sample_rate.to_string(),
+            "-f",
+            "f32le",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("Failed to run ffmpeg for waveform: {err}"))?;
+
+    let output = child
+        .wait_with_output()
+        .map_err(|err| format!("Failed to read ffmpeg waveform output: {err}"))?;
+
+    if !output.status.success() {
+        return Err(command_error("ffmpeg", &output.stderr));
+    }
+
+    let raw = output.stdout;
+    if raw.len() < 4 {
+        return Ok(Vec::new());
+    }
+
+    let sample_count = raw.len() / 4;
+    let mut peaks = vec![0.0f32; bucket_count];
+    let samples_per_bucket = (sample_count as f64 / bucket_count as f64).max(1.0);
+
+    for bucket in 0..bucket_count {
+        let start = (bucket as f64 * samples_per_bucket) as usize;
+        let end = (((bucket + 1) as f64) * samples_per_bucket) as usize;
+        let end = end.min(sample_count);
+        let mut max_peak = 0.0f32;
+
+        for sample_index in start..end {
+            let offset = sample_index * 4;
+            if offset + 4 > raw.len() {
+                break;
+            }
+            let bytes: [u8; 4] = raw[offset..offset + 4]
+                .try_into()
+                .map_err(|_| "Invalid waveform sample.".to_string())?;
+            let value = f32::from_le_bytes(bytes).abs();
+            if value.is_finite() && value > max_peak {
+                max_peak = value;
+            }
+        }
+
+        peaks[bucket] = max_peak;
+    }
+
+    let normalize = peaks.iter().copied().fold(0.0f32, f32::max);
+    if normalize > 0.0 {
+        for peak in &mut peaks {
+            *peak = (*peak / normalize).clamp(0.0, 1.0);
+        }
+    }
+
+    Ok(peaks)
 }

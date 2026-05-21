@@ -11,6 +11,7 @@
   import IconButton from './components/IconButton.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
+  import MarkerLabelModal from './components/MarkerLabelModal.svelte';
   import ShortcutsModal from './components/ShortcutsModal.svelte';
   import Timeline from './components/Timeline.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
@@ -22,7 +23,7 @@
     sanitizeExportFileName,
     splitOutputPath,
   } from './lib/format';
-  import type { ClipHistoryEntry, NormalizedCropRect } from './lib/types';
+  import type { ClipHistoryEntry, NormalizedCropRect, TimelineBookmark } from './lib/types';
   import {
     parseCustomPresetsFromSettings,
     type CustomExportPreset,
@@ -87,9 +88,6 @@
     uploadProviders: UploadProvider[];
     defaultUploadProviderId: string | null;
     customExportPresets: CustomExportPreset[];
-    obsWebsocketHost: string | null;
-    obsWebsocketPort: number | null;
-    obsWebsocketPassword: string | null;
   };
 
   type PreviewResult = {
@@ -107,6 +105,7 @@
     cropRect: NormalizedCropRect;
     clipVolume: number;
     currentTime: number | null;
+    bookmarks?: TimelineBookmark[];
   };
 
   let preview:
@@ -141,9 +140,6 @@
   let fadeOutSeconds = 0;
   let previewPlaybackRate = 1;
   let exportQueueProcessing = false;
-  let obsWebsocketHost = '127.0.0.1';
-  let obsWebsocketPort = 4455;
-  let obsWebsocketPassword = '';
   let persistSessionTimer: ReturnType<typeof setTimeout> | null = null;
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
@@ -197,7 +193,16 @@
   const MIN_TIMELINE_PANE_PX = 160;
   let rangeStart: number | null = null;
   let rangeEnd: number | null = null;
+  let bookmarks: TimelineBookmark[] = [];
+  let selectedBookmarkId: string | null = null;
+  let waveformPeaks: number[] = [];
+  let waveformLoading = false;
+  let markerLabelModalOpen = false;
+  let editingBookmarkId: string | null = null;
   let currentWindowTitle = '';
+
+  const BOOKMARK_DEDUPE_SECONDS = 0.05;
+  const BOOKMARK_REMOVE_TOLERANCE = 0.1;
 
   function loadWorkspaceSplit(): void {
     try {
@@ -341,9 +346,6 @@
       customExportPresets = parseCustomPresetsFromSettings(settings.customExportPresets);
       clipHistory = await invoke<ClipHistoryEntry[]>('list_clip_history');
       recentSources = settings.recentSources ?? [];
-      obsWebsocketHost = settings.obsWebsocketHost ?? '127.0.0.1';
-      obsWebsocketPort = settings.obsWebsocketPort ?? 4455;
-      obsWebsocketPassword = settings.obsWebsocketPassword ?? '';
       gpuEncoders = encoders;
       ffmpegAvailable = ffmpeg.available;
       ffmpegStatus =
@@ -523,6 +525,7 @@
           cropRect,
           clipVolume,
           currentTime: get(editor).currentTime,
+          bookmarks,
         },
         duration: metadata.duration,
       });
@@ -631,6 +634,9 @@
     redoHistory = [];
     rangeStart = null;
     rangeEnd = null;
+    bookmarks = [];
+    selectedBookmarkId = null;
+    waveformPeaks = [];
     rangeLoopPlayback = false;
     clipVolume = 1;
     cropEnabled = false;
@@ -665,6 +671,11 @@
         clipVolume = clamp(saved.clipVolume ?? 1, 0, 1);
         cropEnabled = saved.cropEnabled;
         cropRect = saved.cropRect;
+        bookmarks = (saved.bookmarks ?? []).map((bookmark) => ({
+          id: bookmark.id,
+          time: bookmark.time,
+          label: bookmark.label,
+        }));
         editor.update((state) => ({
           ...state,
           metadata: probed,
@@ -693,6 +704,7 @@
         }));
       }
 
+      void loadWaveform(selected);
       syncExportDefaultsForClip();
       if (needsProxyPreview(probed)) {
         editor.update((state) => ({
@@ -724,6 +736,7 @@
   }
 
   function selectSegment(id: string | null): void {
+    selectedBookmarkId = null;
     editor.update((state) => ({ ...state, selectedSegmentId: id }));
   }
 
@@ -993,6 +1006,147 @@
     schedulePersistSession();
   }
 
+  function defaultBookmarkLabel(): string {
+    return `Marker ${bookmarks.length + 1}`;
+  }
+
+  function addBookmarkMarker(seconds: number, label?: string): void {
+    if (!metadata) {
+      return;
+    }
+
+    const time = clamp(seconds, 0, metadata.duration);
+    if (bookmarks.some((bookmark) => Math.abs(bookmark.time - time) < BOOKMARK_DEDUPE_SECONDS)) {
+      return;
+    }
+
+    const entry: TimelineBookmark = {
+      id: crypto.randomUUID(),
+      time,
+      label: label?.trim() || defaultBookmarkLabel(),
+    };
+    bookmarks = [...bookmarks, entry].sort((left, right) => left.time - right.time);
+    selectedBookmarkId = entry.id;
+    schedulePersistSession();
+  }
+
+  function updateBookmarkLabel(id: string, label: string): void {
+    const trimmed = label.trim();
+    bookmarks = bookmarks.map((bookmark) =>
+      bookmark.id === id ? { ...bookmark, label: trimmed || formatTime(bookmark.time) } : bookmark,
+    );
+    schedulePersistSession();
+  }
+
+  function removeBookmark(id: string): void {
+    bookmarks = bookmarks.filter((bookmark) => bookmark.id !== id);
+    if (selectedBookmarkId === id) {
+      selectedBookmarkId = null;
+    }
+    schedulePersistSession();
+  }
+
+  function deleteSelectedBookmark(): void {
+    if (!selectedBookmarkId) {
+      return;
+    }
+
+    removeBookmark(selectedBookmarkId);
+    editor.update((state) => ({
+      ...state,
+      exportStatus: { state: 'idle', message: 'Marker deleted.' },
+    }));
+  }
+
+  function openBookmarkLabelEditor(id: string): void {
+    if (!bookmarks.some((bookmark) => bookmark.id === id)) {
+      return;
+    }
+
+    editingBookmarkId = id;
+    markerLabelModalOpen = true;
+  }
+
+  function goToNextMarker(): void {
+    if (!bookmarks.length) {
+      return;
+    }
+
+    const current = $editor.currentTime;
+    const next = bookmarks.find((bookmark) => bookmark.time > current + 0.001);
+    const target = next ?? bookmarks[0];
+    selectedBookmarkId = target.id;
+    seekTo(target.time);
+  }
+
+  function goToPreviousMarker(): void {
+    if (!bookmarks.length) {
+      return;
+    }
+
+    const current = $editor.currentTime;
+    const previous = [...bookmarks].reverse().find((bookmark) => bookmark.time < current - 0.001);
+    const target = previous ?? bookmarks[bookmarks.length - 1];
+    selectedBookmarkId = target.id;
+    seekTo(target.time);
+  }
+
+  async function loadWaveform(path: string): Promise<void> {
+    waveformLoading = true;
+    waveformPeaks = [];
+
+    try {
+      waveformPeaks = await invoke<number[]>('extract_waveform', {
+        path,
+        bucketCount: 2400,
+      });
+    } catch {
+      waveformPeaks = [];
+    } finally {
+      waveformLoading = false;
+    }
+  }
+
+  function removeNearestBookmark(seconds: number): boolean {
+    if (!bookmarks.length) {
+      return false;
+    }
+
+    let nearest = bookmarks[0];
+    let nearestDistance = Math.abs(nearest.time - seconds);
+
+    for (const bookmark of bookmarks) {
+      const distance = Math.abs(bookmark.time - seconds);
+      if (distance < nearestDistance) {
+        nearest = bookmark;
+        nearestDistance = distance;
+      }
+    }
+
+    if (nearestDistance > BOOKMARK_REMOVE_TOLERANCE) {
+      return false;
+    }
+
+    removeBookmark(nearest.id);
+    return true;
+  }
+
+  function snapToRangeStart(): void {
+    if (!normalizedRange) {
+      return;
+    }
+
+    seekTo(normalizedRange.start);
+  }
+
+  function snapToRangeEnd(): void {
+    if (!normalizedRange) {
+      return;
+    }
+
+    seekTo(normalizedRange.end);
+  }
+
   function updateTrackHeights(event: CustomEvent<{ videoHeight: number; audioHeight: number }>): void {
     videoTrackHeight = event.detail.videoHeight;
     audioTrackHeight = event.detail.audioHeight;
@@ -1007,6 +1161,8 @@
     settingsModalOpen = false;
     shortcutsModalOpen = false;
     historyDrawerOpen = false;
+    markerLabelModalOpen = false;
+    editingBookmarkId = null;
   }
 
   function applySettingsFromDisk(settings: AppSettings): void {
@@ -1224,7 +1380,13 @@
         !['button', 'checkbox', 'radio', 'range'].includes(target.type));
 
     if (event.key === 'Escape') {
-      if (exportModalOpen || settingsModalOpen || historyDrawerOpen || shortcutsModalOpen) {
+      if (
+        exportModalOpen ||
+        settingsModalOpen ||
+        historyDrawerOpen ||
+        shortcutsModalOpen ||
+        markerLabelModalOpen
+      ) {
         event.preventDefault();
         closeModals();
         return;
@@ -1313,13 +1475,50 @@
       return;
     }
 
+    if (event.key === ',' || event.key === '<') {
+      event.preventDefault();
+      goToPreviousMarker();
+      return;
+    }
+
+    if (event.key === '.' || event.key === '>') {
+      event.preventDefault();
+      goToNextMarker();
+      return;
+    }
+
+    if (event.shiftKey && event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      if (removeNearestBookmark($editor.currentTime)) {
+        editor.update((state) => ({
+          ...state,
+          exportStatus: {
+            state: 'idle',
+            message: 'Removed marker at playhead.',
+          },
+        }));
+      }
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'm') {
+      event.preventDefault();
+      addBookmarkMarker($editor.currentTime);
+      return;
+    }
+
     if (event.key.toLowerCase() === 's') {
       splitAtCurrentTime();
       return;
     }
 
     if (event.key === 'Delete' || event.key === 'Backspace') {
-      deleteSelectedSegment();
+      event.preventDefault();
+      if (selectedBookmarkId) {
+        deleteSelectedBookmark();
+      } else {
+        deleteSelectedSegment();
+      }
       return;
     }
 
@@ -1633,39 +1832,50 @@
   }
 
   async function loadLatestReplay(): Promise<void> {
-    if (watchFolder) {
+    let folder = watchFolder;
+    if (!folder) {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: 'Choose replay folder',
+      });
+      if (typeof selected !== 'string') {
+        editor.update((state) => ({
+          ...state,
+          exportStatus: {
+            state: 'error',
+            message: 'Set a watch folder in Settings, or choose one when prompted.',
+          },
+        }));
+        return;
+      }
+
+      folder = selected;
+      const saved = await invoke<AppSettings>('update_watch_folder', {
+        path: folder,
+        enabled: true,
+      });
+      watchFolder = saved.watchFolder;
+      watchFolderEnabled = saved.watchFolderEnabled;
+    }
+
+    try {
       const latest = await invoke<{ path: string | null; message: string }>(
         'find_latest_replay_in_folder',
-        { folder: watchFolder },
+        { folder },
       );
       if (latest.path) {
         await openClipPath(latest.path);
         return;
       }
-    }
 
-    try {
-      await invoke('save_obs_replay_buffer', {
-        host: obsWebsocketHost,
-        port: obsWebsocketPort,
-        password: obsWebsocketPassword || null,
-      });
       editor.update((state) => ({
         ...state,
         exportStatus: {
-          state: 'idle',
-          message: 'OBS replay saved. Open your watch folder clip when it appears.',
+          state: 'error',
+          message: latest.message,
         },
       }));
-      if (watchFolder) {
-        await new Promise((resolve) => setTimeout(resolve, 1200));
-        const latest = await invoke<{ path: string | null }>('find_latest_replay_in_folder', {
-          folder: watchFolder,
-        });
-        if (latest.path) {
-          await openClipPath(latest.path);
-        }
-      }
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -1689,6 +1899,7 @@
       cropRect,
       clipVolume,
       currentTime: $editor.currentTime,
+      bookmarks,
       exportPresetId,
       accurateTrim: accurateTrimExport,
       stripAudio: stripAudioExport,
@@ -1740,6 +1951,7 @@
       cropRect: NormalizedCropRect;
       clipVolume: number;
       currentTime: number | null;
+      bookmarks: TimelineBookmark[];
       exportPresetId: string | null;
       accurateTrim: boolean;
       stripAudio: boolean;
@@ -1759,6 +1971,11 @@
     await openClipPath(project.sourcePath);
     rangeStart = project.rangeStart;
     rangeEnd = project.rangeEnd;
+    bookmarks = (project.bookmarks ?? []).map((bookmark) => ({
+      id: bookmark.id,
+      time: bookmark.time,
+      label: bookmark.label,
+    }));
     clipVolume = clamp(project.clipVolume ?? 1, 0, 1);
     cropEnabled = project.cropEnabled;
     cropRect = project.cropRect;
@@ -1879,12 +2096,11 @@
 <main class="shell" class:shell--dragover={dragOver}>
   <section class="toolbar" aria-label="Editor toolbar">
     <IconButton icon="open" title="Open video file" on:click={chooseClip} />
-    <button type="button" class="secondary" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()}>Save</button>
+    <IconButton icon="save" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
     <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
-    <button type="button" class="secondary" title="Load latest replay from watch folder or OBS" on:click={() => void loadLatestReplay()}>Latest replay</button>
+    <button type="button" class="secondary" title="Open newest video in watch folder" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
     <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
-    <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
     <div class="toolbar__spacer"></div>
     <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
     <button type="button" class="tool-button" title="Keyboard shortcuts (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
@@ -1974,12 +2190,107 @@
   ></button>
 
   <div class="timeline-pane" style={`flex: ${1 - workspaceSplitRatio} 1 0`}>
+    <div class="timeline-pane__tools">
+      <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
+      <span class="timeline-pane__divider" aria-hidden="true"></span>
+      <IconButton
+        icon="markIn"
+        title="Mark In at playhead (I)"
+        variant="secondary"
+        disabled={!canExport}
+        on:click={() => setRangeMarker('start', $editor.currentTime)}
+      />
+      <IconButton
+        icon="markOut"
+        title="Mark Out at playhead (O)"
+        variant="secondary"
+        disabled={!canExport}
+        on:click={() => setRangeMarker('end', $editor.currentTime)}
+      />
+      <IconButton
+        icon="clearRange"
+        title="Clear I/O range"
+        variant="secondary"
+        disabled={!canUseRange}
+        on:click={clearRange}
+      />
+      <span class="timeline-pane__divider" aria-hidden="true"></span>
+      <IconButton
+        icon="bookmark"
+        title="Add marker at playhead (M)"
+        variant="secondary"
+        disabled={!canExport}
+        on:click={() => addBookmarkMarker($editor.currentTime)}
+      />
+      <button
+        type="button"
+        class="secondary"
+        title="Previous marker (,)"
+        disabled={!bookmarks.length}
+        on:click={goToPreviousMarker}
+      >
+        ‹
+      </button>
+      <button
+        type="button"
+        class="secondary"
+        title="Next marker (.)"
+        disabled={!bookmarks.length}
+        on:click={goToNextMarker}
+      >
+        ›
+      </button>
+      <IconButton
+        icon="delete"
+        title="Delete selected marker (Del)"
+        variant="secondary"
+        disabled={!selectedBookmarkId}
+        on:click={deleteSelectedBookmark}
+      />
+      <span class="timeline-pane__divider" aria-hidden="true"></span>
+      <IconButton
+        icon="snapIn"
+        title="Snap playhead to In ( [ )"
+        variant="secondary"
+        disabled={!canUseRange}
+        on:click={snapToRangeStart}
+      />
+      <IconButton
+        icon="snapOut"
+        title="Snap playhead to Out ( ] )"
+        variant="secondary"
+        disabled={!canUseRange}
+        on:click={snapToRangeEnd}
+      />
+      <span class="timeline-pane__divider" aria-hidden="true"></span>
+      <button
+        type="button"
+        class="secondary"
+        title="Split at I/O markers"
+        disabled={!canUseRange}
+        on:click={splitAtRangeMarkers}
+      >
+        Split I/O
+      </button>
+      <IconButton
+        icon="delete"
+        title="Delete selected segment (Del)"
+        variant="secondary"
+        disabled={!selectedSegment || segments.length <= 1}
+        on:click={deleteSelectedSegment}
+      />
+    </div>
   <Timeline
     bind:this={timeline}
     disabled={!$editor.currentFile}
     {duration}
     currentTime={$editor.currentTime}
     {segments}
+    {bookmarks}
+    {selectedBookmarkId}
+    waveformPeaks={waveformPeaks}
+    waveformLoading={waveformLoading}
+    sourceDuration={metadata?.duration ?? 0}
     selectedSegmentId={$editor.selectedSegmentId}
     rangeStart={normalizedRange?.start ?? null}
     rangeEnd={normalizedRange?.end ?? null}
@@ -2006,6 +2317,17 @@
     on:trimOutsideRange={deleteOutsideRange}
     on:toggleRangeLoop={toggleRangeLoop}
     on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.toIndex)}
+    on:bookmarkClick={(event) => {
+      const bookmark = bookmarks.find((entry) => entry.id === event.detail.id);
+      if (bookmark) {
+        seekTo(bookmark.time);
+      }
+    }}
+    on:bookmarkSelect={(event) => {
+      selectedBookmarkId = event.detail.id;
+    }}
+    on:bookmarkEdit={(event) => openBookmarkLabelEditor(event.detail.id)}
+    on:bookmarkRemove={(event) => removeBookmark(event.detail.id)}
   />
   </div>
   </section>
@@ -2193,16 +2515,24 @@
     uploadProviders = event.detail.uploadProviders;
     defaultUploadProviderId = event.detail.defaultUploadProviderId;
     customExportPresets = event.detail.customExportPresets;
-    obsWebsocketHost = event.detail.obsWebsocketHost ?? '127.0.0.1';
-    obsWebsocketPort = event.detail.obsWebsocketPort ?? 4455;
-    obsWebsocketPassword = event.detail.obsWebsocketPassword ?? '';
     selectedUploadProviderId = event.detail.defaultUploadProviderId;
     void refreshUploadProviderSummaries();
     void refreshExportPresets();
   }}
-  bind:obsWebsocketHost
-  bind:obsWebsocketPort
-  bind:obsWebsocketPassword
+/>
+
+<MarkerLabelModal
+  open={markerLabelModalOpen}
+  initialLabel={bookmarks.find((bookmark) => bookmark.id === editingBookmarkId)?.label ?? ''}
+  on:close={() => {
+    markerLabelModalOpen = false;
+    editingBookmarkId = null;
+  }}
+  on:save={(event) => {
+    if (editingBookmarkId) {
+      updateBookmarkLabel(editingBookmarkId, event.detail.label);
+    }
+  }}
 />
 
 <ShortcutsModal open={shortcutsModalOpen} on:close={() => (shortcutsModalOpen = false)} />

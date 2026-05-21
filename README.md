@@ -56,7 +56,7 @@ Range actions are also available from the transport bar, timeline context menu, 
 Known limitations:
 
 - Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
-- Volume can be adjusted for preview and export; fade and waveform editing are not implemented yet.
+- Volume can be adjusted for preview and export; audio waveform on the timeline; fade in/out on export.
 - Preview support is currently limited by WebView2/HTML video decoding. ffmpeg may support files that the preview cannot play until proxy/remux preview support is added.
 
 ## Requirements
@@ -109,6 +109,12 @@ Build the app and installer:
 ```powershell
 npm run prepare:ffmpeg
 npm run tauri -- build
+```
+
+App icons (window, taskbar, tray, installer, favicon) are generated from `branding/app-icon.png`. After changing the logo, run:
+
+```powershell
+npm run icons
 ```
 
 ## Runtime testing

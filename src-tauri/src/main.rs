@@ -151,6 +151,7 @@ fn main() {
             save_editor_settings,
             launch::get_launch_path,
             ffmpeg::probe_video,
+            ffmpeg::extract_waveform,
             ffmpeg::export_clip,
             ffmpeg::check_ffmpeg,
             ffmpeg::reveal_in_explorer,
@@ -176,7 +177,6 @@ fn main() {
             project::save_project_file,
             project::load_project_file,
             obs::find_latest_replay_in_folder,
-            obs::save_obs_replay_buffer,
             obs::open_watch_folder_in_explorer,
         ])
         .run(tauri::generate_context!())

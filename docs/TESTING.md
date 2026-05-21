@@ -84,15 +84,21 @@ npm run tauri -- build
 | Export | Strip audio exports video-only file | |
 | Edit | J / K / L shuttle scrub (step back, pause, step forward) | |
 | Edit | `[` / `]` snap playhead to I/O range markers | |
+| Edit | Timeline toolbar: Split, In, Out, Clear range, Add marker, Snap In/Out, Split I/O, Delete | |
+| Edit | `M` adds timeline bookmark; click bookmark seeks; right-click removes | |
+| Edit | `,` / `.` previous / next marker; double-click or menu edits label | |
+| Edit | `Del` deletes selected marker; `Shift + M` removes nearest at playhead | |
+| Edit | Bookmarks persist when reopening same source / `.cutdown` project | |
+| Edit | Audio track shows waveform envelope when clip has audio | |
+| Edit | Timeline toolbar controls disabled without an open clip | |
 | Edit | Ctrl+D duplicates selected segment | |
 | Edit | Drag segment on timeline to reorder | |
-| Session | Reopen same source restores segments, I/O, crop, volume | |
+| Session | Reopen same source restores segments, I/O, crop, volume, bookmarks | |
 | Export | Batch per-segment export writes one file per kept segment | |
 | Export | Queue upload after export runs uploads sequentially | |
 | Export | Audio fade in/out on I/O or sequence export | |
 | Project | Save / open `.cutdown` project restores editor state | |
 | OBS | Latest replay opens newest file in watch folder | |
-| OBS | SaveReplayBuffer via WebSocket then opens watch-folder file | |
 | OBS | Tray menu Open Watch Folder opens Explorer | |
 | Preview | Playback speed 0.5× / 1× / 2× | |
 | Preview | Proxy preview button builds proxy for heavy codecs | |

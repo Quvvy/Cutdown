@@ -1,7 +1,9 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import IconButton from './IconButton.svelte';
+  import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
+  import type { TimelineBookmark } from '../lib/types';
   import type { TimelineSegment } from '../stores/editor';
 
   export let duration = 0;
@@ -16,6 +18,11 @@
   export let audioTrackHeight = 58;
   export let audioCodec: string | null = null;
   export let audioChannels: number | null = null;
+  export let bookmarks: TimelineBookmark[] = [];
+  export let selectedBookmarkId: string | null = null;
+  export let waveformPeaks: number[] = [];
+  export let waveformLoading = false;
+  export let sourceDuration = 0;
 
   const TRACK_SPLIT_STORAGE_KEY = 'cutdown-track-split';
   const RULER_HEIGHT = 25;
@@ -42,6 +49,7 @@
         seconds: number;
       }
     | null = null;
+  let bookmarkMenu: { x: number; y: number; id: string } | null = null;
 
   type SegmentLayout = {
     segment: TimelineSegment;
@@ -67,6 +75,10 @@
     trimOutsideRange: void;
     toggleRangeLoop: void;
     reorderSegment: { id: string; toIndex: number };
+    bookmarkClick: { id: string };
+    bookmarkRemove: { id: string };
+    bookmarkSelect: { id: string };
+    bookmarkEdit: { id: string };
   }>();
 
   let segmentDrag:
@@ -138,6 +150,10 @@
   $: segmentLayouts = buildSegmentLayouts(segments, pixelsPerSecond);
   $: ticks = buildTicks(outputDuration, pixelsPerSecond);
   $: audioLabel = audioCodec ? `${audioCodec}${audioChannels ? ` ${audioChannels}ch` : ''}` : 'no audio';
+  $: bookmarkLayouts = bookmarks.map((bookmark) => ({
+    bookmark,
+    left: sourceToSequenceTime(bookmark.time) * pixelsPerSecond,
+  }));
 
   function buildTicks(totalSeconds: number, pxPerSecond: number): Array<{ id: number; seconds: number; left: number; major: boolean }> {
     if (totalSeconds <= 0) {
@@ -556,6 +572,18 @@
 
   function closeContextMenu(): void {
     contextMenu = null;
+    bookmarkMenu = null;
+  }
+
+  function bookmarkLabel(bookmark: TimelineBookmark): string {
+    return bookmark.label?.trim() || formatTime(bookmark.time);
+  }
+
+  function openBookmarkMenu(id: string, event: MouseEvent): void {
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    bookmarkMenu = { x: event.clientX, y: event.clientY, id };
   }
 
   function runContextAction(
@@ -658,6 +686,33 @@
             {/if}
           {/each}
 
+          {#each bookmarkLayouts as layout (layout.bookmark.id)}
+            <button
+              type="button"
+              class="timeline__bookmark"
+              class:selected={layout.bookmark.id === selectedBookmarkId}
+              style={`left: ${layout.left}px`}
+              title={`${bookmarkLabel(layout.bookmark)} · ${formatTime(layout.bookmark.time)}`}
+              aria-label={`Marker ${bookmarkLabel(layout.bookmark)} at ${formatTime(layout.bookmark.time)}`}
+              on:pointerdown|stopPropagation={(event) => {
+                event.preventDefault();
+                dispatch('bookmarkSelect', { id: layout.bookmark.id });
+                dispatch('bookmarkClick', { id: layout.bookmark.id });
+              }}
+              on:dblclick|stopPropagation|preventDefault={() =>
+                dispatch('bookmarkEdit', { id: layout.bookmark.id })}
+              on:contextmenu|stopPropagation|preventDefault={(event) =>
+                openBookmarkMenu(layout.bookmark.id, event)}
+            ></button>
+            <span
+              class="timeline__bookmark-label"
+              class:selected={layout.bookmark.id === selectedBookmarkId}
+              style={`left: ${layout.left}px`}
+            >
+              {bookmarkLabel(layout.bookmark)}
+            </span>
+          {/each}
+
           {#if normalizedRange}
             <div class="timeline__range-fill" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
             <button
@@ -736,7 +791,9 @@
       on:dblclick={toggleAudioExpanded}
     >
       <strong>Audio</strong>
-      <span>{audioLabel}</span>
+      <span>
+        {audioLabel}{waveformLoading ? ' · loading waveform…' : waveformPeaks.length ? ' · waveform' : ''}
+      </span>
     </button>
     <div
       bind:this={audioScroll}
@@ -745,7 +802,18 @@
       aria-label="Audio track"
       on:contextmenu={openContextMenu}
     >
-      <div class="timeline__content timeline__content--track" style={`width: ${timelineWidth}px`}>
+      <div class="timeline__content timeline__content--track timeline__content--audio" style={`width: ${timelineWidth}px`}>
+        {#if waveformPeaks.length > 0 && audioCodec}
+          <TimelineWaveform
+            peaks={waveformPeaks}
+            {sourceDuration}
+            {segments}
+            pixelsPerSecond={pixelsPerSecond}
+            width={timelineWidth}
+            height={Math.max(24, audioTrackHeight - 8)}
+            outputDuration={outputDuration}
+          />
+        {/if}
         {#each ticks as tick}
           <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
         {/each}
@@ -768,6 +836,19 @@
       </div>
     </div>
   </div>
+
+  {#if bookmarkMenu}
+    <div class="timeline-menu" role="menu" style={`left: ${bookmarkMenu.x}px; top: ${bookmarkMenu.y}px`}>
+      <button type="button" on:click={() => {
+        dispatch('bookmarkEdit', { id: bookmarkMenu.id });
+        closeContextMenu();
+      }}>Edit label</button>
+      <button type="button" on:click={() => {
+        dispatch('bookmarkRemove', { id: bookmarkMenu.id });
+        closeContextMenu();
+      }}>Delete marker</button>
+    </div>
+  {/if}
 
   {#if contextMenu}
     <div class="timeline-menu" role="menu" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>

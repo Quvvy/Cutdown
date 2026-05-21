@@ -36,10 +36,6 @@
   export let customExportPresets: CustomExportPreset[] = [];
   export let ffmpegStatus = '';
   export let gpuEncoders: string[] = [];
-  export let obsWebsocketHost = '127.0.0.1';
-  export let obsWebsocketPort = 4455;
-  export let obsWebsocketPassword = '';
-
   let editingId: string | null = null;
   let editingPresetId: string | null = null;
 
@@ -56,9 +52,6 @@
       uploadProviders: UploadProvider[];
       defaultUploadProviderId: string | null;
       customExportPresets: CustomExportPreset[];
-      obsWebsocketHost: string | null;
-      obsWebsocketPort: number | null;
-      obsWebsocketPassword: string | null;
     };
   }>();
 
@@ -220,9 +213,6 @@
         uploadProviders: UploadProvider[];
         defaultUploadProviderId: string | null;
         customExportPresets: CustomExportPreset[];
-        obsWebsocketHost: string | null;
-        obsWebsocketPort: number | null;
-        obsWebsocketPassword: string | null;
       }>('save_editor_settings', {
         params: {
           watchFolder,
@@ -234,9 +224,9 @@
           providers,
           defaultUploadProviderId,
           customExportPresets: presets,
-          obsWebsocketHost,
-          obsWebsocketPort,
-          obsWebsocketPassword: obsWebsocketPassword || null,
+          obsWebsocketHost: null,
+          obsWebsocketPort: null,
+          obsWebsocketPassword: null,
         },
       });
 
@@ -256,9 +246,6 @@
         uploadProviders,
         defaultUploadProviderId,
         customExportPresets,
-        obsWebsocketHost: saved.obsWebsocketHost,
-        obsWebsocketPort: saved.obsWebsocketPort,
-        obsWebsocketPassword: saved.obsWebsocketPassword,
       });
       dispatch('close');
     } catch (error) {
@@ -306,26 +293,6 @@
           </dd>
         </div>
         <div>
-          <dt>OBS WebSocket</dt>
-          <dd class="modal__output">
-            <label class="modal__stack">
-              <span>Host</span>
-              <input type="text" class="modal__text-input" bind:value={obsWebsocketHost} />
-            </label>
-            <label class="modal__stack">
-              <span>Port</span>
-              <input type="number" class="modal__text-input" min="1" max="65535" bind:value={obsWebsocketPort} />
-            </label>
-            <label class="modal__stack">
-              <span>Password (optional)</span>
-              <input type="password" class="modal__text-input" bind:value={obsWebsocketPassword} />
-            </label>
-            <p class="modal__hint">
-              Used by Latest replay in the toolbar to trigger SaveReplayBuffer when no watch-folder file is found.
-            </p>
-          </dd>
-        </div>
-        <div>
           <dt>Watch folder</dt>
           <dd class="modal__mode">
             <label>
@@ -333,6 +300,9 @@
               Enable watch folder notifications
             </label>
             <span>{watchFolder || 'No folder selected'}</span>
+            <p class="modal__hint">
+              Latest replay opens the newest video in this folder. New files can also trigger a toast when notifications are enabled.
+            </p>
           </dd>
         </div>
         <div>

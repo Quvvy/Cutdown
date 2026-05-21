@@ -7,6 +7,10 @@
 
   const shortcuts = [
     { keys: 'S', action: 'Split at playhead' },
+    { keys: 'M', action: 'Add timeline marker at playhead' },
+    { keys: ', / .', action: 'Previous / next marker' },
+    { keys: 'Shift + M', action: 'Remove nearest marker at playhead' },
+    { keys: 'Del', action: 'Delete selected marker (when selected) or segment' },
     { keys: 'I', action: 'Set range in point' },
     { keys: 'O', action: 'Set range out point' },
     { keys: 'Z', action: 'Zoom timeline to I/O range' },

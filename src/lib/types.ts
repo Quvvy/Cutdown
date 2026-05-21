@@ -13,3 +13,9 @@ export type NormalizedCropRect = {
   width: number;
   height: number;
 };
+
+export type TimelineBookmark = {
+  id: string;
+  time: number;
+  label?: string;
+};

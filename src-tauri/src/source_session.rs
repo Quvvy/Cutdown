@@ -13,6 +13,15 @@ pub struct SavedSegment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SavedBookmark {
+    pub id: String,
+    pub time: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NormalizedCropRect {
     pub x: f64,
     pub y: f64,
@@ -32,6 +41,8 @@ pub struct SourceSession {
     pub crop_rect: NormalizedCropRect,
     pub clip_volume: f64,
     pub current_time: Option<f64>,
+    #[serde(default)]
+    pub bookmarks: Vec<SavedBookmark>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -124,6 +135,16 @@ fn sanitize_session(session: SourceSession, duration: Option<f64>) -> Option<Sou
         _ => (None, None),
     };
 
+    let mut bookmarks = session.bookmarks;
+    if let Some(duration) = duration {
+        bookmarks.retain(|bookmark| bookmark.time >= 0.0 && bookmark.time <= duration + 0.05);
+    }
+    bookmarks.sort_by(|left, right| {
+        left.time
+            .partial_cmp(&right.time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
     Some(SourceSession {
         source_path: session.source_path,
         segments,
@@ -134,6 +155,7 @@ fn sanitize_session(session: SourceSession, duration: Option<f64>) -> Option<Sou
         crop_rect: session.crop_rect,
         clip_volume: session.clip_volume.clamp(0.0, 1.0),
         current_time: session.current_time.map(|value| value.max(0.0)),
+        bookmarks,
     })
 }
 

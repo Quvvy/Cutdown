@@ -22,4 +22,12 @@ if (Test-Path $ffmpegBundled) {
   Write-Warning "Bundled ffmpeg missing. Run: npm run prepare:ffmpeg"
 }
 
+$appIcon = Join-Path $projectRoot "branding\app-icon.png"
+$bundleIcon = Join-Path $projectRoot "src-tauri\icons\icon.ico"
+if ((Test-Path $appIcon) -and (Test-Path $bundleIcon)) {
+  Write-Host "App icons found (source + bundle ICO)."
+} else {
+  Write-Warning "App icons missing. Run: npm run icons"
+}
+
 Write-Host "Validation script finished. Complete the manual matrix in docs/TESTING.md."
