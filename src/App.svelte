@@ -34,11 +34,8 @@
     type CustomExportPreset,
   } from './lib/exportPresets';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
-  import {
-    segmentIndexAtSourceTime,
-    sequenceToSourceTime,
-    sourceToSequenceTime,
-  } from './lib/timelineMapping';
+  import { createSequencePlaybackDriver } from './lib/sequencePlayback';
+  import { sequenceToSourceTime, sourceToSequenceTime } from './lib/timelineMapping';
   import {
     createCatboxProvider,
     createFilegardenProvider,
@@ -183,18 +180,21 @@
   let runAtStartup = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
-  let previewPlaybackSegmentIndex: number | null = null;
-  let previewPlaybackBoundaryTimer: ReturnType<typeof setTimeout> | null = null;
-  let previewPlaying = false;
-  let previewAdvanceInProgress = false;
-  // Block stale native timeupdate events that fire from the old position after a seek.
-  let previewBlockStaleTimeupdates = false;
-  let previewPostSeekExpectedSegmentIndex: number | null = null;
-  // True while the synchronous Svelte dispatch from VideoPreview.seekTo is in flight.
-  let previewSeekPendingDispatch = false;
-  // Set when we intentionally stopped at the end of the last segment, so a queued
-  // ended event from the browser doesn't restart an advance cycle.
-  let previewStoppedAtEnd = false;
+  const sequencePlayback = createSequencePlaybackDriver(
+    {
+      pauseVideo: (options) => preview?.pausePlayback(options),
+      playVideo: () => preview?.playPlayback(),
+      seekVideo: (time) => preview?.seekTo(time),
+      updateCurrentTime: (time) => editor.update((state) => ({ ...state, currentTime: time })),
+    },
+    {
+      getSegments: () => get(editor).segments,
+      getSourceTime: () => get(editor).currentTime,
+      isRangeLoop: () => rangeLoopPlayback,
+      getPlaybackRate: () => previewPlaybackRate,
+      afterAdvance: tick,
+    },
+  );
   let clipVolume = 1;
   let exportProgressPercent: number | null = null;
   let outputPath = '';
@@ -230,7 +230,6 @@
   const WORKSPACE_SPLITTER_PX = 6;
   const MIN_PREVIEW_PANE_PX = 120;
   const MIN_TIMELINE_PANE_PX = 160;
-  const PLAYBACK_BOUNDARY_LEAD_SECONDS = 0.08;
   let rangeStart: number | null = null;
   let rangeEnd: number | null = null;
   let bookmarks: TimelineBookmark[] = [];
@@ -402,7 +401,7 @@
     });
 
     return () => {
-      clearPreviewPlaybackBoundary();
+      sequencePlayback.dispose();
       void unlistenFfmpegInstall.then((stop) => stop());
       void unlistenExport.then((stop) => stop());
       void unlistenWatch.then((stop) => stop());
@@ -901,14 +900,7 @@
     cancelPendingWaveform();
     waveformLoadGeneration += 1;
     rangeLoopPlayback = false;
-    previewPlaybackSegmentIndex = null;
-    previewPlaying = false;
-    previewAdvanceInProgress = false;
-    previewBlockStaleTimeupdates = false;
-    previewPostSeekExpectedSegmentIndex = null;
-    previewSeekPendingDispatch = false;
-    previewStoppedAtEnd = false;
-    clearPreviewPlaybackBoundary();
+    sequencePlayback.reset();
     clipVolume = 1;
     cropEnabled = false;
     cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
@@ -1005,272 +997,23 @@
     }
   }
 
-  function clearPreviewPlaybackBoundary(): void {
-    if (previewPlaybackBoundaryTimer) {
-      clearTimeout(previewPlaybackBoundaryTimer);
-      previewPlaybackBoundaryTimer = null;
-    }
-  }
-
-  function armPreviewPlaybackBoundary(): void {
-    clearPreviewPlaybackBoundary();
-
-    if (rangeLoopPlayback || !previewPlaying || $editor.segments.length === 0) {
-      return;
-    }
-
-    const segmentIndex =
-      previewPlaybackSegmentIndex ?? segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
-    if (segmentIndex === null) {
-      return;
-    }
-
-    const segment = $editor.segments[segmentIndex];
-    if (!segment) {
-      return;
-    }
-
-    previewPlaybackSegmentIndex = segmentIndex;
-
-    // If $editor.currentTime is outside the segment (stale from a skipped timeupdate),
-    // use segment.sourceStart so the timer fires at the full segment duration rather
-    // than at 0 ms, which would cause an immediate re-advance loop.
-    const withinSegment =
-      $editor.currentTime >= segment.sourceStart && $editor.currentTime <= segment.sourceEnd;
-    const referenceTime = withinSegment ? $editor.currentTime : segment.sourceStart;
-    const secondsUntilBoundary =
-      (segment.sourceEnd - referenceTime - PLAYBACK_BOUNDARY_LEAD_SECONDS) /
-      Math.max(0.25, previewPlaybackRate);
-
-    previewPlaybackBoundaryTimer = setTimeout(
-      () => void advancePreviewSegmentPlayback(),
-      Math.max(0, secondsUntilBoundary * 1000),
-    );
-  }
-
-  async function advancePreviewSegmentPlayback(forceResume = false): Promise<void> {
-    clearPreviewPlaybackBoundary();
-
-    // #region agent log
-    console.error('[d43685][H-A,H-C,H-D] advancePreviewSegmentPlayback entry', {forceResume,previewPlaying,previewAdvanceInProgress,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segments:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))});
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:entry',message:'advance called',data:{forceResume,previewPlaying,previewAdvanceInProgress,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segmentRanges:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-C,H-D'})}).catch(()=>{});
-    // #endregion
-
-    if (previewAdvanceInProgress) {
-      // #region agent log
-      console.error('[d43685][H-D] advance already in progress, ignoring re-entrant call');
-      // #endregion
-      return;
-    }
-
-    if (rangeLoopPlayback || (!previewPlaying && !forceResume) || $editor.segments.length === 0) {
-      // #region agent log
-      console.error('[d43685][H-B,H-C] advance bailed early', {rangeLoopPlayback,previewPlaying,forceResume});
-      fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:early-return',message:'advance bailed early',data:{rangeLoopPlayback,previewPlaying,forceResume,segmentCount:$editor.segments.length},timestamp:Date.now(),hypothesisId:'H-B,H-C'})}).catch(()=>{});
-      // #endregion
-      return;
-    }
-
-    previewAdvanceInProgress = true;
-
-    const segmentIndex =
-      previewPlaybackSegmentIndex ?? segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
-    if (segmentIndex === null) {
-      previewPlaying = false;
-      preview?.pausePlayback();
-      return;
-    }
-
-    const segment = $editor.segments[segmentIndex];
-    const nextSegment = $editor.segments[segmentIndex + 1];
-    const shouldResume = previewPlaying || forceResume;
-
-    // #region agent log
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:decision',message:'advance decision',data:{segmentIndex,segmentId:segment?.id,segmentRange:segment?{start:segment.sourceStart,end:segment.sourceEnd}:null,hasNext:Boolean(nextSegment),nextSegmentId:nextSegment?.id,nextStart:nextSegment?.sourceStart,shouldResume},timestamp:Date.now(),hypothesisId:'H-A,H-C'})}).catch(()=>{});
-    // #endregion
-
-    if (!nextSegment) {
-      previewPlaying = false;
-      previewStoppedAtEnd = true;
-      preview?.pausePlayback();
-      previewPlaybackSegmentIndex = segmentIndex;
-      // Only update the display time — do NOT seek the video. Seeking to near
-      // sourceEnd on a file where sourceEnd == physical EOF re-triggers the browser's
-      // ended event immediately, creating an infinite advance loop (Bug B).
-      const endTime = Math.max(segment.sourceStart, segment.sourceEnd - 0.001);
-      editor.update((state) => ({ ...state, currentTime: endTime }));
-
-      // #region agent log
-      console.error('[d43685][Bug2] last-segment stop', {segmentIndex,segId:segment.id,sourceEnd:segment.sourceEnd,endTime});
-      fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:last-segment',message:'last segment stop',data:{segmentIndex,segId:segment.id,sourceEnd:segment.sourceEnd,endTime,allSegments:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-C,Bug2'})}).catch(()=>{});
-      // #endregion
-      previewAdvanceInProgress = false;
-      previewBlockStaleTimeupdates = false;
-      previewPostSeekExpectedSegmentIndex = null;
-      return;
-    }
-
-    preview?.pausePlayback({ emit: false });
-    previewPlaybackSegmentIndex = segmentIndex + 1;
-    // Set stale-guard BEFORE seekTo so the synchronous Svelte dispatch is skipped,
-    // then native timeupdates from the old position are blocked until we confirm
-    // the video has arrived at the new segment.
-    previewPostSeekExpectedSegmentIndex = segmentIndex + 1;
-    previewBlockStaleTimeupdates = true;
-    previewSeekPendingDispatch = true;
-    preview?.seekTo(nextSegment.sourceStart);
-    editor.update((state) => ({ ...state, currentTime: nextSegment.sourceStart }));
-
-    await tick();
-
-    previewAdvanceInProgress = false;
-
-    if (shouldResume) {
-      previewPlaying = true;
-      preview?.playPlayback();
-      armPreviewPlaybackBoundary();
-    }
-  }
-
   function handlePreviewEnded(): void {
-    // #region agent log
-    const _endedCurrentTime = $editor.currentTime;
-    const _endedSegIdx = previewPlaybackSegmentIndex;
-    const _endedSegEnd = _endedSegIdx !== null ? $editor.segments[_endedSegIdx]?.sourceEnd : null;
-    const _endedStale = _endedSegIdx !== null && _endedSegEnd !== undefined && Math.abs(_endedCurrentTime - (_endedSegEnd ?? 0)) > 0.5;
-    console.error('[d43685][H-C] handlePreviewEnded', {rangeLoopPlayback,previewPlaying,previewAdvanceInProgress,previewStoppedAtEnd,previewPlaybackSegmentIndex,currentTime:_endedCurrentTime,segEnd:_endedSegEnd,stale:_endedStale});
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:handlePreviewEnded',message:'browser ended event',data:{rangeLoopPlayback,previewPlaying,previewAdvanceInProgress,previewStoppedAtEnd,previewPlaybackSegmentIndex,currentTime:_endedCurrentTime,segEnd:_endedSegEnd,stale:_endedStale},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
-    // #endregion
-
-    if (rangeLoopPlayback) {
-      return;
-    }
-
-    // An advance is already executing — this ended event is stale (fired from the
-    // old segment's physical EOF while we're transitioning to the next segment).
-    if (previewAdvanceInProgress) {
-      return;
-    }
-
-    // We intentionally stopped at the end of the last segment. The browser may still
-    // have a queued ended event in flight; consume and discard it.
-    if (previewStoppedAtEnd) {
-      previewStoppedAtEnd = false;
-      return;
-    }
-
-    // Guard: if we've already advanced past the segment that caused this ended event,
-    // ignore it. This happens when a reordered segment sits at the physical EOF of the
-    // source file — the browser fires ended, but the boundary timer already advanced.
-    if (previewPlaybackSegmentIndex !== null) {
-      const currentSeg = $editor.segments[previewPlaybackSegmentIndex];
-      if (currentSeg && Math.abs($editor.currentTime - currentSeg.sourceEnd) > 0.5) {
-        return;
-      }
-    }
-
-    void advancePreviewSegmentPlayback(true);
+    sequencePlayback.onEnded();
   }
 
   function handlePreviewPlayState(playing: boolean): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:handlePreviewPlayState',message:'play state changed',data:{playing,previewPlaying,previewPlaybackSegmentIndex,currentTime:$editor.currentTime},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
-    // #endregion
-
-    previewPlaying = playing;
-
-    if (!playing) {
-      // On any pause (user-initiated or error), release all stale-guard state so
-      // we don't accidentally block the next play session.
-      previewAdvanceInProgress = false;
-      previewBlockStaleTimeupdates = false;
-      previewPostSeekExpectedSegmentIndex = null;
-      previewSeekPendingDispatch = false;
-      clearPreviewPlaybackBoundary();
-      return;
-    }
-
-    previewStoppedAtEnd = false;
-
-    if (rangeLoopPlayback || $editor.segments.length === 0) {
-      return;
-    }
-
-    let segmentIndex = segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
-    let nextTime = $editor.currentTime;
-
-    if (segmentIndex === null) {
-      const sequenceTime = sourceToSequenceTime($editor.segments, $editor.currentTime);
-      nextTime = sequenceToSourceTime($editor.segments, sequenceTime);
-      segmentIndex = segmentIndexAtSourceTime($editor.segments, nextTime);
-      preview?.seekTo(nextTime);
-      editor.update((state) => ({ ...state, currentTime: nextTime }));
-    }
-
-    previewPlaybackSegmentIndex = segmentIndex;
-    armPreviewPlaybackBoundary();
+    sequencePlayback.onPlayState(playing);
   }
 
   function handlePreviewTimeUpdate(sourceTime: number): void {
-    // Skip the synchronous Svelte dispatch that VideoPreview.seekTo() fires while an
-    // advance is setting up. The advance sets previewSeekPendingDispatch=true immediately
-    // before calling seekTo(), so this handler knows to ignore that one event.
-    if (previewSeekPendingDispatch) {
-      previewSeekPendingDispatch = false;
-      // #region agent log
-      console.error('[d43685][H-D] timeupdate: skipped sync seek dispatch', {sourceTime,previewPlaybackSegmentIndex});
-      // #endregion
-      return;
-    }
-
-    // After a seek we block ALL timeupdates until one arrives that is within the
-    // expected new segment. This prevents stale native timeupdate events (still in
-    // the browser's event queue from the OLD segment position) from corrupting
-    // previewPlaybackSegmentIndex and $editor.currentTime, which would otherwise
-    // cause armPreviewPlaybackBoundary() to compute a near-zero delay → instant
-    // re-advance → infinite spam loop.
-    if (previewBlockStaleTimeupdates) {
-      if (previewPostSeekExpectedSegmentIndex !== null) {
-        const expectedSeg = $editor.segments[previewPostSeekExpectedSegmentIndex];
-        const withinExpected =
-          expectedSeg !== undefined &&
-          sourceTime >= expectedSeg.sourceStart &&
-          sourceTime < expectedSeg.sourceEnd;
-        if (withinExpected) {
-          previewBlockStaleTimeupdates = false;
-          previewPostSeekExpectedSegmentIndex = null;
-          // Fall through to normal processing below
-        } else {
-          // #region agent log
-          console.error('[d43685][H-D] timeupdate: blocked stale event', {sourceTime,previewPostSeekExpectedSegmentIndex,expectedSeg:expectedSeg?{start:expectedSeg.sourceStart,end:expectedSeg.sourceEnd}:null});
-          // #endregion
-          return;
-        }
-      } else {
-        return;
-      }
-    }
-
-    if (!rangeLoopPlayback && $editor.segments.length > 0) {
-      const segmentIndex = segmentIndexAtSourceTime($editor.segments, sourceTime);
-      if (segmentIndex !== null) {
-        previewPlaybackSegmentIndex = segmentIndex;
-      }
-    }
-
-    editor.update((state) => ({ ...state, currentTime: sourceTime }));
+    sequencePlayback.onTimeUpdate(sourceTime);
   }
 
   function seekTo(seconds: number): void {
-    previewStoppedAtEnd = false;
-    previewBlockStaleTimeupdates = false;
-    previewPostSeekExpectedSegmentIndex = null;
-    previewSeekPendingDispatch = false;
     const nextTime = clamp(seconds, 0, duration);
-    previewPlaybackSegmentIndex = segmentIndexAtSourceTime($editor.segments, nextTime);
     preview?.seekTo(nextTime);
     editor.update((state) => ({ ...state, currentTime: nextTime }));
-    armPreviewPlaybackBoundary();
+    sequencePlayback.onUserSeek(nextTime);
   }
 
   function seekBySequence(deltaSeconds: number): void {
@@ -1284,12 +1027,7 @@
   }
 
   function refreshPreviewPlaybackAfterSegmentEdit(): void {
-    const newIndex = segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
-    // #region agent log
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:refreshPreviewPlaybackAfterSegmentEdit',message:'refresh after edit',data:{oldIndex:previewPlaybackSegmentIndex,newIndex,currentTime:$editor.currentTime,segmentsAfter:$editor.segments.map((s,i)=>({i,id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-E'})}).catch(()=>{});
-    // #endregion
-    previewPlaybackSegmentIndex = newIndex;
-    armPreviewPlaybackBoundary();
+    sequencePlayback.onSegmentsChanged();
   }
 
   function selectSegment(id: string | null): void {
@@ -1410,9 +1148,6 @@
   }
 
   function reorderSegment(id: string, toIndex: number): void {
-    // #region agent log
-    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:reorderSegment',message:'reorder called',data:{id,toIndex,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segmentsBefore:$editor.segments.map((s,i)=>({i,id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-E'})}).catch(()=>{});
-    // #endregion
     pushUndoSnapshot();
     editor.update((state) => {
       const fromIndex = state.segments.findIndex((segment) => segment.id === id);
@@ -1474,7 +1209,6 @@
       },
     }));
     pushToast(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`, 'success');
-    previewPlaybackSegmentIndex = null;
     seekTo(normalizedRange.start);
     schedulePersistSession();
   }
@@ -1541,10 +1275,9 @@
     rangeLoopPlayback = !rangeLoopPlayback;
 
     if (rangeLoopPlayback && normalizedRange) {
-      clearPreviewPlaybackBoundary();
       seekTo(normalizedRange.start);
-    } else if (previewPlaying) {
-      armPreviewPlaybackBoundary();
+    } else if (sequencePlayback.isPlaying()) {
+      sequencePlayback.onSegmentsChanged();
     }
   }
 
