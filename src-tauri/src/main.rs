@@ -1,10 +1,15 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod clip_history;
+mod command_util;
 mod encoder_detect;
 mod ffmpeg;
+mod ffmpeg_install;
 mod launch;
 mod obs;
 mod presets;
 mod project;
+mod secret_store;
 mod settings;
 mod source_session;
 mod upload;
@@ -35,7 +40,22 @@ fn show_editor(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn path_exists(path: String) -> bool {
-    std::path::PathBuf::from(path).exists()
+    let path = std::path::PathBuf::from(path);
+    if !is_supported_user_file(&path) {
+        return false;
+    }
+    path.exists()
+}
+
+fn is_supported_user_file(path: &std::path::Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("mp4" | "mkv" | "mov" | "webm" | "ts" | "avi" | "flv")
+            | Some(project::PROJECT_EXTENSION)
+    )
 }
 
 #[tauri::command]
@@ -50,10 +70,7 @@ fn update_watch_folder(
 }
 
 #[tauri::command]
-fn save_app_settings(
-    app: AppHandle,
-    params: UpdateSettingsParams,
-) -> Result<AppSettings, String> {
+fn save_app_settings(app: AppHandle, params: UpdateSettingsParams) -> Result<AppSettings, String> {
     let settings = settings::update_settings(params)?;
     watch_folder::restart_watcher(app)?;
     Ok(settings)
@@ -71,8 +88,13 @@ fn save_editor_settings(
 
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let open_editor = MenuItem::with_id(app, "open_editor", "Open Editor", true, None::<&str>)?;
-    let open_watch_folder =
-        MenuItem::with_id(app, "open_watch_folder", "Open Watch Folder", true, None::<&str>)?;
+    let open_watch_folder = MenuItem::with_id(
+        app,
+        "open_watch_folder",
+        "Open Watch Folder",
+        true,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open_editor, &open_watch_folder, &quit])?;
 
@@ -85,39 +107,38 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         tray = tray.icon(icon);
     }
 
-    tray
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open_editor" => {
-                if let Err(err) = show_editor_window(app) {
-                    eprintln!("failed to show editor window: {err}");
+    tray.on_menu_event(|app, event| match event.id().as_ref() {
+        "open_editor" => {
+            if let Err(err) = show_editor_window(app) {
+                eprintln!("failed to show editor window: {err}");
+            }
+        }
+        "open_watch_folder" => {
+            let folder = settings::load_settings()
+                .watch_folder
+                .filter(|path| !path.trim().is_empty());
+            if let Some(folder) = folder {
+                if let Err(err) = obs::open_watch_folder_in_explorer(folder) {
+                    eprintln!("failed to open watch folder: {err}");
                 }
             }
-            "open_watch_folder" => {
-                let folder = settings::load_settings()
-                    .watch_folder
-                    .filter(|path| !path.trim().is_empty());
-                if let Some(folder) = folder {
-                    if let Err(err) = obs::open_watch_folder_in_explorer(folder) {
-                        eprintln!("failed to open watch folder: {err}");
-                    }
-                }
+        }
+        "quit" => app.exit(0),
+        _ => {}
+    })
+    .on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            ..
+        } = event
+        {
+            if let Err(err) = show_editor_window(tray.app_handle()) {
+                eprintln!("failed to show editor window: {err}");
             }
-            "quit" => app.exit(0),
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                if let Err(err) = show_editor_window(tray.app_handle()) {
-                    eprintln!("failed to show editor window: {err}");
-                }
-            }
-        })
-        .build(app)?;
+        }
+    })
+    .build(app)?;
 
     Ok(())
 }
@@ -153,7 +174,9 @@ fn main() {
             ffmpeg::probe_video,
             ffmpeg::extract_waveform,
             ffmpeg::export_clip,
+            ffmpeg::cancel_export,
             ffmpeg::check_ffmpeg,
+            ffmpeg_install::install_ffmpeg,
             ffmpeg::reveal_in_explorer,
             ffmpeg::prepare_preview,
             ffmpeg::cleanup_preview,

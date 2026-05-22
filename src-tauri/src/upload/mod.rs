@@ -4,15 +4,20 @@ mod response;
 
 use crate::settings::{load_settings, save_settings};
 use crate::upload_providers::{
-    parse_catbox_config, parse_filegarden_config, parse_http_multipart_config,
-    provider_summary, UploadProvider, UploadProviderSummary, KIND_CATBOX, KIND_FILEGARDEN,
-    KIND_HTTP_MULTIPART,
+    parse_catbox_config, parse_filegarden_config, parse_http_multipart_config, provider_summary,
+    UploadProvider, UploadProviderSummary, KIND_CATBOX, KIND_FILEGARDEN, KIND_HTTP_MULTIPART,
 };
 use arboard::Clipboard;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tauri::command]
-pub fn upload_file(file_path: String, provider_id: Option<String>) -> Result<String, String> {
+pub async fn upload_file(file_path: String, provider_id: Option<String>) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || upload_file_blocking(file_path, provider_id))
+        .await
+        .map_err(|err| format!("Upload worker failed: {err}"))?
+}
+
+fn upload_file_blocking(file_path: String, provider_id: Option<String>) -> Result<String, String> {
     let path = PathBuf::from(&file_path);
     if !path.is_file() {
         return Err("Upload file does not exist.".to_string());
@@ -51,7 +56,9 @@ pub struct SaveUploadProvidersParams {
 }
 
 #[tauri::command]
-pub fn save_upload_providers(params: SaveUploadProvidersParams) -> Result<Vec<UploadProviderSummary>, String> {
+pub fn save_upload_providers(
+    params: SaveUploadProvidersParams,
+) -> Result<Vec<UploadProviderSummary>, String> {
     let mut settings = load_settings();
     settings.upload_providers = params.providers;
     settings.default_upload_provider_id = params
@@ -130,12 +137,15 @@ fn resolve_provider_id(
 }
 
 fn upload_with_provider(
-    path: &PathBuf,
+    path: &Path,
     provider: &UploadProvider,
     settings: &mut crate::settings::AppSettings,
 ) -> Result<String, String> {
     if !provider.enabled {
-        return Err(format!("Upload provider \"{}\" is disabled.", provider.name));
+        return Err(format!(
+            "Upload provider \"{}\" is disabled.",
+            provider.name
+        ));
     }
 
     match provider.kind.as_str() {

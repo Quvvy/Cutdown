@@ -25,9 +25,7 @@ fn is_video_file(path: &Path) -> bool {
 
 fn file_added_time(path: &Path) -> Option<SystemTime> {
     let meta = fs::metadata(path).ok()?;
-    meta.created()
-        .ok()
-        .or_else(|| meta.modified().ok())
+    meta.created().ok().or_else(|| meta.modified().ok())
 }
 
 pub fn find_latest_video_in_directory(dir: &str) -> Result<Option<PathBuf>, String> {

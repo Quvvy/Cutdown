@@ -5,7 +5,7 @@ Use this checklist when validating a build before release or after editor/export
 ## Prerequisites
 
 - Windows 10/11 x64
-- `ffmpeg` and `ffprobe` on PATH, or run `npm run prepare:ffmpeg` before `npm run tauri dev`
+- `ffmpeg` and `ffprobe` on PATH, or run `npm run prepare:ffmpeg` for local dev, or use **Download ffmpeg** in the app banner after install
 - Sample clips covering common OBS/replay-buffer cases
 
 ## Automated smoke (developer)
@@ -14,15 +14,16 @@ Use this checklist when validating a build before release or after editor/export
 npm run validate:release
 ```
 
-This runs `npm run check`, `cargo check`, and reports bundled ffmpeg status. Run this before every release candidate; it satisfies the tooling portion of pre-release validation. Complete the manual matrix below on real OBS clips before tagging a release.
+This runs `npm run check`, `npm test`, `npm run build`, `cargo check`, `cargo test`, optional Clippy, and reports optional dev ffmpeg on PATH or in `public/ffmpeg/`. Run this before every release candidate; it satisfies the tooling portion of pre-release validation. Complete the manual matrix below on real OBS clips before tagging a release.
 
 ### Pre-release checklist (automated)
 
 | Check | Command / tool | Pass |
 |-------|----------------|------|
 | TypeScript / Svelte | `npm run check` (via validate:release) | |
-| Rust compile | `cargo check` (via validate:release) | |
-| ffmpeg on PATH or bundled | validate:release output | |
+| Frontend unit tests | `npm test` (via validate:release) | |
+| Rust compile + unit tests | `cargo check` / `cargo test` (via validate:release) | |
+| ffmpeg on PATH, dev copy, or in-app download | validate:release output / banner | |
 
 Release installer build:
 
@@ -84,7 +85,7 @@ npm run tauri -- build
 | Export | Strip audio exports video-only file | |
 | Edit | J / K / L shuttle scrub (step back, pause, step forward) | |
 | Edit | `[` / `]` snap playhead to I/O range markers | |
-| Edit | Timeline toolbar: Split, In, Out, Clear range, Add marker, Snap In/Out, Split I/O, Delete | |
+| Edit | Timeline toolbar: Split, In, Out, Clear range, Add marker, Snap In/Out, Split I/O, Keep range, Delete | |
 | Edit | `M` adds timeline bookmark; click bookmark seeks; right-click removes | |
 | Edit | `,` / `.` previous / next marker; double-click or menu edits label | |
 | Edit | `Del` deletes selected marker; `Shift + M` removes nearest at playhead | |
@@ -112,7 +113,7 @@ npm run tauri -- build
 | History | Copy link when share URL saved; Shared badge on row | |
 | History | Clear history asks for confirmation | |
 | UI | Toast notifications for undo, markers, upload, errors | |
-| UI | ffmpeg missing banner blocks workflow until resolved | |
+| UI | ffmpeg missing banner; Download ffmpeg installs to LocalAppData and enables export | |
 | UI | Tray minimize hint banner dismisses and persists | |
 | UI | Opening overlay while probing metadata | |
 | Project | Missing source opens relink modal and file picker | |

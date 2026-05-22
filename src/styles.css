@@ -51,6 +51,17 @@ body {
   overflow: hidden;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 button {
   border: 0;
   border-radius: 2px;
@@ -1772,6 +1783,12 @@ kbd {
   padding: 0;
 }
 
+.upload-settings__row {
+  cursor: pointer;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .upload-settings__list li {
   align-items: center;
   background: var(--bg3);
@@ -2112,6 +2129,7 @@ kbd {
   background: rgba(248, 113, 113, 0.12);
   border-bottom: 1px solid rgba(248, 113, 113, 0.35);
   color: #fecaca;
+  flex-wrap: wrap;
 }
 
 .tray-hint-banner {

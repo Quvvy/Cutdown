@@ -32,7 +32,7 @@ Configure providers in **Settings → Upload targets**:
 - **File Garden** — sign in with email and password via `api.filegarden.com`; session is stored locally.
 - **Custom HTTP** — POST multipart to your own media server (URL, file field name, optional `Authorization` header, plain-text or JSON URL response).
 
-Use the **Upload** menu in the bottom bar (after export) or in clip history to pick a target. Credentials live in `%APPDATA%/Cutdown/settings.json`.
+Use the **Upload** menu in the bottom bar (after export) or in clip history to pick a target. Known upload and OBS secrets are stored in Windows Credential Manager; non-secret settings live in `%APPDATA%/Cutdown/settings.json`.
 
 Current shortcuts:
 
@@ -49,7 +49,7 @@ Current shortcuts:
 - `J` / `K` / `L`: step back 1s, pause, step forward 1s.
 - `[` / `]`: snap playhead to range in / out.
 - `Ctrl+D`: duplicate selected segment.
-- `Escape`: close Export, Settings, or History panels.
+- `Escape`: close open panels, modals, and confirmation dialogs.
 
 Range actions are also available from the transport bar, timeline context menu, and export modal (sequence vs I/O range).
 
@@ -57,7 +57,8 @@ Known limitations:
 
 - Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
 - Volume can be adjusted for preview and export; audio waveform on the timeline; fade in/out on export.
-- Preview support is currently limited by WebView2/HTML video decoding. ffmpeg may support files that the preview cannot play until proxy/remux preview support is added.
+- Preview uses WebView2/HTML video with seek-at-cut transitions. Brief A/V blips between reordered segments are possible; remux/proxy fallbacks apply when native decode fails.
+- Timeline editing and segment preview are considered complete for v0.2.x; report specific bugs rather than expecting preview architecture changes.
 
 ## Requirements
 
@@ -68,19 +69,9 @@ Known limitations:
 - Visual Studio Build Tools with C++ workload.
 - ffmpeg and ffprobe.
 
-For development, ffmpeg can be available on `PATH`. For release packaging, static Windows `ffmpeg.exe` and `ffprobe.exe` are packaged from:
+For development, ffmpeg can be on `PATH`, or copied into `public/ffmpeg/` via `npm run prepare:ffmpeg`.
 
-```text
-public/ffmpeg/
-```
-
-Populate that folder from the locally installed ffmpeg build:
-
-```powershell
-npm run prepare:ffmpeg
-```
-
-The app checks ffmpeg availability on startup (see **Settings** in the toolbar). If bundled binaries are missing, install ffmpeg on PATH or run `npm run prepare:ffmpeg` before building.
+**Release installers do not bundle ffmpeg.** On first run, use **Download ffmpeg** in the banner (~80 MB, one-time install to `%LOCALAPPDATA%\Cutdown\ffmpeg`). Alternatively, install ffmpeg on PATH yourself.
 
 ## Development
 
@@ -94,6 +85,7 @@ Run validation:
 
 ```powershell
 npm run check
+npm test
 npm run validate:release
 cargo check --manifest-path src-tauri/Cargo.toml
 ```
@@ -107,7 +99,6 @@ npm run tauri dev
 Build the app and installer:
 
 ```powershell
-npm run prepare:ffmpeg
 npm run tauri -- build
 ```
 
@@ -119,7 +110,7 @@ npm run icons
 
 ## Runtime testing
 
-See [docs/TESTING.md](docs/TESTING.md) for the manual validation matrix (probe, preview, edit, export, watch folder).
+See [docs/TESTING.md](docs/TESTING.md) for the manual validation matrix (probe, preview, edit, export, watch folder), and [docs/RELEASE.md](docs/RELEASE.md) for the release checklist.
 
 ## Export presets
 
@@ -145,11 +136,11 @@ Enable **Prefer GPU encoding** in Settings when NVENC/AMF/QSV is available.
 
 Status: complete.
 
-### Milestone 2: ffmpeg Bundling and Export Hardening
+### Milestone 2: ffmpeg Installation and Export Hardening
 
 Status: mostly complete.
 
-- Bundle static Windows x64 `ffmpeg.exe` and `ffprobe.exe`.
+- Install a pinned Windows x64 ffmpeg/ffprobe build from the in-app banner, with PATH and development-folder fallbacks.
 - `check_ffmpeg` diagnostics and setup guidance.
 - Parse ffmpeg stderr for progress events (percent).
 - Emit `export_progress` events to the frontend.
@@ -158,7 +149,7 @@ Status: mostly complete.
 
 ### Milestone 3: Reliable Preview
 
-Status: first implementation complete.
+Status: complete (native / remux / proxy fallbacks; segment-aware playback driver).
 
 ### Milestone 4: Presets and Compression
 
@@ -174,15 +165,15 @@ Status: MVP complete.
 
 ### Milestone 9: Windows Integration
 
-Status: partial (Open With associations, launch path, default export folder, run at startup).
+Status: complete (Open With, launch path, default export folder, run at startup, tray).
 
 ### Milestone 7–10
 
 Catbox upload, clip history, performance baseline, volume control, and UI polish are documented in [PROGRESS.md](PROGRESS.md).
 
-### Milestone 11–18 (planned)
+### Milestone 11–18
 
-See [PROGRESS.md](PROGRESS.md) for the full backlog: trim accuracy, audio editing, timeline workflow, session save, export/presets v2, preview improvements, OBS integration, and cross-platform release hardening.
+See [PROGRESS.md](PROGRESS.md) for backlog status. Timeline workflow (M13) and preview/input v2 (M16) are complete. **v0.3 focus:** release hardening (CI, integration tests, signed releases / auto-updater). OBS WebSocket (M17) is deferred.
 
 ## Project Structure
 
@@ -190,9 +181,17 @@ See [PROGRESS.md](PROGRESS.md) for the full backlog: trim accuracy, audio editin
 src-tauri/
   src/
     main.rs
+    command_util.rs
     ffmpeg.rs
+    ffmpeg_install.rs
     presets.rs
     settings.rs
+    upload/
+    upload_providers.rs
+    clip_history.rs
+    source_session.rs
+    project.rs
+    obs.rs
     watch_folder.rs
     launch.rs
     windows_integration.rs

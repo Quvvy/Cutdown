@@ -14,8 +14,7 @@ impl LaunchState {
 }
 
 fn parse_launch_file() -> Option<String> {
-    let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next() {
+    for arg in std::env::args().skip(1) {
         if arg.starts_with('-') {
             continue;
         }

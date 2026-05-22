@@ -14,6 +14,7 @@
 
   $: iconData = typeof icon === 'string' ? appIcons[icon] : icon;
   $: className = `icon-btn icon-btn--${variant}${showLabel ? ' icon-btn--labeled' : ''}`;
+  $: effectivePressed = pressed ?? (active ? true : undefined);
 </script>
 
 <button
@@ -23,7 +24,7 @@
   {title}
   aria-label={title}
   {disabled}
-  aria-pressed={pressed}
+  aria-pressed={effectivePressed}
   on:click
 >
   {#if iconData}

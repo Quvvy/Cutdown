@@ -14,21 +14,78 @@
   let dragging = false;
   let dragOffsetX = 0;
   let dragOffsetY = 0;
+  let panelEl: HTMLElement;
+  let previousFocus: HTMLElement | null = null;
+  let wasOpen = false;
 
-  $: if (open) {
-    void centerPanel();
+  $: if (open && !wasOpen) {
+    wasOpen = true;
+    void openPanel();
   }
 
-  async function centerPanel(): Promise<void> {
+  $: if (!open && wasOpen) {
+    wasOpen = false;
+  }
+
+  async function openPanel(): Promise<void> {
+    previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     await tick();
     const margin = 16;
     posX = Math.max(margin, (window.innerWidth - width) / 2);
     posY = Math.max(margin, (window.innerHeight - 420) / 2);
+    focusFirstElement();
   }
 
   function closePanel(): void {
     dragging = false;
     dispatch('close');
+    previousFocus?.focus();
+  }
+
+  function focusableElements(): HTMLElement[] {
+    if (!panelEl) {
+      return [];
+    }
+
+    return Array.from(
+      panelEl.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((element) => !element.hasAttribute('disabled') && element.tabIndex >= 0);
+  }
+
+  function focusFirstElement(): void {
+    const [first] = focusableElements();
+    (first ?? panelEl)?.focus();
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    if (event.key === 'Escape') {
+      closePanel();
+      return;
+    }
+
+    if (event.key !== 'Tab') {
+      return;
+    }
+
+    const focusable = focusableElements();
+    if (focusable.length === 0) {
+      event.preventDefault();
+      panelEl?.focus();
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   function startDrag(event: PointerEvent): void {
@@ -74,14 +131,18 @@
 
 {#if open}
   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-  <div class="panel-backdrop" role="presentation" on:click={() => dispatch('close')}></div>
+  <div class="panel-backdrop" role="presentation" on:click={closePanel}></div>
 
+  <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
   <section
+    bind:this={panelEl}
     class="floating-panel"
     role="dialog"
     aria-modal="true"
     aria-labelledby="floating-panel-title"
+    tabindex="-1"
     style={`left: ${posX}px; top: ${posY}px; width: ${width}px; max-height: ${maxHeight}`}
+    on:keydown={handleKeydown}
   >
     <header
       class="floating-panel__header"

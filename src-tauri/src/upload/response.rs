@@ -1,6 +1,10 @@
 use serde_json::Value;
 
-pub fn extract_share_url(body: &str, response_mode: &str, json_path: Option<&str>) -> Result<String, String> {
+pub fn extract_share_url(
+    body: &str,
+    response_mode: &str,
+    json_path: Option<&str>,
+) -> Result<String, String> {
     let trimmed = body.trim();
     if trimmed.is_empty() {
         return Err("Upload host returned an empty response.".to_string());
@@ -27,7 +31,9 @@ pub fn extract_share_url(body: &str, response_mode: &str, json_path: Option<&str
         return Ok(trimmed.to_string());
     }
 
-    Err(format!("Upload host returned an unexpected response: {trimmed}"))
+    Err(format!(
+        "Upload host returned an unexpected response: {trimmed}"
+    ))
 }
 
 fn read_json_path(value: &Value, path: &str) -> Option<String> {
@@ -52,7 +58,14 @@ fn find_url_in_json(value: &Value) -> Option<String> {
         }
         Value::Array(items) => items.iter().find_map(find_url_in_json),
         Value::Object(map) => {
-            for key in ["url", "link", "publicUrl", "public_url", "directLink", "direct_link"] {
+            for key in [
+                "url",
+                "link",
+                "publicUrl",
+                "public_url",
+                "directLink",
+                "direct_link",
+            ] {
                 if let Some(Value::String(text)) = map.get(key) {
                     if text.starts_with("http://") || text.starts_with("https://") {
                         return Some(text.clone());

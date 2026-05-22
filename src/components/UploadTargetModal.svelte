@@ -19,9 +19,6 @@
     return path.split(/[\\/]/).pop() ?? path;
   }
 
-  function selectProvider(id: string): void {
-    selectedProviderId = id;
-  }
 </script>
 
 <DraggablePanel open={open} title="Upload clip" width={440} on:close={() => dispatch('close')}>
@@ -30,7 +27,10 @@
   {/if}
 
   {#if providers.length === 0}
-    <p class="modal__hint modal__hint--error">No upload targets are configured.</p>
+    <p class="modal__hint modal__hint--error">
+      No enabled upload targets found. Open Settings → Upload, ensure at least one target is enabled, then click
+      <strong>Save settings</strong>.
+    </p>
     <button type="button" class="secondary" on:click={() => dispatch('openSettings')}>Open Settings → Upload</button>
   {:else}
     <ul class="upload-target-list" role="listbox" aria-label="Upload targets">
@@ -43,7 +43,7 @@
             role="option"
             aria-selected={provider.id === selectedProviderId}
             disabled={busy}
-            on:click={() => selectProvider(provider.id)}
+            on:click={() => (selectedProviderId = provider.id)}
           >
             <span>{provider.name}{provider.isDefault ? ' (default)' : ''}</span>
             <small>{kindLabel(provider.kind)}</small>

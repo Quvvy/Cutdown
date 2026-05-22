@@ -118,7 +118,9 @@ fn announce_clip(app: AppHandle, path: PathBuf) {
         }
 
         guard.recent.insert(path_key.clone(), now);
-        guard.recent.retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(30));
+        guard
+            .recent
+            .retain(|_, seen| now.duration_since(*seen) < Duration::from_secs(30));
     }
 
     let payload = WatchFolderClip {

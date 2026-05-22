@@ -1,4 +1,6 @@
 use crate::clip_history::{append_entry, ClipHistoryEntry};
+use crate::command_util::command;
+use crate::ffmpeg_install;
 use crate::presets::{
     self, apply_bitrate_scale, resolve_encode_profile, resolve_preset_id, EncodeProfile,
 };
@@ -9,7 +11,10 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
+
+static EXPORT_CANCELLED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,7 +121,7 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
         return Err("Input video does not exist.".to_string());
     }
 
-    let output = Command::new(ffprobe_path())
+    let output = command(ffprobe_path())
         .args([
             "-v",
             "error",
@@ -193,7 +198,20 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
 }
 
 #[tauri::command]
-pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<ExportResult, String> {
+pub async fn export_clip(
+    app: tauri::AppHandle,
+    params: ExportParams,
+) -> Result<ExportResult, String> {
+    tauri::async_runtime::spawn_blocking(move || export_clip_blocking(app, params))
+        .await
+        .map_err(|err| format!("Export worker failed: {err}"))?
+}
+
+fn export_clip_blocking(
+    app: tauri::AppHandle,
+    params: ExportParams,
+) -> Result<ExportResult, String> {
+    EXPORT_CANCELLED.store(false, Ordering::SeqCst);
     let input = PathBuf::from(&params.input_path);
     let output = PathBuf::from(&params.output_path);
     let audio_mode = params.audio_mode.unwrap_or(AudioMode::Preserve);
@@ -290,6 +308,7 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
             fade_in,
             fade_out,
             export_duration,
+            accurate_trim,
         )
         .map_err(|err| format!("Re-encode export failed: {err}"))?;
     }
@@ -321,6 +340,7 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
                 fade_in,
                 fade_out,
                 export_duration,
+                accurate_trim,
             )?;
             file_size = fs::metadata(&output)
                 .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
@@ -333,9 +353,7 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
     let output_path = output.to_string_lossy().to_string();
     let _ = append_entry(ClipHistoryEntry {
         output_path: output_path.clone(),
-        source_path: params
-            .source_path
-            .filter(|value| !value.trim().is_empty()),
+        source_path: params.source_path.filter(|value| !value.trim().is_empty()),
         preset_id: preset_id.clone(),
         exported_at: Utc::now().to_rfc3339(),
         file_size,
@@ -350,6 +368,12 @@ pub fn export_clip(app: tauri::AppHandle, params: ExportParams) -> Result<Export
     })
 }
 
+#[tauri::command]
+pub fn cancel_export() {
+    EXPORT_CANCELLED.store(true, Ordering::SeqCst);
+}
+
+#[allow(clippy::too_many_arguments)]
 fn export_with_reencode(
     app: &tauri::AppHandle,
     input: &Path,
@@ -362,6 +386,7 @@ fn export_with_reencode(
     fade_in: f64,
     fade_out: f64,
     output_duration: f64,
+    accurate_trim: bool,
 ) -> Result<(), String> {
     if segments.len() == 1 {
         let segment = &segments[0];
@@ -378,6 +403,7 @@ fn export_with_reencode(
             fade_in,
             fade_out,
             segment.end - segment.start,
+            accurate_trim,
         )
     } else {
         export_multi_segment_reencode(
@@ -389,9 +415,17 @@ fn export_with_reencode(
             audio_mode,
             crop,
             volume,
+            accurate_trim,
         )?;
         if fade_in > 0.0 || fade_out > 0.0 {
-            apply_output_audio_fades(output, audio_mode, volume, fade_in, fade_out, output_duration)?;
+            apply_output_audio_fades(
+                output,
+                audio_mode,
+                volume,
+                fade_in,
+                fade_out,
+                output_duration,
+            )?;
         }
         Ok(())
     }
@@ -408,6 +442,7 @@ fn export_multi_segment_lossless(
     export_multi_segment(app, input, output, segments, audio_mode, volume)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_multi_segment_reencode(
     app: &tauri::AppHandle,
     input: &Path,
@@ -417,13 +452,15 @@ fn export_multi_segment_reencode(
     audio_mode: AudioMode,
     crop: Option<&CropRect>,
     volume: f64,
+    accurate_trim: bool,
 ) -> Result<(), String> {
     let temp_dir = std::env::temp_dir().join(format!(
         "cutdown-reencode-{}-{}",
         std::process::id(),
         current_timestamp_millis()
     ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("Failed to create temp directory: {err}"))?;
+    fs::create_dir_all(&temp_dir)
+        .map_err(|err| format!("Failed to create temp directory: {err}"))?;
 
     let result = (|| {
         let mut segment_paths = Vec::with_capacity(segments.len());
@@ -452,6 +489,7 @@ fn export_multi_segment_reencode(
                 0.0,
                 0.0,
                 segment_duration,
+                accurate_trim,
             )?;
             segment_paths.push(segment_path);
         }
@@ -461,7 +499,7 @@ fn export_multi_segment_reencode(
         fs::write(&concat_list, concat_file_contents(&segment_paths))
             .map_err(|err| format!("Failed to write concat list: {err}"))?;
 
-        let mut command = Command::new(ffmpeg_path());
+        let mut command = command(ffmpeg_path());
         command
             .arg("-y")
             .args(["-f", "concat", "-safe", "0"])
@@ -479,16 +517,12 @@ fn export_multi_segment_reencode(
         )
     })();
 
-    let cleanup = fs::remove_dir_all(&temp_dir);
-    if result.is_ok() {
-        let _ = cleanup;
-    } else {
-        let _ = cleanup;
-    }
+    let _ = fs::remove_dir_all(&temp_dir);
 
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_reencoded_segment(
     app: Option<&tauri::AppHandle>,
     input: &Path,
@@ -502,20 +536,31 @@ fn export_reencoded_segment(
     fade_in: f64,
     fade_out: f64,
     output_duration: f64,
+    accurate_trim: bool,
 ) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
     }
 
-    let mut command = Command::new(ffmpeg_path());
-    command
-        .arg("-y")
-        .arg("-ss")
-        .arg(format_seconds(start))
-        .arg("-i")
-        .arg(input)
-        .arg("-t")
-        .arg(format_seconds(duration));
+    let mut command = command(ffmpeg_path());
+    command.arg("-y");
+    if accurate_trim {
+        command
+            .arg("-i")
+            .arg(input)
+            .arg("-ss")
+            .arg(format_seconds(start))
+            .arg("-t")
+            .arg(format_seconds(duration));
+    } else {
+        command
+            .arg("-ss")
+            .arg(format_seconds(start))
+            .arg("-i")
+            .arg(input)
+            .arg("-t")
+            .arg(format_seconds(duration));
+    }
 
     if let Some(filter) = build_video_filter(profile, crop) {
         command.args(["-vf", &filter]);
@@ -538,13 +583,7 @@ fn export_reencoded_segment(
 
     command.args(["-movflags", "+faststart"]).arg(output);
 
-    run_command_with_progress(
-        app,
-        command,
-        "encode",
-        Some(duration),
-        "Encoding segment.",
-    )
+    run_command_with_progress(app, command, "encode", Some(duration), "Encoding segment.")
 }
 
 fn valid_segments(segments: Vec<ExportSegment>) -> Result<Vec<ExportSegment>, String> {
@@ -573,7 +612,8 @@ fn export_multi_segment(
         std::process::id(),
         current_timestamp_millis()
     ));
-    fs::create_dir_all(&temp_dir).map_err(|err| format!("Failed to create temp directory: {err}"))?;
+    fs::create_dir_all(&temp_dir)
+        .map_err(|err| format!("Failed to create temp directory: {err}"))?;
 
     let result = (|| {
         let extension = output
@@ -614,7 +654,7 @@ fn export_multi_segment(
         fs::write(&concat_list, concat_file_contents(&segment_paths))
             .map_err(|err| format!("Failed to write concat list: {err}"))?;
 
-        let mut command = Command::new(ffmpeg_path());
+        let mut command = command(ffmpeg_path());
         command
             .arg("-y")
             .args(["-f", "concat", "-safe", "0"])
@@ -644,6 +684,7 @@ fn export_multi_segment(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn export_segment(
     app: Option<&tauri::AppHandle>,
     input: &Path,
@@ -660,7 +701,7 @@ fn export_segment(
         return Err("Segment end must be after segment start.".to_string());
     }
 
-    let mut command = Command::new(ffmpeg_path());
+    let mut command = command(ffmpeg_path());
     command
         .arg("-y")
         .arg("-ss")
@@ -712,7 +753,7 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
             .ok_or_else(|| "Could not resolve output directory.".to_string())?
     };
 
-    Command::new("explorer")
+    command("explorer")
         .arg(target)
         .spawn()
         .map_err(|err| format!("Failed to open Explorer: {err}"))?;
@@ -721,14 +762,26 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn prepare_preview(app: tauri::AppHandle, params: PreviewParams) -> Result<PreviewResult, String> {
+pub async fn prepare_preview(
+    app: tauri::AppHandle,
+    params: PreviewParams,
+) -> Result<PreviewResult, String> {
+    tauri::async_runtime::spawn_blocking(move || prepare_preview_blocking(app, params))
+        .await
+        .map_err(|err| format!("Preview worker failed: {err}"))?
+}
+
+fn prepare_preview_blocking(
+    app: tauri::AppHandle,
+    params: PreviewParams,
+) -> Result<PreviewResult, String> {
     let input = PathBuf::from(params.input_path);
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
     }
 
-    let temp_dir = std::env::temp_dir().join("cutdown-preview");
+    let temp_dir = preview_temp_dir();
     fs::create_dir_all(&temp_dir)
         .map_err(|err| format!("Failed to create preview temp directory: {err}"))?;
 
@@ -771,19 +824,52 @@ pub fn cleanup_preview(path: String) -> Result<(), String> {
     let path = PathBuf::from(path);
 
     if path.exists() {
+        ensure_preview_path(&path)?;
         fs::remove_file(&path).map_err(|err| format!("Failed to clean up preview file: {err}"))?;
     }
 
     Ok(())
 }
 
+fn preview_temp_dir() -> PathBuf {
+    std::env::temp_dir().join("cutdown-preview")
+}
+
+fn ensure_preview_path(path: &Path) -> Result<(), String> {
+    let preview_root = preview_temp_dir()
+        .canonicalize()
+        .map_err(|err| format!("Failed to resolve preview temp directory: {err}"))?;
+    let target = path
+        .canonicalize()
+        .map_err(|err| format!("Failed to resolve preview file: {err}"))?;
+
+    if !target.starts_with(&preview_root) {
+        return Err("Refusing to clean up a file outside Cutdown's preview directory.".to_string());
+    }
+
+    if !target.is_file() {
+        return Err("Preview cleanup target is not a file.".to_string());
+    }
+
+    Ok(())
+}
+
 fn remux_preview(input: &Path, output: &Path) -> Result<(), String> {
-    let mut command = Command::new(ffmpeg_path());
+    let mut command = command(ffmpeg_path());
     command
         .arg("-y")
         .arg("-i")
         .arg(input)
-        .args(["-map", "0:v:0", "-map", "0:a?", "-c", "copy", "-movflags", "+faststart"])
+        .args([
+            "-map",
+            "0:v:0",
+            "-map",
+            "0:a?",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+        ])
         .arg(output);
 
     run_command_with_progress(None, command, "preview", None, "Preparing preview remux.")
@@ -795,7 +881,7 @@ fn proxy_preview(
     app: Option<&tauri::AppHandle>,
 ) -> Result<(), String> {
     let duration = probe_duration_seconds(input).ok();
-    let mut command = Command::new(ffmpeg_path());
+    let mut command = command(ffmpeg_path());
     command
         .arg("-y")
         .arg("-i")
@@ -841,7 +927,7 @@ pub fn check_ffmpeg() -> FfmpegCheckResult {
             ffmpeg.source, ffprobe.source
         )
     } else {
-        "ffmpeg or ffprobe is missing. Install ffmpeg on PATH or run npm run prepare:ffmpeg.".to_string()
+        "ffmpeg is not installed. Use Download ffmpeg in the banner, install ffmpeg on PATH, or run npm run prepare:ffmpeg for development.".to_string()
     };
 
     FfmpegCheckResult {
@@ -867,13 +953,13 @@ fn resolve_binary(bundled_name: &str, path_name: &str) -> ResolvedBinary {
     if let Some(path) = bundled_binary(bundled_name) {
         return ResolvedBinary {
             path: path.to_string_lossy().to_string(),
-            source: "bundled".to_string(),
+            source: binary_source(&path),
             available: true,
         };
     }
 
     let path = PathBuf::from(path_name);
-    let available = Command::new(&path)
+    let available = command(&path)
         .arg("-version")
         .output()
         .map(|output| output.status.success())
@@ -887,7 +973,7 @@ fn resolve_binary(bundled_name: &str, path_name: &str) -> ResolvedBinary {
 }
 
 fn probe_duration_seconds(input: &Path) -> Result<f64, String> {
-    let output = Command::new(ffprobe_path())
+    let output = command(ffprobe_path())
         .args([
             "-v",
             "error",
@@ -935,6 +1021,13 @@ fn run_command_with_progress(
     for line in reader.lines() {
         let line = line.map_err(|err| format!("Failed to read ffmpeg output: {err}"))?;
 
+        if EXPORT_CANCELLED.load(Ordering::SeqCst) {
+            let _ = child.kill();
+            let _ = child.wait();
+            EXPORT_CANCELLED.store(false, Ordering::SeqCst);
+            return Err("Export was cancelled.".to_string());
+        }
+
         if parsed_duration.is_none() {
             parsed_duration = parse_duration_line(&line);
         }
@@ -945,12 +1038,7 @@ fn run_command_with_progress(
                 if let Some(app) = app.as_ref() {
                     if (percent - last_percent).abs() >= 0.5 {
                         last_percent = percent;
-                        emit_export_progress(
-                            app,
-                            stage,
-                            message,
-                            Some(percent),
-                        );
+                        emit_export_progress(app, stage, message, Some(percent));
                     }
                 }
             }
@@ -1028,7 +1116,12 @@ fn normalize_crop(
         return None;
     }
 
-    Some(CropRect { x, y, width, height })
+    Some(CropRect {
+        x,
+        y,
+        width,
+        height,
+    })
 }
 
 fn build_video_filter(profile: &EncodeProfile, crop: Option<&CropRect>) -> Option<String> {
@@ -1072,7 +1165,12 @@ fn normalize_fade(seconds: Option<f64>) -> f64 {
     }
 }
 
-fn audio_filter_chain(volume: f64, fade_in: f64, fade_out: f64, output_duration: f64) -> Option<String> {
+fn audio_filter_chain(
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
+) -> Option<String> {
     let mut parts = Vec::new();
 
     if volume_is_adjusted(volume) {
@@ -1143,7 +1241,7 @@ fn apply_output_audio_fades(
     };
 
     let temp_output = output.with_extension("fade-tmp.mp4");
-    let mut command = Command::new(ffmpeg_path());
+    let mut command = command(ffmpeg_path());
     command
         .arg("-y")
         .arg("-i")
@@ -1177,12 +1275,7 @@ fn lossless_crop_profile() -> EncodeProfile {
     }
 }
 
-fn emit_export_progress(
-    app: &tauri::AppHandle,
-    stage: &str,
-    message: &str,
-    percent: Option<f64>,
-) {
+fn emit_export_progress(app: &tauri::AppHandle, stage: &str, message: &str, percent: Option<f64>) {
     let _ = app.emit(
         "export_progress",
         ExportProgress {
@@ -1197,7 +1290,10 @@ fn concat_file_contents(paths: &[PathBuf]) -> String {
     paths
         .iter()
         .map(|path| {
-            let normalized = path.to_string_lossy().replace('\\', "/").replace('\'', "'\\''");
+            let normalized = path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .replace('\'', "'\\''");
             format!("file '{normalized}'")
         })
         .collect::<Vec<_>>()
@@ -1211,15 +1307,20 @@ fn current_timestamp_millis() -> u128 {
         .unwrap_or(0)
 }
 
-fn ffmpeg_path() -> PathBuf {
-    bundled_binary("ffmpeg.exe").unwrap_or_else(|| PathBuf::from("ffmpeg"))
+pub(crate) fn ffmpeg_path() -> PathBuf {
+    locate_binary("ffmpeg.exe").unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
-fn ffprobe_path() -> PathBuf {
-    bundled_binary("ffprobe.exe").unwrap_or_else(|| PathBuf::from("ffprobe"))
+pub(crate) fn ffprobe_path() -> PathBuf {
+    locate_binary("ffprobe.exe").unwrap_or_else(|| PathBuf::from("ffprobe"))
 }
 
-fn bundled_binary(name: &str) -> Option<PathBuf> {
+fn locate_binary(name: &str) -> Option<PathBuf> {
+    let user_path = ffmpeg_install::user_ffmpeg_path(name);
+    if user_path.exists() {
+        return Some(user_path);
+    }
+
     let dev_path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("public")
@@ -1237,10 +1338,34 @@ fn bundled_binary(name: &str) -> Option<PathBuf> {
     [
         exe_dir.join("ffmpeg").join(name),
         exe_dir.join("resources").join("ffmpeg").join(name),
-        exe_dir.join("..").join("Resources").join("ffmpeg").join(name),
+        exe_dir
+            .join("..")
+            .join("Resources")
+            .join("ffmpeg")
+            .join(name),
     ]
     .into_iter()
     .find(|path| path.exists())
+}
+
+fn bundled_binary(name: &str) -> Option<PathBuf> {
+    locate_binary(name)
+}
+
+fn binary_source(path: &Path) -> String {
+    let user_dir = ffmpeg_install::user_ffmpeg_dir();
+    if path.starts_with(&user_dir) {
+        return "installed".to_string();
+    }
+
+    if path
+        .components()
+        .any(|component| component.as_os_str() == "public")
+    {
+        return "development".to_string();
+    }
+
+    "bundled".to_string()
 }
 
 fn parse_json_f64(value: &Value) -> Option<f64> {
@@ -1276,22 +1401,60 @@ fn command_error(command: &str, stderr: &[u8]) -> String {
     }
 }
 
+fn waveform_sample_rate(duration: f64, bucket_count: usize) -> u32 {
+    if !duration.is_finite() || duration <= 0.0 {
+        return 4000;
+    }
+
+    // Enough samples per bucket for a usable shape; cap total decode for long clips.
+    const MIN_SAMPLES_PER_BUCKET: f64 = 4.0;
+    const MAX_DECODE_SAMPLES: f64 = 80_000.0;
+
+    let min_rate = (MIN_SAMPLES_PER_BUCKET * bucket_count as f64 / duration).ceil();
+    let cap_rate = (MAX_DECODE_SAMPLES / duration).ceil();
+    min_rate.min(cap_rate).clamp(50.0, 4000.0) as u32
+}
+
 /// Downsampled peak envelope (0.0–1.0) for timeline waveform display.
 #[tauri::command]
-pub fn extract_waveform(path: String, bucket_count: Option<u32>) -> Result<Vec<f32>, String> {
+pub async fn extract_waveform(
+    path: String,
+    bucket_count: Option<u32>,
+    has_audio: Option<bool>,
+    duration: Option<f64>,
+) -> Result<Vec<f32>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        extract_waveform_blocking(path, bucket_count, has_audio, duration)
+    })
+    .await
+    .map_err(|err| format!("Waveform worker failed: {err}"))?
+}
+
+fn extract_waveform_blocking(
+    path: String,
+    bucket_count: Option<u32>,
+    has_audio: Option<bool>,
+    duration: Option<f64>,
+) -> Result<Vec<f32>, String> {
     let input = PathBuf::from(path.trim());
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
     }
 
-    let metadata = probe_video(input.to_string_lossy().to_string())?;
-    if metadata.audio_codec.is_none() {
-        return Ok(Vec::new());
+    match has_audio {
+        Some(false) => return Ok(Vec::new()),
+        None => {
+            let metadata = probe_video(input.to_string_lossy().to_string())?;
+            if metadata.audio_codec.is_none() {
+                return Ok(Vec::new());
+            }
+        }
+        Some(true) => {}
     }
 
     let bucket_count = bucket_count.unwrap_or(2000).clamp(64, 8000) as usize;
-    let sample_rate = 4000u32;
-    let child = Command::new(ffmpeg_path())
+    let sample_rate = waveform_sample_rate(duration.unwrap_or(0.0), bucket_count);
+    let child = command(ffmpeg_path())
         .args([
             "-hide_banner",
             "-loglevel",
@@ -1329,7 +1492,7 @@ pub fn extract_waveform(path: String, bucket_count: Option<u32>) -> Result<Vec<f
     let mut peaks = vec![0.0f32; bucket_count];
     let samples_per_bucket = (sample_count as f64 / bucket_count as f64).max(1.0);
 
-    for bucket in 0..bucket_count {
+    for (bucket, peak) in peaks.iter_mut().enumerate().take(bucket_count) {
         let start = (bucket as f64 * samples_per_bucket) as usize;
         let end = (((bucket + 1) as f64) * samples_per_bucket) as usize;
         let end = end.min(sample_count);
@@ -1349,7 +1512,7 @@ pub fn extract_waveform(path: String, bucket_count: Option<u32>) -> Result<Vec<f
             }
         }
 
-        peaks[bucket] = max_peak;
+        *peak = max_peak;
     }
 
     let normalize = peaks.iter().copied().fold(0.0f32, f32::max);
@@ -1360,4 +1523,88 @@ pub fn extract_waveform(path: String, bucket_count: Option<u32>) -> Result<Vec<f
     }
 
     Ok(peaks)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ffmpeg_timestamps() {
+        assert_eq!(parse_ffmpeg_timestamp("00:01:02.500"), Some(62.5));
+        assert_eq!(parse_ffmpeg_timestamp("01:02.250"), Some(62.25));
+        assert_eq!(parse_ffmpeg_timestamp("not-time"), None);
+    }
+
+    #[test]
+    fn parses_duration_and_progress_lines() {
+        assert_eq!(
+            parse_duration_line("Duration: 00:02:03.00, start: 0.000000"),
+            Some(123.0)
+        );
+        assert_eq!(
+            parse_time_line("frame=1 fps=0.0 q=-1.0 time=00:00:05.50 bitrate=N/A"),
+            Some(5.5)
+        );
+    }
+
+    #[test]
+    fn normalizes_crop_to_video_bounds_and_even_dimensions() {
+        let crop = CropRect {
+            x: 1919,
+            y: 1079,
+            width: 99,
+            height: 99,
+        };
+
+        let normalized = normalize_crop(Some(&crop), 1920, 1080).expect("crop should clamp");
+
+        assert_eq!(normalized.x, 1822);
+        assert_eq!(normalized.y, 982);
+        assert_eq!(normalized.width, 98);
+        assert_eq!(normalized.height, 98);
+    }
+
+    #[test]
+    fn rejects_invalid_export_segments() {
+        let segments = vec![
+            ExportSegment {
+                start: 5.0,
+                end: 5.0,
+            },
+            ExportSegment {
+                start: 9.0,
+                end: 2.0,
+            },
+        ];
+
+        assert!(valid_segments(segments).is_err());
+    }
+
+    #[test]
+    fn keeps_valid_export_segments() {
+        let segments = vec![
+            ExportSegment {
+                start: 0.0,
+                end: 1.5,
+            },
+            ExportSegment {
+                start: 4.0,
+                end: 7.0,
+            },
+        ];
+
+        let valid = valid_segments(segments).expect("segments should be valid");
+
+        assert_eq!(valid.len(), 2);
+        assert_eq!(valid[0].start, 0.0);
+        assert_eq!(valid[1].end, 7.0);
+    }
+
+    #[test]
+    fn clamps_waveform_sample_rate() {
+        assert_eq!(waveform_sample_rate(0.0, 2000), 4000);
+        assert_eq!(waveform_sample_rate(10_000.0, 2000), 50);
+        assert_eq!(waveform_sample_rate(0.01, 8000), 4000);
+    }
 }

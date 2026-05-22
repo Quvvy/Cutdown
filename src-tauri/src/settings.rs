@@ -3,6 +3,7 @@ use crate::upload_providers::{
     migrate_upload_providers, normalize_settings_providers, UploadProvider,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
 
@@ -117,11 +118,8 @@ pub struct SaveEditorSettingsParams {
 
 pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSettings, String> {
     let mut settings = load_settings();
-    settings.watch_folder = params
-        .watch_folder
-        .filter(|value| !value.trim().is_empty());
-    settings.watch_folder_enabled =
-        params.watch_folder_enabled && settings.watch_folder.is_some();
+    settings.watch_folder = params.watch_folder.filter(|value| !value.trim().is_empty());
+    settings.watch_folder_enabled = params.watch_folder_enabled && settings.watch_folder.is_some();
     settings.default_export_dir = params
         .default_export_dir
         .filter(|value| !value.trim().is_empty());
@@ -140,7 +138,10 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
         .obs_websocket_password
         .filter(|value| !value.trim().is_empty());
 
-    if let Some(preset_id) = params.last_preset_id.filter(|value| !value.trim().is_empty()) {
+    if let Some(preset_id) = params
+        .last_preset_id
+        .filter(|value| !value.trim().is_empty())
+    {
         settings.last_preset_id = preset_id;
     }
 
@@ -168,6 +169,162 @@ pub fn settings_path() -> Result<PathBuf, String> {
     Ok(PathBuf::from(base).join("Cutdown").join("settings.json"))
 }
 
+fn sanitize_secret_key_part(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn provider_secret_key(provider_id: &str, field: &str) -> String {
+    format!(
+        "upload/{}/{}",
+        sanitize_secret_key_part(provider_id),
+        sanitize_secret_key_part(field)
+    )
+}
+
+fn read_secret_into_option(key: &str, value: &mut Option<String>) {
+    if value
+        .as_ref()
+        .is_some_and(|stored| !stored.trim().is_empty())
+    {
+        return;
+    }
+
+    if let Ok(Some(secret)) = crate::secret_store::read_secret(key) {
+        if !secret.trim().is_empty() {
+            *value = Some(secret);
+        }
+    }
+}
+
+fn persist_option_secret(key: &str, value: &mut Option<String>) -> Result<(), String> {
+    match value
+        .as_ref()
+        .map(|stored| stored.trim())
+        .filter(|stored| !stored.is_empty())
+    {
+        Some(secret) => {
+            crate::secret_store::write_secret(key, secret)?;
+            *value = None;
+        }
+        None => {
+            crate::secret_store::delete_secret(key)?;
+        }
+    }
+    Ok(())
+}
+
+fn read_secret_into_config(provider_id: &str, config: &mut Value, json_key: &str) {
+    let has_value = config
+        .get(json_key)
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    if has_value {
+        return;
+    }
+
+    if let Ok(Some(secret)) =
+        crate::secret_store::read_secret(&provider_secret_key(provider_id, json_key))
+    {
+        if !secret.trim().is_empty() {
+            config[json_key] = Value::String(secret);
+        }
+    }
+}
+
+fn persist_config_secret(
+    provider_id: &str,
+    config: &mut Value,
+    json_key: &str,
+    scrubbed_value: Value,
+) -> Result<(), String> {
+    let key = provider_secret_key(provider_id, json_key);
+    let secret = config
+        .get(json_key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+
+    if let Some(secret) = secret {
+        crate::secret_store::write_secret(&key, &secret)?;
+        config[json_key] = scrubbed_value;
+    } else {
+        crate::secret_store::delete_secret(&key)?;
+    }
+
+    Ok(())
+}
+
+fn hydrate_settings_secrets(settings: &mut AppSettings) {
+    read_secret_into_option("legacy/catboxUserHash", &mut settings.catbox_user_hash);
+    read_secret_into_option(
+        "obs/websocketPassword",
+        &mut settings.obs_websocket_password,
+    );
+
+    for provider in &mut settings.upload_providers {
+        match provider.kind.as_str() {
+            crate::upload_providers::KIND_CATBOX => {
+                read_secret_into_config(&provider.id, &mut provider.config, "userHash");
+            }
+            crate::upload_providers::KIND_FILEGARDEN => {
+                read_secret_into_config(&provider.id, &mut provider.config, "password");
+                read_secret_into_config(&provider.id, &mut provider.config, "sessionCookie");
+                read_secret_into_config(&provider.id, &mut provider.config, "authToken");
+            }
+            _ => {}
+        }
+    }
+}
+
+fn persist_settings_secrets(settings: &mut AppSettings) -> Result<(), String> {
+    persist_option_secret("legacy/catboxUserHash", &mut settings.catbox_user_hash)?;
+    persist_option_secret(
+        "obs/websocketPassword",
+        &mut settings.obs_websocket_password,
+    )?;
+
+    for provider in &mut settings.upload_providers {
+        match provider.kind.as_str() {
+            crate::upload_providers::KIND_CATBOX => {
+                persist_config_secret(&provider.id, &mut provider.config, "userHash", Value::Null)?;
+            }
+            crate::upload_providers::KIND_FILEGARDEN => {
+                persist_config_secret(
+                    &provider.id,
+                    &mut provider.config,
+                    "password",
+                    Value::String(String::new()),
+                )?;
+                persist_config_secret(
+                    &provider.id,
+                    &mut provider.config,
+                    "sessionCookie",
+                    Value::Null,
+                )?;
+                persist_config_secret(
+                    &provider.id,
+                    &mut provider.config,
+                    "authToken",
+                    Value::Null,
+                )?;
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
 pub fn load_settings() -> AppSettings {
     let path = match settings_path() {
         Ok(path) => path,
@@ -190,6 +347,7 @@ pub fn load_settings() -> AppSettings {
         &settings.catbox_user_hash,
         &settings.catbox_api_url,
     );
+    hydrate_settings_secrets(&mut settings);
     if !settings.upload_providers.is_empty() {
         let previous_default = settings.default_upload_provider_id.clone();
         let _ = normalize_settings_providers(
@@ -211,7 +369,10 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
             .map_err(|err| format!("Failed to create settings directory: {err}"))?;
     }
 
-    let raw = serde_json::to_string_pretty(settings)
+    let mut serialized_settings = settings.clone();
+    persist_settings_secrets(&mut serialized_settings)?;
+
+    let raw = serde_json::to_string_pretty(&serialized_settings)
         .map_err(|err| format!("Failed to serialize settings: {err}"))?;
 
     fs::write(&path, raw).map_err(|err| format!("Failed to write settings: {err}"))
@@ -237,7 +398,10 @@ pub fn push_recent_source(path: String) -> Result<Vec<String>, String> {
     Ok(settings.recent_sources.clone())
 }
 
-pub fn update_watch_folder_settings(path: Option<String>, enabled: bool) -> Result<AppSettings, String> {
+pub fn update_watch_folder_settings(
+    path: Option<String>,
+    enabled: bool,
+) -> Result<AppSettings, String> {
     let mut settings = load_settings();
     settings.watch_folder = path.filter(|value| !value.trim().is_empty());
     settings.watch_folder_enabled = enabled && settings.watch_folder.is_some();
@@ -265,11 +429,8 @@ pub fn set_last_preset_id(preset_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn update_settings(params: UpdateSettingsParams) -> Result<AppSettings, String> {
     let mut settings = load_settings();
-    settings.watch_folder = params
-        .watch_folder
-        .filter(|value| !value.trim().is_empty());
-    settings.watch_folder_enabled =
-        params.watch_folder_enabled && settings.watch_folder.is_some();
+    settings.watch_folder = params.watch_folder.filter(|value| !value.trim().is_empty());
+    settings.watch_folder_enabled = params.watch_folder_enabled && settings.watch_folder.is_some();
     settings.default_export_dir = params
         .default_export_dir
         .filter(|value| !value.trim().is_empty());
@@ -282,7 +443,10 @@ pub fn update_settings(params: UpdateSettingsParams) -> Result<AppSettings, Stri
         .catbox_api_url
         .filter(|value| !value.trim().is_empty());
 
-    if let Some(preset_id) = params.last_preset_id.filter(|value| !value.trim().is_empty()) {
+    if let Some(preset_id) = params
+        .last_preset_id
+        .filter(|value| !value.trim().is_empty())
+    {
         settings.last_preset_id = preset_id;
     }
 

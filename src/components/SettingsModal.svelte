@@ -9,6 +9,8 @@
     kindLabel,
     newProviderId,
     parseProvidersFromSettings,
+    readDefaultUploadProviderId,
+    readUploadProvidersFromAppSettings,
     serializeProviders,
     type CatboxConfig,
     type FilegardenConfig,
@@ -39,7 +41,12 @@
   export let gpuEncoders: string[] = [];
   let editingId: string | null = null;
   let editingPresetId: string | null = null;
-  let activeTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
+  export let initialTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
+  let activeTab: 'general' | 'folders' | 'presets' | 'upload' = initialTab;
+
+  $: if (visible) {
+    activeTab = initialTab;
+  }
 
   const tabs = [
     { id: 'general' as const, label: 'General' },
@@ -240,8 +247,15 @@
         },
       });
 
-      uploadProviders = parseProvidersFromSettings(saved.uploadProviders);
-      defaultUploadProviderId = saved.defaultUploadProviderId;
+      const savedRecord = saved as Record<string, unknown>;
+      const editor = await invoke<{ providers: unknown; defaultUploadProviderId: string | null }>(
+        'get_upload_providers_for_editor',
+      );
+      const editorProviders = parseProvidersFromSettings(editor.providers);
+      uploadProviders =
+        editorProviders.length > 0 ? editorProviders : readUploadProvidersFromAppSettings(savedRecord);
+      defaultUploadProviderId =
+        editor.defaultUploadProviderId ?? readDefaultUploadProviderId(savedRecord);
       customExportPresets = parseCustomPresetsFromSettings(saved.customExportPresets);
       exportPresetId = saved.lastPresetId;
       ensureDefaultUploadProvider();
@@ -521,8 +535,8 @@
       <p class="panel-section__lead">Share exported clips via Catbox, File Garden, or your own HTTP server.</p>
       <div class="modal__output upload-settings">
             <p class="modal__hint">
-              Credentials are stored locally in settings.json. Use HTTPS for custom servers. Select the filled
-              circle for your default target, then click Save.
+              Credentials are stored locally in settings.json. Click a target to edit it; use the circle to pick the
+              default for uploads. Click Save settings when finished.
             </p>
             <div class="upload-settings__toolbar">
               <button type="button" class="secondary" on:click={() => addProvider('catbox')}>Add Catbox</button>
@@ -532,23 +546,52 @@
             <ul class="upload-settings__list">
               {#each uploadProviders as provider (provider.id)}
                 <li class:selected={provider.id === editingId}>
-                  <label class="upload-settings__default">
-                    {#if uploadProviders.filter((entry) => entry.enabled).length > 1}
-                      <input
-                        type="radio"
-                        name="default-upload-provider"
-                        checked={defaultUploadProviderId === provider.id}
-                        on:change={() => (defaultUploadProviderId = provider.id)}
-                      />
-                    {:else if provider.enabled}
-                      <span class="upload-settings__default-badge" aria-hidden="true">●</span>
-                    {/if}
-                    <span>{provider.name}</span>
-                    <small>{kindLabel(provider.kind)}{provider.enabled ? '' : ' · disabled'}</small>
-                  </label>
+                  <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                  <div
+                    class="upload-settings__row"
+                    role="button"
+                    tabindex="0"
+                    on:click={() => (editingId = provider.id)}
+                    on:keydown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        editingId = provider.id;
+                      }
+                    }}
+                  >
+                    <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+                    <div class="upload-settings__default" on:click|stopPropagation>
+                      {#if uploadProviders.filter((entry) => entry.enabled).length > 1}
+                        <input
+                          type="radio"
+                          name="default-upload-provider"
+                          value={provider.id}
+                          disabled={!provider.enabled}
+                          bind:group={defaultUploadProviderId}
+                          aria-label={`Default upload target: ${provider.name}`}
+                        />
+                      {:else if provider.enabled}
+                        <span class="upload-settings__default-badge" aria-hidden="true">●</span>
+                      {/if}
+                      <span>{provider.name}</span>
+                      <small>{kindLabel(provider.kind)}{provider.enabled ? '' : ' · disabled'}</small>
+                    </div>
+                  </div>
                   <div class="upload-settings__actions">
-                    <button type="button" class="secondary" on:click={() => (editingId = provider.id)}>Edit</button>
-                    <button type="button" class="secondary" on:click={() => removeProvider(provider.id)}>Remove</button>
+                    <button
+                      type="button"
+                      class="secondary"
+                      on:click|stopPropagation={() => (editingId = provider.id)}
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      class="secondary"
+                      on:click|stopPropagation={() => removeProvider(provider.id)}
+                    >
+                      Remove
+                    </button>
                   </div>
                 </li>
               {/each}

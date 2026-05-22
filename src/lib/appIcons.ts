@@ -14,6 +14,7 @@ import bookmarkSvg from '../assets/icons/fluent--bookmark-20-filled.svg?raw';
 import markInSvg from '../assets/icons/fluent--flag-20-filled.svg?raw';
 import markOutSvg from '../assets/icons/fluent--flag-20-regular.svg?raw';
 import clearRangeSvg from '../assets/icons/fluent--flag-off-20-filled.svg?raw';
+import keepRangeSvg from '../assets/icons/fluent--pin-20-filled.svg?raw';
 import deleteSvg from '../assets/icons/fluent--delete-20-filled.svg?raw';
 import snapInSvg from '../assets/icons/fluent--chevron-left-20-filled.svg?raw';
 import snapOutSvg from '../assets/icons/fluent--chevron-right-20-filled.svg?raw';
@@ -33,6 +34,7 @@ export const appIcons = {
   markIn: iconFromSvg(markInSvg),
   markOut: iconFromSvg(markOutSvg),
   clearRange: iconFromSvg(clearRangeSvg),
+  keepRange: iconFromSvg(keepRangeSvg),
   snapIn: iconFromSvg(snapInSvg),
   snapOut: iconFromSvg(snapOutSvg),
   delete: iconFromSvg(deleteSvg),

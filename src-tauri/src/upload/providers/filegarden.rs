@@ -1,11 +1,14 @@
 use crate::upload::client::build_client;
 use crate::upload::response::{extract_share_url, mime_for_path};
 use crate::upload_providers::FilegardenConfig;
-use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE};
+use base64::engine::general_purpose::{
+    STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD as BASE64_URL_SAFE,
+};
 use base64::Engine;
 use reqwest::blocking::multipart;
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
 use serde_json::{json, Value};
+use std::fs::File;
 use std::path::Path;
 
 const DEFAULT_API_BASE: &str = "https://api.filegarden.com";
@@ -33,9 +36,7 @@ pub fn upload(path: &Path, config: &mut FilegardenConfig) -> Result<String, Stri
         Err(first_error) => {
             sign_in(&client, config)?;
             upload_via_pipe(path, &client, config).map_err(|second_error| {
-                format!(
-                    "{second_error} (after re-authentication; first attempt: {first_error})"
-                )
+                format!("{second_error} (after re-authentication; first attempt: {first_error})")
             })
         }
     }
@@ -54,7 +55,6 @@ fn upload_via_pipe(
         .unwrap_or("clip.mp4")
         .to_string();
 
-    let bytes = std::fs::read(path).map_err(|err| format!("Failed to read upload file: {err}"))?;
     // Match the File Garden web UI: encodeURI(JSON.stringify({ parent, name })).
     let x_data_json = json!({
         "parent": null,
@@ -68,7 +68,7 @@ fn upload_via_pipe(
         .header(AUTHORIZATION, basic_auth_header(&user_id, &token))
         .header(CONTENT_TYPE, "application/octet-stream")
         .header("X-Data", x_data_header)
-        .body(bytes)
+        .body(File::open(path).map_err(|err| format!("Failed to read upload file: {err}"))?)
         .send()
         .map_err(|err| format!("File Garden upload request failed: {err}"))?;
 
@@ -101,8 +101,12 @@ fn upload_custom_multipart(
         .unwrap_or("clip.mp4")
         .to_string();
 
-    let bytes = std::fs::read(path).map_err(|err| format!("Failed to read upload file: {err}"))?;
-    let part = multipart::Part::bytes(bytes)
+    let file = File::open(path).map_err(|err| format!("Failed to read upload file: {err}"))?;
+    let length = file
+        .metadata()
+        .map_err(|err| format!("Failed to inspect upload file: {err}"))?
+        .len();
+    let part = multipart::Part::reader_with_length(file, length)
         .file_name(file_name)
         .mime_str(mime_for_path(path))
         .map_err(|err| format!("Failed to prepare upload payload: {err}"))?;
@@ -130,19 +134,25 @@ fn upload_custom_multipart(
         return Err(parse_legacy_error(&body, status.as_u16()));
     }
 
-    extract_share_url(&body, "json_path", Some("url")).or_else(|_| {
-        extract_share_url(&body, "json_path", Some("publicUrl"))
-    })
+    extract_share_url(&body, "json_path", Some("url"))
+        .or_else(|_| extract_share_url(&body, "json_path", Some("publicUrl")))
 }
 
-pub fn sign_in(client: &reqwest::blocking::Client, config: &mut FilegardenConfig) -> Result<(), String> {
+pub fn sign_in(
+    client: &reqwest::blocking::Client,
+    config: &mut FilegardenConfig,
+) -> Result<(), String> {
     let email = config.email.trim();
     let password = config.password.trim();
     if email.is_empty() || password.is_empty() {
         return Err("File Garden email and password are required in Settings.".to_string());
     }
 
-    if config.totp.as_ref().is_some_and(|value| !value.trim().is_empty()) {
+    if config
+        .totp
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         return Err(
             "File Garden's current API does not support TOTP through Cutdown. \
             Sign in on filegarden.com with Google or Discord, or use Catbox / a custom upload server."
@@ -172,11 +182,9 @@ pub fn sign_in(client: &reqwest::blocking::Client, config: &mut FilegardenConfig
         .map_err(|err| format!("Failed to read File Garden sign-in response: {err}"))?;
 
     if status.is_redirection() {
-        return Err(
-            "File Garden API base URL is wrong (got a redirect). \
+        return Err("File Garden API base URL is wrong (got a redirect). \
             Set API base to https://api.filegarden.com in Settings."
-                .to_string(),
-        );
+            .to_string());
     }
 
     if !status.is_success() {
@@ -295,9 +303,7 @@ fn encode_uri(input: &str) -> String {
 /// JavaScript `encodeURIComponent`, then restore `/` and `@` for pipe paths.
 fn encode_uri_component_segment(segment: &str) -> String {
     let encoded = encode_uri_component(segment);
-    encoded
-        .replace("%2F", "/")
-        .replace("%40", "@")
+    encoded.replace("%2F", "/").replace("%40", "@")
 }
 
 /// JavaScript `encodeURIComponent`.
@@ -319,13 +325,32 @@ fn is_encode_uri_unescaped(byte: u8) -> bool {
     byte.is_ascii_alphanumeric()
         || matches!(
             byte,
-            b';' | b',' | b'/' | b'?' | b':' | b'@' | b'&' | b'=' | b'+' | b'$' | b'-'
-                | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')' | b'#'
+            b';' | b','
+                | b'/'
+                | b'?'
+                | b':'
+                | b'@'
+                | b'&'
+                | b'='
+                | b'+'
+                | b'$'
+                | b'-'
+                | b'_'
+                | b'.'
+                | b'!'
+                | b'~'
+                | b'*'
+                | b'\''
+                | b'('
+                | b')'
+                | b'#'
         )
 }
 
 fn hex_digit(value: u8) -> char {
-    char::from_digit(u32::from(value), 16).unwrap().to_ascii_uppercase()
+    char::from_digit(u32::from(value), 16)
+        .unwrap()
+        .to_ascii_uppercase()
 }
 
 fn normalize_api_base(api_base: &str) -> String {

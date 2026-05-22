@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { sequenceRangeForSegment, sequenceToSourceTime as mapSequenceToSourceTime } from '../lib/timelineMapping';
   import type { TimelineSegment } from '../stores/editor';
 
   export let peaks: number[] = [];
@@ -13,34 +14,8 @@
 
   let canvas: HTMLCanvasElement | undefined;
 
-  function sequenceRangeForSegment(segmentId: string): { start: number; end: number } | null {
-    let cursor = 0;
-
-    for (const segment of segments) {
-      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
-      if (segment.id === segmentId) {
-        return { start: cursor, end: cursor + segmentLength };
-      }
-      cursor += segmentLength;
-    }
-
-    return null;
-  }
-
   function sequenceToSourceTime(sequenceTime: number): number {
-    let cursor = 0;
-
-    for (const segment of segments) {
-      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
-
-      if (sequenceTime >= cursor && sequenceTime <= cursor + segmentLength) {
-        return segment.sourceStart + Math.max(0, Math.min(sequenceTime - cursor, segmentLength));
-      }
-
-      cursor += segmentLength;
-    }
-
-    return segments[segments.length - 1]?.sourceEnd ?? 0;
+    return mapSequenceToSourceTime(segments, sequenceTime);
   }
 
   function peakAtSourceTime(sourceTime: number): number {
@@ -71,7 +46,7 @@
     context.clearRect(0, 0, width, height);
 
     const mid = height / 2;
-    const selectedRange = selectedSegmentId ? sequenceRangeForSegment(selectedSegmentId) : null;
+    const selectedRange = selectedSegmentId ? sequenceRangeForSegment(segments, selectedSegmentId) : null;
 
     for (let x = 0; x < width; x += 1) {
       const sequenceTime = x / pixelsPerSecond;

@@ -4,8 +4,8 @@ version = "0.2.0"
 description = "Fast desktop video clipping and compression tool."
 authors = ["Cutdown"]
 edition = "2021"
-license = ""
-repository = ""
+license = "MIT"
+repository = "https://github.com/Quvvy/Cutdown"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -21,4 +21,6 @@ serde_json = "1"
 tauri = { version = "2", features = ["protocol-asset", "tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Credentials"] }
+zip = "2.2"
 

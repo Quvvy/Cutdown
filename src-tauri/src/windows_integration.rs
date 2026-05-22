@@ -1,4 +1,4 @@
-use std::process::Command;
+use crate::command_util::command;
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 const RUN_VALUE: &str = "Cutdown";
@@ -6,16 +6,19 @@ const RUN_VALUE: &str = "Cutdown";
 #[tauri::command]
 pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
     if enabled {
-        let exe = std::env::current_exe().map_err(|err| format!("Failed to resolve app path: {err}"))?;
+        let exe =
+            std::env::current_exe().map_err(|err| format!("Failed to resolve app path: {err}"))?;
         let quoted = format!("\"{}\"", exe.to_string_lossy());
-        run_reg(&["add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f"])
+        run_reg(&[
+            "add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f",
+        ])
     } else {
         delete_startup_entry()
     }
 }
 
 fn delete_startup_entry() -> Result<(), String> {
-    let output = Command::new("reg")
+    let output = command("reg")
         .args(["delete", RUN_KEY, "/v", RUN_VALUE, "/f"])
         .output()
         .map_err(|err| format!("Failed to run reg.exe: {err}"))?;
@@ -36,7 +39,7 @@ fn delete_startup_entry() -> Result<(), String> {
 }
 
 fn run_reg(args: &[&str]) -> Result<(), String> {
-    let output = Command::new("reg")
+    let output = command("reg")
         .args(args)
         .output()
         .map_err(|err| format!("Failed to run reg.exe: {err}"))?;

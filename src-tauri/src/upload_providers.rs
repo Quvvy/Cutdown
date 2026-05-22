@@ -137,16 +137,10 @@ pub fn migrate_upload_providers(
 
     if has_legacy {
         let mut provider = default_catbox_provider();
-        if let Some(url) = catbox_api_url
-            .as_ref()
-            .filter(|v| !v.trim().is_empty())
-        {
+        if let Some(url) = catbox_api_url.as_ref().filter(|v| !v.trim().is_empty()) {
             provider.config["apiUrl"] = json!(url.trim());
         }
-        if let Some(hash) = catbox_user_hash
-            .as_ref()
-            .filter(|v| !v.trim().is_empty())
-        {
+        if let Some(hash) = catbox_user_hash.as_ref().filter(|v| !v.trim().is_empty()) {
             provider.config["userHash"] = json!(hash.trim());
         }
         providers.push(provider);
@@ -160,7 +154,7 @@ pub fn migrate_upload_providers(
 }
 
 pub fn normalize_settings_providers(
-    providers: &mut Vec<UploadProvider>,
+    providers: &mut [UploadProvider],
     default_id: &mut Option<String>,
 ) -> Result<(), String> {
     if providers.is_empty() {
@@ -196,9 +190,9 @@ pub fn normalize_settings_providers(
     };
 
     if let Some(default) = default_id.clone() {
-        let default_valid = providers.iter().any(|provider| {
-            provider.id == default && provider.enabled
-        });
+        let default_valid = providers
+            .iter()
+            .any(|provider| provider.id == default && provider.enabled);
         if !default_valid {
             *default_id = first_enabled_id();
         }

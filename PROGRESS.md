@@ -4,6 +4,8 @@
 
 Cutdown is a multi-cut editor with I/O range editing, built-in and custom compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden via `api.filegarden.com`, custom HTTP), per-source session restore, session crop, clip volume, preview fit/zoom/pan, custom toolbar icons, and Windows tray integration.
 
+**Timeline and segment preview are frozen for v0.2.x.** Further timeline work is limited to user-reported regressions only (no architectural churn). See [src/lib/sequencePlayback.ts](src/lib/sequencePlayback.ts).
+
 ## Completed
 
 - Multi-cut editor, I/O range, undo/redo, Vegas-style timeline.
@@ -33,12 +35,15 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 - Latest replay from watch folder; tray Open Watch Folder; tray minimize hint in Settings.
 - Preview playback speed (0.5×–2×) and on-demand proxy preview.
 - Strip audio on export; J/K/L scrub; snap to I/O; segment duplicate and drag-reorder.
-- `npm run validate:release` smoke script.
+- Segment-aware preview driver (`sequencePlayback.ts`) for reordered timelines.
+- Keep-only I/O range; `npm run validate:release` smoke script.
+- GitHub Actions CI (Windows): typecheck, frontend tests, Rust check/test, Clippy when available.
 
 ## Validation
 
 - `npm run check` — 0 errors.
 - `cargo check` — passes.
+- `npm test` — frontend unit tests (timeline mapping, sequence playback).
 - Manual matrix: [docs/TESTING.md](docs/TESTING.md) (run on real OBS clips before release).
 
 ## Performance notes (Milestone 10)
@@ -54,12 +59,13 @@ Measured informally on Windows 10; re-run on target hardware before wide release
 | Watch folder | 2s duplicate suppression per path | Safe for OBS double-write events |
 | Upload | Network-bound; 300s timeout | Use Discord preset before Catbox for size cap |
 
-Recommended caps for v0.1: single export at a time; source files up to 4K tested opportunistically; no concurrent upload + export.
+Recommended caps for v0.2: single export at a time; source files up to 4K tested opportunistically; no concurrent upload + export.
 
 ## Known Issues and Risks
 
-- ffmpeg/ffprobe must be on PATH for dev or bundled via `npm run prepare:ffmpeg` for release.
+- ffmpeg/ffprobe: on PATH or `public/ffmpeg/` for dev; release uses in-app download or PATH (not bundled in installer).
 - Stream-copy cuts may not be frame-perfect (keyframes).
+- Preview uses a single HTML `<video>` element with seek-at-cut transitions; brief A/V blips at segment boundaries are possible (acceptable for v0.2).
 - Discord size targeting is approximate on very short or very long clips.
 - Watch-folder and startup registry require Windows permissions.
 - Crop forces re-encode when Lossless Trim is selected.
@@ -72,7 +78,7 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 |-----------|--------|
 | 1 Multi-Cut MVP | Complete |
 | 2 Export / ffmpeg | Complete |
-| 3 Reliable Preview | First implementation complete |
+| 3 Reliable Preview | Complete (native / remux / proxy + segment playback driver) |
 | 4 Presets / Compression | Complete (v1) |
 | 5 Crop | Complete (session v1) |
 | 6 Watch Folder | MVP complete |
@@ -80,70 +86,45 @@ Recommended caps for v0.1: single export at a time; source files up to 4K tested
 | 8 Clip History | Complete (drawer v1) |
 | 9 Windows Integration | Complete (Open With, startup, tray) |
 | 10 Performance Audit | Documented (informal baseline) |
-| 11 Trim Accuracy | Partial (accurate trim + export trim hints) |
-| 12 Audio Editing | Partial (strip audio, I/O fades on export) |
-| 13 Timeline Workflow | Partial (shortcuts modal, J/K/L, snap I/O, reorder/duplicate) |
-| 14 Session / Project Save | Partial (AppData session + `.cutdown` project files) |
-| 15 Export & Presets v2 | Partial (custom presets, batch export, queued upload, export activity UI) |
-| 16 Preview & Input v2 | Partial (drag-drop, recent menu, fit/zoom/pan, speed, proxy, onboarding banners) |
-| 17 OBS & Tray Workflow | Partial (watch folder tray, latest replay, tray hint) |
-| 18 Platform & Release | Partial (v0.2.0 Windows installer published) |
+| 11 Trim Accuracy | Partial (accurate trim + export hints; UI copy polish optional) |
+| 12 Audio Editing | Partial (strip audio, fades, waveform lane; advanced audio optional) |
+| 13 Timeline Workflow | Complete (reorder, duplicate, J/K/L, snap I/O, shortcuts, keep range) |
+| 14 Session / Project Save | Complete (AppData session + `.cutdown` projects) |
+| 15 Export & Presets v2 | Partial (custom presets, batch, queued upload; queue hardening optional) |
+| 16 Preview & Input v2 | Complete (drag-drop, recent menu, fit/zoom/pan, speed, proxy) |
+| 17 OBS & Tray Workflow | Partial (watch folder, latest replay from folder; WebSocket deferred) |
+| 18 Platform & Release | Partial (v0.2 Windows installer; CI added; auto-updater / cross-platform deferred) |
 
-## Upcoming milestones (detail)
+## v0.3 focus (chosen)
+
+**Primary: Milestone 18 — release hardening**
+
+- Keep GitHub Actions CI green on `main`.
+- Rust integration tests for probe + single-segment export.
+- Signed installer / Tauri auto-updater (when ready for distribution).
+
+**Deferred: Milestone 17 — OBS WebSocket**
+
+- Latest replay via folder scan remains the supported workflow until WebSocket is scoped for a later release.
+
+## Backlog (optional, not blocking v0.2.x)
 
 ### Milestone 11: Trim accuracy
 
-- Optional “accurate cut” mode (re-encode segment boundaries) when frame-perfect in/out matters.
-- Document trade-offs in UI (speed vs accuracy).
-
-### Milestone 12: Audio editing
-
-- Strip/mute audio from export UI (done).
-- Fade in/out on I/O range.
-- Optional waveform on the audio track lane.
-
-### Milestone 13: Timeline workflow
-
-- Drag-reorder segments; duplicate segment (done).
-- J/K/L shuttle scrubbing; snap playhead to I/O markers (done).
-- In-app keyboard shortcut reference (done via `?` modal).
-
-### Milestone 14: Session / project save
-
-- Per-source session in `%APPDATA%/Cutdown/sessions.json` (done).
-- Optional `.cutdown` project file for sharing projects.
+- Clearer in-app copy for accurate trim vs lossless speed trade-offs.
 
 ### Milestone 15: Export & presets v2
 
-- User-defined export presets (done).
-- Export queue (no concurrent export + upload).
-- Batch export from history or “one file per segment.”
-- Additional built-in upload targets (e.g. Discord webhook).
-- Video-copy + audio-filter-only path when only volume changes on lossless preset.
+- Stricter export queue (no concurrent export + upload).
+- Discord webhook upload target.
+- Video-copy path when only volume changes on lossless preset.
 
-### Milestone 16: Preview & input v2
+### Milestone 17: OBS & tray
 
-- Drag-and-drop file onto the editor window.
-- Recent source files list (complement export history).
-- Proactive proxy for heavy codecs or large files.
-- Playback speed (0.5× / 1× / 2×).
+- OBS WebSocket: load latest replay by API.
+- Export-complete notification while minimized.
 
-### Milestone 17: OBS & tray workflow
+### Milestone 18: Platform & release (longer term)
 
-- OBS WebSocket: load latest replay or tie into replay-buffer naming.
-- Tray actions: open watch folder, export-complete notification while minimized.
-
-### Milestone 18: Platform & release
-
-- macOS / Linux ports (tray, file associations, shell integration per OS).
-- Tauri auto-updater and signed release CI.
-- Rust integration tests for probe + single-segment export.
-- Svelte 5 migration (deferred npm advisory).
-
-## Suggested v0.2 priority
-
-| Tier | Focus |
-|------|--------|
-| **High** | Milestone 11 (trim accuracy), 16 drag-and-drop + recent sources, 13 shortcut cheatsheet |
-| **Medium** | 15 custom presets + export queue, 12 strip audio / waveform, 14 session save |
-| **Longer** | 17 OBS WebSocket, 18 cross-platform + auto-update + automated export tests |
+- macOS / Linux ports.
+- Svelte/npm advisory migration.

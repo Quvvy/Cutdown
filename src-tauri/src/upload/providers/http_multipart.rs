@@ -3,6 +3,7 @@ use crate::upload::response::{extract_share_url, mime_for_path};
 use crate::upload_providers::HttpMultipartConfig;
 use reqwest::blocking::multipart;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::fs::File;
 use std::path::Path;
 
 pub fn upload(path: &Path, config: &HttpMultipartConfig) -> Result<String, String> {
@@ -20,14 +21,18 @@ pub fn upload(path: &Path, config: &HttpMultipartConfig) -> Result<String, Strin
         .unwrap_or("clip.mp4")
         .to_string();
 
-    let bytes = std::fs::read(path).map_err(|err| format!("Failed to read upload file: {err}"))?;
     let file_field = if config.file_field.trim().is_empty() {
         "file"
     } else {
         config.file_field.trim()
     };
 
-    let part = multipart::Part::bytes(bytes)
+    let file = File::open(path).map_err(|err| format!("Failed to read upload file: {err}"))?;
+    let length = file
+        .metadata()
+        .map_err(|err| format!("Failed to inspect upload file: {err}"))?
+        .len();
+    let part = multipart::Part::reader_with_length(file, length)
         .file_name(file_name)
         .mime_str(mime_for_path(path))
         .map_err(|err| format!("Failed to prepare upload payload: {err}"))?;
@@ -43,8 +48,8 @@ pub fn upload(path: &Path, config: &HttpMultipartConfig) -> Result<String, Strin
     for (key, value) in &config.headers {
         let name = HeaderName::from_bytes(key.as_bytes())
             .map_err(|_| format!("Invalid header name: {key}"))?;
-        let header_value = HeaderValue::from_str(value)
-            .map_err(|_| format!("Invalid header value for {key}"))?;
+        let header_value =
+            HeaderValue::from_str(value).map_err(|_| format!("Invalid header value for {key}"))?;
         headers.insert(name, header_value);
     }
 

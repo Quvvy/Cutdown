@@ -74,7 +74,14 @@ pub fn resolve_encode_profile(
     }
 
     if let Some(custom) = find_custom_preset(preset_id) {
-        return custom_to_profile(&custom, prefer_gpu, gpu_encoders, total_duration_secs, video_width, video_height);
+        return custom_to_profile(
+            &custom,
+            prefer_gpu,
+            gpu_encoders,
+            total_duration_secs,
+            video_width,
+            video_height,
+        );
     }
 
     let video_codec = pick_video_encoder(prefer_gpu, gpu_encoders);
@@ -128,7 +135,7 @@ pub fn resolve_encode_profile(
     Ok(profile)
 }
 
-pub fn normalize_custom_export_presets(presets: &mut Vec<CustomExportPreset>) -> Result<(), String> {
+pub fn normalize_custom_export_presets(presets: &mut [CustomExportPreset]) -> Result<(), String> {
     let mut seen = std::collections::HashSet::new();
 
     for preset in presets.iter_mut() {
@@ -291,7 +298,9 @@ fn optional_scale_from_preset(
     video_height: u32,
 ) -> Option<String> {
     match (preset.max_width, preset.max_height) {
-        (Some(width), Some(height)) => optional_scale_filter(width, height, video_width, video_height),
+        (Some(width), Some(height)) => {
+            optional_scale_filter(width, height, video_width, video_height)
+        }
         _ => None,
     }
 }
@@ -470,7 +479,8 @@ fn custom_preset_summary(preset: &CustomExportPreset) -> String {
         ),
         "crf" => format!("Custom H.264/AAC at CRF {}.", preset.crf.unwrap_or(20)),
         "target_size" => {
-            let megabytes = preset.target_bytes.unwrap_or(DISCORD_TARGET_BYTES) as f64 / (1024.0 * 1024.0);
+            let megabytes =
+                preset.target_bytes.unwrap_or(DISCORD_TARGET_BYTES) as f64 / (1024.0 * 1024.0);
             format!("Custom H.264/AAC targeting about {megabytes:.0} MB.")
         }
         _ => "Custom export preset.".to_string(),

@@ -112,6 +112,48 @@ export function createCustomProvider(): UploadProvider {
   };
 }
 
+export function readUploadProvidersFromAppSettings(settings: Record<string, unknown>): UploadProvider[] {
+  const raw = settings.uploadProviders ?? settings.upload_providers;
+  return parseProvidersFromSettings(raw);
+}
+
+export function readDefaultUploadProviderId(settings: Record<string, unknown>): string | null {
+  const raw = settings.defaultUploadProviderId ?? settings.default_upload_provider_id;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
+}
+
+export function normalizeUploadSummary(entry: unknown): UploadProviderSummary | null {
+  if (!entry || typeof entry !== 'object') {
+    return null;
+  }
+
+  const record = entry as Record<string, unknown>;
+  const id = typeof record.id === 'string' ? record.id.trim() : '';
+  const rawKind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
+
+  if (!id || (rawKind !== 'catbox' && rawKind !== 'filegarden' && rawKind !== 'http_multipart')) {
+    return null;
+  }
+
+  return {
+    id,
+    name: typeof record.name === 'string' && record.name.trim() ? record.name.trim() : id,
+    enabled: record.enabled !== false,
+    kind: rawKind as UploadProviderKind,
+    isDefault: Boolean(record.isDefault ?? record.is_default),
+  };
+}
+
+export function normalizeUploadSummaries(raw: unknown): UploadProviderSummary[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+
+  return raw
+    .map((entry) => normalizeUploadSummary(entry))
+    .filter((entry): entry is UploadProviderSummary => entry !== null);
+}
+
 export function parseProvidersFromSettings(raw: unknown): UploadProvider[] {
   if (!Array.isArray(raw)) {
     return [];
@@ -130,12 +172,14 @@ function normalizeProvider(entry: unknown): UploadProvider | null {
   const record = entry as Record<string, unknown>;
   const id = typeof record.id === 'string' ? record.id.trim() : '';
   const name = typeof record.name === 'string' ? record.name.trim() : '';
-  const kind = record.kind;
+  const rawKind = typeof record.kind === 'string' ? record.kind.trim().toLowerCase() : '';
   const config = record.config;
 
-  if (!id || (kind !== 'catbox' && kind !== 'filegarden' && kind !== 'http_multipart')) {
+  if (!id || (rawKind !== 'catbox' && rawKind !== 'filegarden' && rawKind !== 'http_multipart')) {
     return null;
   }
+
+  const kind = rawKind as UploadProviderKind;
 
   return {
     id,

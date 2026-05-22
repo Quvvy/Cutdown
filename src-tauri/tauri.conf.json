@@ -22,10 +22,18 @@
       }
     ],
     "security": {
-      "csp": null,
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: http://asset.localhost; media-src 'self' asset: http://asset.localhost; connect-src ipc: http://ipc.localhost http://127.0.0.1:7794",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**/*.mp4",
+          "**/*.mkv",
+          "**/*.mov",
+          "**/*.webm",
+          "**/*.ts",
+          "**/*.avi",
+          "**/*.flv"
+        ]
       }
     }
   },
@@ -39,7 +47,6 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../public/ffmpeg/*"],
     "fileAssociations": [
       {
         "ext": ["mp4", "mkv", "mov", "webm", "ts", "avi", "flv"],

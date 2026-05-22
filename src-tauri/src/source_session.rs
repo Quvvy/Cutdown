@@ -118,7 +118,9 @@ fn sanitize_session(session: SourceSession, duration: Option<f64>) -> Option<Sou
         });
         for segment in &mut segments {
             segment.source_start = segment.source_start.clamp(0.0, duration);
-            segment.source_end = segment.source_end.clamp(segment.source_start + 0.01, duration);
+            segment.source_end = segment
+                .source_end
+                .clamp(segment.source_start + 0.01, duration);
         }
     }
 
@@ -160,7 +162,10 @@ fn sanitize_session(session: SourceSession, duration: Option<f64>) -> Option<Sou
 }
 
 #[tauri::command]
-pub fn get_source_session(path: String, duration: Option<f64>) -> Result<Option<SourceSession>, String> {
+pub fn get_source_session(
+    path: String,
+    duration: Option<f64>,
+) -> Result<Option<SourceSession>, String> {
     let key = session_key(&path);
     if key.is_empty() {
         return Ok(None);
