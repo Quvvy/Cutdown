@@ -35,8 +35,18 @@
   } from './lib/exportPresets';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
+    segmentIndexAtSourceTime,
+    sequenceToSourceTime,
+    sourceToSequenceTime,
+  } from './lib/timelineMapping';
+  import {
+    createCatboxProvider,
+    createFilegardenProvider,
     kindLabel,
+    normalizeUploadSummaries,
     parseProvidersFromSettings,
+    readDefaultUploadProviderId,
+    readUploadProvidersFromAppSettings,
     type UploadProvider,
     type UploadProviderSummary,
   } from './lib/uploadProviders';
@@ -118,9 +128,11 @@
     | {
         seekTo(seconds: number): void;
         togglePlayback(): void;
+        playPlayback(): void;
         fitToView(): Promise<void>;
         remeasureViewport(): void;
-        pausePlayback(): void;
+        pausePlayback(options?: { emit?: boolean }): void;
+        isReady(): boolean;
         zoomIn(): void;
         zoomOut(): void;
         resetView(): void;
@@ -134,6 +146,7 @@
     | undefined;
   let exportModalOpen = false;
   let settingsModalOpen = false;
+  let settingsInitialTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
   let shortcutsModalOpen = false;
   let historyDrawerOpen = false;
   let recentSources: string[] = [];
@@ -158,6 +171,7 @@
   let recentMenuOpen = false;
   let uploadProviders: UploadProvider[] = [];
   let uploadProviderSummaries: UploadProviderSummary[] = [];
+  let uploadPickerProviders: UploadProviderSummary[] = [];
   let defaultUploadProviderId: string | null = null;
   let selectedUploadProviderId: string | null = null;
   let exportPresets: PresetInfo[] = [];
@@ -169,6 +183,18 @@
   let runAtStartup = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
+  let previewPlaybackSegmentIndex: number | null = null;
+  let previewPlaybackBoundaryTimer: ReturnType<typeof setTimeout> | null = null;
+  let previewPlaying = false;
+  let previewAdvanceInProgress = false;
+  // Block stale native timeupdate events that fire from the old position after a seek.
+  let previewBlockStaleTimeupdates = false;
+  let previewPostSeekExpectedSegmentIndex: number | null = null;
+  // True while the synchronous Svelte dispatch from VideoPreview.seekTo is in flight.
+  let previewSeekPendingDispatch = false;
+  // Set when we intentionally stopped at the end of the last segment, so a queued
+  // ended event from the browser doesn't restart an advance cycle.
+  let previewStoppedAtEnd = false;
   let clipVolume = 1;
   let exportProgressPercent: number | null = null;
   let outputPath = '';
@@ -178,6 +204,9 @@
   let watchFolderEnabled = false;
   let ffmpegStatus = '';
   let ffmpegAvailable = true;
+  let ffmpegInstalling = false;
+  let ffmpegInstallMessage = '';
+  let ffmpegInstallPercent: number | null = null;
   let segmentHistory: Array<{
     segments: TimelineSegment[];
     selectedSegmentId: string | null;
@@ -201,12 +230,17 @@
   const WORKSPACE_SPLITTER_PX = 6;
   const MIN_PREVIEW_PANE_PX = 120;
   const MIN_TIMELINE_PANE_PX = 160;
+  const PLAYBACK_BOUNDARY_LEAD_SECONDS = 0.08;
   let rangeStart: number | null = null;
   let rangeEnd: number | null = null;
   let bookmarks: TimelineBookmark[] = [];
   let selectedBookmarkId: string | null = null;
   let waveformPeaks: number[] = [];
   let waveformLoading = false;
+  let waveformLoadGeneration = 0;
+  let pendingWaveform: { path: string; hasAudio: boolean; generation: number; duration: number } | null =
+    null;
+  let waveformDeferTimer: ReturnType<typeof setTimeout> | null = null;
   let markerLabelModalOpen = false;
   let editingBookmarkId: string | null = null;
   let currentWindowTitle = '';
@@ -320,6 +354,16 @@
     }
     void bootstrapApp();
 
+    const unlistenFfmpegInstall = listen<{
+      stage: string;
+      message: string;
+      percent?: number;
+    }>('ffmpeg_install_progress', (event) => {
+      ffmpegInstallMessage = event.payload.message;
+      ffmpegInstallPercent =
+        typeof event.payload.percent === 'number' ? event.payload.percent : ffmpegInstallPercent;
+    });
+
     const unlistenExport = listen<ExportProgress>('export_progress', (event) => {
       exportProgressPercent =
         typeof event.payload.percent === 'number' ? event.payload.percent : exportProgressPercent;
@@ -358,6 +402,8 @@
     });
 
     return () => {
+      clearPreviewPlaybackBoundary();
+      void unlistenFfmpegInstall.then((stop) => stop());
       void unlistenExport.then((stop) => stop());
       void unlistenWatch.then((stop) => stop());
       void unlistenDragDrop.then((stop) => stop());
@@ -367,6 +413,42 @@
       }
     };
   });
+
+  async function installFfmpeg(): Promise<void> {
+    if (ffmpegInstalling) {
+      return;
+    }
+
+    ffmpegInstalling = true;
+    ffmpegInstallMessage = 'Starting ffmpeg download…';
+    ffmpegInstallPercent = 0;
+
+    try {
+      const ffmpeg = await invoke<FfmpegCheckResult>('install_ffmpeg');
+      ffmpegAvailable = ffmpeg.available;
+      ffmpegStatus =
+        gpuEncoders.length > 0
+          ? `${ffmpeg.message} GPU: ${gpuEncoders.join(', ')}.`
+          : ffmpeg.message;
+
+      if (ffmpeg.available) {
+        gpuEncoders = await invoke<string[]>('detect_gpu_encoders');
+        if (gpuEncoders.length > 0) {
+          ffmpegStatus = `${ffmpeg.message} GPU: ${gpuEncoders.join(', ')}.`;
+        }
+        pushToast('ffmpeg installed successfully.', 'success');
+      } else {
+        pushToast(ffmpeg.message, 'error');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ffmpegInstallMessage = message;
+      pushToast(message, 'error');
+    } finally {
+      ffmpegInstalling = false;
+      ffmpegInstallPercent = null;
+    }
+  }
 
   async function bootstrapApp(): Promise<void> {
     try {
@@ -384,8 +466,12 @@
       exportPresetId = settings.lastPresetId || 'lossless-trim';
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
-      uploadProviders = parseProvidersFromSettings(settings.uploadProviders);
-      defaultUploadProviderId = settings.defaultUploadProviderId;
+      uploadProviders = resolveUploadProvidersFromSettings(settings);
+      const bootstrapSettingsRecord = settings as AppSettings & Record<string, unknown>;
+      defaultUploadProviderId =
+        readDefaultUploadProviderId(bootstrapSettingsRecord) ??
+        uploadProviders.find((provider) => provider.enabled)?.id ??
+        null;
       selectedUploadProviderId = defaultUploadProviderId;
       await refreshUploadProviderSummaries();
       exportPresets = presets;
@@ -492,9 +578,52 @@
     }));
   }
 
-  function openUploadPicker(path: string): void {
-    uploadTargetPath = path;
+  async function cancelExport(): Promise<void> {
+    await invoke('cancel_export').catch(() => undefined);
+    editor.update((state) => ({
+      ...state,
+      exportStatus: {
+        ...state.exportStatus,
+        state: 'error',
+        message: 'Export cancellation requested.',
+      },
+    }));
+  }
+
+  async function reloadUploadProvidersFromDisk(): Promise<void> {
+    const [settings, editor, summaries] = await Promise.all([
+      invoke<AppSettings>('get_settings'),
+      invoke<{ providers: UploadProvider[]; defaultUploadProviderId: string | null }>(
+        'get_upload_providers_for_editor',
+      ),
+      invoke<UploadProviderSummary[]>('list_upload_providers'),
+    ]);
+
+    const editorProviders = parseProvidersFromSettings(editor.providers);
+    uploadProviders =
+      editorProviders.length > 0 ? editorProviders : resolveUploadProvidersFromSettings(settings);
+    defaultUploadProviderId =
+      editor.defaultUploadProviderId ??
+      readDefaultUploadProviderId(settings as AppSettings & Record<string, unknown>) ??
+      uploadProviders.find((provider) => provider.enabled)?.id ??
+      null;
+    uploadProviderSummaries = normalizeUploadSummaries(summaries);
     syncUploadProviderSelection();
+  }
+
+  async function openUploadPicker(path: string): Promise<void> {
+    uploadTargetPath = path;
+    try {
+      await reloadUploadProvidersFromDisk();
+      uploadPickerProviders = getEnabledUploadTargets();
+      selectedUploadProviderId =
+        uploadPickerProviders.find((entry) => entry.id === defaultUploadProviderId)?.id ??
+        uploadPickerProviders[0]?.id ??
+        null;
+    } catch (error) {
+      uploadPickerProviders = [];
+      pushToast(error instanceof Error ? error.message : String(error), 'error');
+    }
     uploadTargetModalOpen = true;
   }
 
@@ -756,7 +885,7 @@
       }
     }
 
-    await cleanupPreview($editor.previewTempPath);
+    void cleanupPreview($editor.previewTempPath);
     if (persistSessionTimer) {
       clearTimeout(persistSessionTimer);
       persistSessionTimer = null;
@@ -769,7 +898,17 @@
     bookmarks = [];
     selectedBookmarkId = null;
     waveformPeaks = [];
+    cancelPendingWaveform();
+    waveformLoadGeneration += 1;
     rangeLoopPlayback = false;
+    previewPlaybackSegmentIndex = null;
+    previewPlaying = false;
+    previewAdvanceInProgress = false;
+    previewBlockStaleTimeupdates = false;
+    previewPostSeekExpectedSegmentIndex = null;
+    previewSeekPendingDispatch = false;
+    previewStoppedAtEnd = false;
+    clearPreviewPlaybackBoundary();
     clipVolume = 1;
     cropEnabled = false;
     cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
@@ -838,7 +977,7 @@
         }));
       }
 
-      void loadWaveform(selected);
+      queueWaveformAfterPreview(selected, probed.audioCodec != null, probed.duration);
       syncExportDefaultsForClip();
       if (needsProxyPreview(probed)) {
         editor.update((state) => ({
@@ -866,10 +1005,291 @@
     }
   }
 
+  function clearPreviewPlaybackBoundary(): void {
+    if (previewPlaybackBoundaryTimer) {
+      clearTimeout(previewPlaybackBoundaryTimer);
+      previewPlaybackBoundaryTimer = null;
+    }
+  }
+
+  function armPreviewPlaybackBoundary(): void {
+    clearPreviewPlaybackBoundary();
+
+    if (rangeLoopPlayback || !previewPlaying || $editor.segments.length === 0) {
+      return;
+    }
+
+    const segmentIndex =
+      previewPlaybackSegmentIndex ?? segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
+    if (segmentIndex === null) {
+      return;
+    }
+
+    const segment = $editor.segments[segmentIndex];
+    if (!segment) {
+      return;
+    }
+
+    previewPlaybackSegmentIndex = segmentIndex;
+
+    // If $editor.currentTime is outside the segment (stale from a skipped timeupdate),
+    // use segment.sourceStart so the timer fires at the full segment duration rather
+    // than at 0 ms, which would cause an immediate re-advance loop.
+    const withinSegment =
+      $editor.currentTime >= segment.sourceStart && $editor.currentTime <= segment.sourceEnd;
+    const referenceTime = withinSegment ? $editor.currentTime : segment.sourceStart;
+    const secondsUntilBoundary =
+      (segment.sourceEnd - referenceTime - PLAYBACK_BOUNDARY_LEAD_SECONDS) /
+      Math.max(0.25, previewPlaybackRate);
+
+    previewPlaybackBoundaryTimer = setTimeout(
+      () => void advancePreviewSegmentPlayback(),
+      Math.max(0, secondsUntilBoundary * 1000),
+    );
+  }
+
+  async function advancePreviewSegmentPlayback(forceResume = false): Promise<void> {
+    clearPreviewPlaybackBoundary();
+
+    // #region agent log
+    console.error('[d43685][H-A,H-C,H-D] advancePreviewSegmentPlayback entry', {forceResume,previewPlaying,previewAdvanceInProgress,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segments:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))});
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:entry',message:'advance called',data:{forceResume,previewPlaying,previewAdvanceInProgress,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segmentRanges:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-C,H-D'})}).catch(()=>{});
+    // #endregion
+
+    if (previewAdvanceInProgress) {
+      // #region agent log
+      console.error('[d43685][H-D] advance already in progress, ignoring re-entrant call');
+      // #endregion
+      return;
+    }
+
+    if (rangeLoopPlayback || (!previewPlaying && !forceResume) || $editor.segments.length === 0) {
+      // #region agent log
+      console.error('[d43685][H-B,H-C] advance bailed early', {rangeLoopPlayback,previewPlaying,forceResume});
+      fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:early-return',message:'advance bailed early',data:{rangeLoopPlayback,previewPlaying,forceResume,segmentCount:$editor.segments.length},timestamp:Date.now(),hypothesisId:'H-B,H-C'})}).catch(()=>{});
+      // #endregion
+      return;
+    }
+
+    previewAdvanceInProgress = true;
+
+    const segmentIndex =
+      previewPlaybackSegmentIndex ?? segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
+    if (segmentIndex === null) {
+      previewPlaying = false;
+      preview?.pausePlayback();
+      return;
+    }
+
+    const segment = $editor.segments[segmentIndex];
+    const nextSegment = $editor.segments[segmentIndex + 1];
+    const shouldResume = previewPlaying || forceResume;
+
+    // #region agent log
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:decision',message:'advance decision',data:{segmentIndex,segmentId:segment?.id,segmentRange:segment?{start:segment.sourceStart,end:segment.sourceEnd}:null,hasNext:Boolean(nextSegment),nextSegmentId:nextSegment?.id,nextStart:nextSegment?.sourceStart,shouldResume},timestamp:Date.now(),hypothesisId:'H-A,H-C'})}).catch(()=>{});
+    // #endregion
+
+    if (!nextSegment) {
+      previewPlaying = false;
+      previewStoppedAtEnd = true;
+      preview?.pausePlayback();
+      previewPlaybackSegmentIndex = segmentIndex;
+      // Only update the display time — do NOT seek the video. Seeking to near
+      // sourceEnd on a file where sourceEnd == physical EOF re-triggers the browser's
+      // ended event immediately, creating an infinite advance loop (Bug B).
+      const endTime = Math.max(segment.sourceStart, segment.sourceEnd - 0.001);
+      editor.update((state) => ({ ...state, currentTime: endTime }));
+
+      // #region agent log
+      console.error('[d43685][Bug2] last-segment stop', {segmentIndex,segId:segment.id,sourceEnd:segment.sourceEnd,endTime});
+      fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:advancePreviewSegmentPlayback:last-segment',message:'last segment stop',data:{segmentIndex,segId:segment.id,sourceEnd:segment.sourceEnd,endTime,allSegments:$editor.segments.map(s=>({id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-C,Bug2'})}).catch(()=>{});
+      // #endregion
+      previewAdvanceInProgress = false;
+      previewBlockStaleTimeupdates = false;
+      previewPostSeekExpectedSegmentIndex = null;
+      return;
+    }
+
+    preview?.pausePlayback({ emit: false });
+    previewPlaybackSegmentIndex = segmentIndex + 1;
+    // Set stale-guard BEFORE seekTo so the synchronous Svelte dispatch is skipped,
+    // then native timeupdates from the old position are blocked until we confirm
+    // the video has arrived at the new segment.
+    previewPostSeekExpectedSegmentIndex = segmentIndex + 1;
+    previewBlockStaleTimeupdates = true;
+    previewSeekPendingDispatch = true;
+    preview?.seekTo(nextSegment.sourceStart);
+    editor.update((state) => ({ ...state, currentTime: nextSegment.sourceStart }));
+
+    await tick();
+
+    previewAdvanceInProgress = false;
+
+    if (shouldResume) {
+      previewPlaying = true;
+      preview?.playPlayback();
+      armPreviewPlaybackBoundary();
+    }
+  }
+
+  function handlePreviewEnded(): void {
+    // #region agent log
+    const _endedCurrentTime = $editor.currentTime;
+    const _endedSegIdx = previewPlaybackSegmentIndex;
+    const _endedSegEnd = _endedSegIdx !== null ? $editor.segments[_endedSegIdx]?.sourceEnd : null;
+    const _endedStale = _endedSegIdx !== null && _endedSegEnd !== undefined && Math.abs(_endedCurrentTime - (_endedSegEnd ?? 0)) > 0.5;
+    console.error('[d43685][H-C] handlePreviewEnded', {rangeLoopPlayback,previewPlaying,previewAdvanceInProgress,previewStoppedAtEnd,previewPlaybackSegmentIndex,currentTime:_endedCurrentTime,segEnd:_endedSegEnd,stale:_endedStale});
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:handlePreviewEnded',message:'browser ended event',data:{rangeLoopPlayback,previewPlaying,previewAdvanceInProgress,previewStoppedAtEnd,previewPlaybackSegmentIndex,currentTime:_endedCurrentTime,segEnd:_endedSegEnd,stale:_endedStale},timestamp:Date.now(),hypothesisId:'H-C'})}).catch(()=>{});
+    // #endregion
+
+    if (rangeLoopPlayback) {
+      return;
+    }
+
+    // An advance is already executing — this ended event is stale (fired from the
+    // old segment's physical EOF while we're transitioning to the next segment).
+    if (previewAdvanceInProgress) {
+      return;
+    }
+
+    // We intentionally stopped at the end of the last segment. The browser may still
+    // have a queued ended event in flight; consume and discard it.
+    if (previewStoppedAtEnd) {
+      previewStoppedAtEnd = false;
+      return;
+    }
+
+    // Guard: if we've already advanced past the segment that caused this ended event,
+    // ignore it. This happens when a reordered segment sits at the physical EOF of the
+    // source file — the browser fires ended, but the boundary timer already advanced.
+    if (previewPlaybackSegmentIndex !== null) {
+      const currentSeg = $editor.segments[previewPlaybackSegmentIndex];
+      if (currentSeg && Math.abs($editor.currentTime - currentSeg.sourceEnd) > 0.5) {
+        return;
+      }
+    }
+
+    void advancePreviewSegmentPlayback(true);
+  }
+
+  function handlePreviewPlayState(playing: boolean): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:handlePreviewPlayState',message:'play state changed',data:{playing,previewPlaying,previewPlaybackSegmentIndex,currentTime:$editor.currentTime},timestamp:Date.now(),hypothesisId:'H-B'})}).catch(()=>{});
+    // #endregion
+
+    previewPlaying = playing;
+
+    if (!playing) {
+      // On any pause (user-initiated or error), release all stale-guard state so
+      // we don't accidentally block the next play session.
+      previewAdvanceInProgress = false;
+      previewBlockStaleTimeupdates = false;
+      previewPostSeekExpectedSegmentIndex = null;
+      previewSeekPendingDispatch = false;
+      clearPreviewPlaybackBoundary();
+      return;
+    }
+
+    previewStoppedAtEnd = false;
+
+    if (rangeLoopPlayback || $editor.segments.length === 0) {
+      return;
+    }
+
+    let segmentIndex = segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
+    let nextTime = $editor.currentTime;
+
+    if (segmentIndex === null) {
+      const sequenceTime = sourceToSequenceTime($editor.segments, $editor.currentTime);
+      nextTime = sequenceToSourceTime($editor.segments, sequenceTime);
+      segmentIndex = segmentIndexAtSourceTime($editor.segments, nextTime);
+      preview?.seekTo(nextTime);
+      editor.update((state) => ({ ...state, currentTime: nextTime }));
+    }
+
+    previewPlaybackSegmentIndex = segmentIndex;
+    armPreviewPlaybackBoundary();
+  }
+
+  function handlePreviewTimeUpdate(sourceTime: number): void {
+    // Skip the synchronous Svelte dispatch that VideoPreview.seekTo() fires while an
+    // advance is setting up. The advance sets previewSeekPendingDispatch=true immediately
+    // before calling seekTo(), so this handler knows to ignore that one event.
+    if (previewSeekPendingDispatch) {
+      previewSeekPendingDispatch = false;
+      // #region agent log
+      console.error('[d43685][H-D] timeupdate: skipped sync seek dispatch', {sourceTime,previewPlaybackSegmentIndex});
+      // #endregion
+      return;
+    }
+
+    // After a seek we block ALL timeupdates until one arrives that is within the
+    // expected new segment. This prevents stale native timeupdate events (still in
+    // the browser's event queue from the OLD segment position) from corrupting
+    // previewPlaybackSegmentIndex and $editor.currentTime, which would otherwise
+    // cause armPreviewPlaybackBoundary() to compute a near-zero delay → instant
+    // re-advance → infinite spam loop.
+    if (previewBlockStaleTimeupdates) {
+      if (previewPostSeekExpectedSegmentIndex !== null) {
+        const expectedSeg = $editor.segments[previewPostSeekExpectedSegmentIndex];
+        const withinExpected =
+          expectedSeg !== undefined &&
+          sourceTime >= expectedSeg.sourceStart &&
+          sourceTime < expectedSeg.sourceEnd;
+        if (withinExpected) {
+          previewBlockStaleTimeupdates = false;
+          previewPostSeekExpectedSegmentIndex = null;
+          // Fall through to normal processing below
+        } else {
+          // #region agent log
+          console.error('[d43685][H-D] timeupdate: blocked stale event', {sourceTime,previewPostSeekExpectedSegmentIndex,expectedSeg:expectedSeg?{start:expectedSeg.sourceStart,end:expectedSeg.sourceEnd}:null});
+          // #endregion
+          return;
+        }
+      } else {
+        return;
+      }
+    }
+
+    if (!rangeLoopPlayback && $editor.segments.length > 0) {
+      const segmentIndex = segmentIndexAtSourceTime($editor.segments, sourceTime);
+      if (segmentIndex !== null) {
+        previewPlaybackSegmentIndex = segmentIndex;
+      }
+    }
+
+    editor.update((state) => ({ ...state, currentTime: sourceTime }));
+  }
+
   function seekTo(seconds: number): void {
+    previewStoppedAtEnd = false;
+    previewBlockStaleTimeupdates = false;
+    previewPostSeekExpectedSegmentIndex = null;
+    previewSeekPendingDispatch = false;
     const nextTime = clamp(seconds, 0, duration);
+    previewPlaybackSegmentIndex = segmentIndexAtSourceTime($editor.segments, nextTime);
     preview?.seekTo(nextTime);
     editor.update((state) => ({ ...state, currentTime: nextTime }));
+    armPreviewPlaybackBoundary();
+  }
+
+  function seekBySequence(deltaSeconds: number): void {
+    if ($editor.segments.length === 0) {
+      seekTo($editor.currentTime + deltaSeconds);
+      return;
+    }
+
+    const sequenceTime = sourceToSequenceTime($editor.segments, $editor.currentTime);
+    seekTo(sequenceToSourceTime($editor.segments, clamp(sequenceTime + deltaSeconds, 0, outputDuration)));
+  }
+
+  function refreshPreviewPlaybackAfterSegmentEdit(): void {
+    const newIndex = segmentIndexAtSourceTime($editor.segments, $editor.currentTime);
+    // #region agent log
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:refreshPreviewPlaybackAfterSegmentEdit',message:'refresh after edit',data:{oldIndex:previewPlaybackSegmentIndex,newIndex,currentTime:$editor.currentTime,segmentsAfter:$editor.segments.map((s,i)=>({i,id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-E'})}).catch(()=>{});
+    // #endregion
+    previewPlaybackSegmentIndex = newIndex;
+    armPreviewPlaybackBoundary();
   }
 
   function selectSegment(id: string | null): void {
@@ -881,7 +1301,8 @@
     selectSegment(null);
   }
 
-  function splitAtTime(splitTime: number): void {
+  function splitAtTime(splitTime: number, options: { recordUndo?: boolean; persist?: boolean; toast?: boolean } = {}): void {
+    const { recordUndo = true, persist = true, toast = true } = options;
     if (!canExport) {
       return;
     }
@@ -895,7 +1316,9 @@
       return;
     }
 
-    pushUndoSnapshot();
+    if (recordUndo) {
+      pushUndoSnapshot();
+    }
     editor.update((state) => ({
       ...state,
       segments: state.segments.flatMap((segment) => {
@@ -919,8 +1342,13 @@
       }),
       selectedSegmentId: null,
     }));
-    pushToast(`Split at ${formatTime(splitTime)}.`);
-    schedulePersistSession();
+    if (toast) {
+      pushToast(`Split at ${formatTime(splitTime)}.`);
+    }
+    refreshPreviewPlaybackAfterSegmentEdit();
+    if (persist) {
+      schedulePersistSession();
+    }
   }
 
   function splitAtCurrentTime(): void {
@@ -944,6 +1372,7 @@
       selectedSegmentId: null,
     }));
     pushToast('Deleted selected segment.');
+    refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
   }
 
@@ -976,10 +1405,14 @@
       };
     });
     pushToast('Duplicated selected segment.');
+    refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
   }
 
   function reorderSegment(id: string, toIndex: number): void {
+    // #region agent log
+    fetch('http://127.0.0.1:7794/ingest/3e0639db-adce-457c-a6d8-13f02cb9356f',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'d43685'},body:JSON.stringify({sessionId:'d43685',location:'App.svelte:reorderSegment',message:'reorder called',data:{id,toIndex,previewPlaybackSegmentIndex,currentTime:$editor.currentTime,segmentsBefore:$editor.segments.map((s,i)=>({i,id:s.id,start:s.sourceStart,end:s.sourceEnd}))},timestamp:Date.now(),hypothesisId:'H-A,H-E'})}).catch(()=>{});
+    // #endregion
     pushUndoSnapshot();
     editor.update((state) => {
       const fromIndex = state.segments.findIndex((segment) => segment.id === id);
@@ -1002,6 +1435,7 @@
         },
       };
     });
+    refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
   }
 
@@ -1011,8 +1445,10 @@
     }
 
     pushUndoSnapshot();
-    splitAtTime(normalizedRange.start);
-    splitAtTime(normalizedRange.end);
+    splitAtTime(normalizedRange.start, { recordUndo: false, persist: false, toast: false });
+    splitAtTime(normalizedRange.end, { recordUndo: false, persist: false, toast: false });
+    pushToast(`Split at I/O markers.`);
+    refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
   }
 
@@ -1037,6 +1473,9 @@
         message: `Kept range ${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}.`,
       },
     }));
+    pushToast(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`, 'success');
+    previewPlaybackSegmentIndex = null;
+    seekTo(normalizedRange.start);
     schedulePersistSession();
   }
 
@@ -1084,6 +1523,7 @@
         },
       };
     });
+    refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
   }
 
@@ -1101,7 +1541,10 @@
     rangeLoopPlayback = !rangeLoopPlayback;
 
     if (rangeLoopPlayback && normalizedRange) {
+      clearPreviewPlaybackBoundary();
       seekTo(normalizedRange.start);
+    } else if (previewPlaying) {
+      armPreviewPlaybackBoundary();
     }
   }
 
@@ -1216,19 +1659,107 @@
     seekTo(target.time);
   }
 
-  async function loadWaveform(path: string): Promise<void> {
+  function cancelPendingWaveform(): void {
+    pendingWaveform = null;
+
+    if (waveformDeferTimer) {
+      clearTimeout(waveformDeferTimer);
+      waveformDeferTimer = null;
+    }
+  }
+
+  function queueWaveformAfterPreview(path: string, hasAudio: boolean, duration: number): void {
+    cancelPendingWaveform();
+    pendingWaveform = {
+      path,
+      hasAudio,
+      generation: waveformLoadGeneration,
+      duration,
+    };
+
+    waveformDeferTimer = setTimeout(() => {
+      waveformDeferTimer = null;
+      startPendingWaveform();
+    }, 12_000);
+
+    void tick().then(() => {
+      if (preview?.isReady()) {
+        handlePreviewReady();
+      }
+    });
+  }
+
+  function startPendingWaveform(): void {
+    const pending = pendingWaveform;
+
+    if (!pending || pending.generation !== waveformLoadGeneration) {
+      return;
+    }
+
+    pendingWaveform = null;
+
+    if (waveformDeferTimer) {
+      clearTimeout(waveformDeferTimer);
+      waveformDeferTimer = null;
+    }
+
+    void loadWaveform(pending.path, pending.hasAudio, pending.generation, pending.duration);
+  }
+
+  function handlePreviewReady(): void {
+    if (!pendingWaveform || pendingWaveform.generation !== waveformLoadGeneration) {
+      return;
+    }
+
+    if (waveformDeferTimer) {
+      clearTimeout(waveformDeferTimer);
+      waveformDeferTimer = null;
+    }
+
+    setTimeout(() => {
+      startPendingWaveform();
+    }, 200);
+  }
+
+  async function loadWaveform(
+    path: string,
+    hasAudio: boolean,
+    generation: number,
+    duration: number,
+  ): Promise<void> {
+    if (generation !== waveformLoadGeneration) {
+      return;
+    }
+
     waveformLoading = true;
     waveformPeaks = [];
 
+    if (!hasAudio) {
+      waveformLoading = false;
+      return;
+    }
+
     try {
-      waveformPeaks = await invoke<number[]>('extract_waveform', {
+      const peaks = await invoke<number[]>('extract_waveform', {
         path,
         bucketCount: 2400,
+        hasAudio: true,
+        duration,
       });
+
+      if (generation !== waveformLoadGeneration) {
+        return;
+      }
+
+      waveformPeaks = peaks;
     } catch {
-      waveformPeaks = [];
+      if (generation === waveformLoadGeneration) {
+        waveformPeaks = [];
+      }
     } finally {
-      waveformLoading = false;
+      if (generation === waveformLoadGeneration) {
+        waveformLoading = false;
+      }
     }
   }
 
@@ -1287,18 +1818,50 @@
     shortcutsModalOpen = false;
     historyDrawerOpen = false;
     markerLabelModalOpen = false;
+    uploadTargetModalOpen = false;
+    watchFolderConfirmOpen = false;
+    clearHistoryConfirmOpen = false;
+    relinkModalOpen = false;
     editingBookmarkId = null;
   }
 
+  function resolveUploadProvidersFromSettings(settings: AppSettings): UploadProvider[] {
+    const settingsRecord = settings as AppSettings & Record<string, unknown>;
+    let providers = readUploadProvidersFromAppSettings(settingsRecord);
+    if (providers.length > 0) {
+      return providers;
+    }
+
+    const hasLegacyCatbox =
+      Boolean(settings.catboxUserHash?.trim()) || Boolean(settings.catboxApiUrl?.trim());
+    if (hasLegacyCatbox) {
+      return [
+        {
+          ...createCatboxProvider(),
+          config: {
+            apiUrl: settings.catboxApiUrl?.trim() || 'https://catbox.moe/user/api.php',
+            userHash: settings.catboxUserHash?.trim() || null,
+          },
+        },
+      ];
+    }
+
+    return [createFilegardenProvider()];
+  }
+
   function applySettingsFromDisk(settings: AppSettings): void {
+    const settingsRecord = settings as AppSettings & Record<string, unknown>;
     watchFolder = settings.watchFolder;
     watchFolderEnabled = settings.watchFolderEnabled;
     defaultExportDir = settings.defaultExportDir ?? settings.lastExportDir;
     exportPresetId = settings.lastPresetId || 'lossless-trim';
     preferGpuEncoding = settings.preferGpuEncoding;
     runAtStartup = settings.runAtStartup;
-    uploadProviders = parseProvidersFromSettings(settings.uploadProviders);
-    defaultUploadProviderId = settings.defaultUploadProviderId;
+    uploadProviders = resolveUploadProvidersFromSettings(settings);
+    defaultUploadProviderId =
+      readDefaultUploadProviderId(settingsRecord) ??
+      uploadProviders.find((provider) => provider.enabled)?.id ??
+      null;
     customExportPresets = parseCustomPresetsFromSettings(settings.customExportPresets);
     syncUploadProviderSelection();
   }
@@ -1307,7 +1870,8 @@
     exportPresets = await invoke<PresetInfo[]>('list_presets');
   }
 
-  async function openSettings(): Promise<void> {
+  async function openSettings(tab: 'general' | 'folders' | 'presets' | 'upload' = 'general'): Promise<void> {
+    settingsInitialTab = tab;
     try {
       const settings = await invoke<AppSettings>('get_settings');
       applySettingsFromDisk(settings);
@@ -1418,20 +1982,26 @@
   }
 
   async function refreshUploadProviderSummaries(): Promise<void> {
-    uploadProviderSummaries = await invoke('list_upload_providers');
+    const summaries = await invoke<UploadProviderSummary[]>('list_upload_providers');
+    uploadProviderSummaries = normalizeUploadSummaries(summaries);
     syncUploadProviderSelection();
   }
 
-  function getEnabledUploadTargets(): typeof uploadProviderSummaries {
-    const configuredIds = new Set(
-      uploadProviders.filter((provider) => provider.enabled).map((provider) => provider.id),
-    );
-    const enabledSummaries = uploadProviderSummaries.filter((entry) => entry.enabled);
-    if (configuredIds.size === 0) {
-      return enabledSummaries;
+  function getEnabledUploadTargets(): UploadProviderSummary[] {
+    const fromSummaries = uploadProviderSummaries.filter((entry) => entry.enabled);
+    if (fromSummaries.length > 0) {
+      return fromSummaries;
     }
 
-    return enabledSummaries.filter((entry) => configuredIds.has(entry.id));
+    return uploadProviders
+      .filter((provider) => provider.enabled)
+      .map((provider) => ({
+        id: provider.id,
+        name: provider.name,
+        kind: provider.kind,
+        enabled: true,
+        isDefault: provider.id === defaultUploadProviderId,
+      }));
   }
 
   function syncUploadProviderSelection(): void {
@@ -1441,21 +2011,26 @@
       return;
     }
 
-    const preferredIds = [selectedUploadProviderId, defaultUploadProviderId];
-    for (const id of preferredIds) {
-      if (id && enabled.some((entry) => entry.id === id)) {
-        selectedUploadProviderId = id;
-        defaultUploadProviderId = id;
-        return;
-      }
+    if (
+      defaultUploadProviderId &&
+      !enabled.some((entry) => entry.id === defaultUploadProviderId)
+    ) {
+      defaultUploadProviderId = enabled[0]?.id ?? null;
     }
 
-    const fallback = enabled.find((entry) => entry.isDefault) ?? enabled[0];
-    selectedUploadProviderId = fallback.id;
-    defaultUploadProviderId = fallback.id;
+    if (
+      !selectedUploadProviderId ||
+      !enabled.some((entry) => entry.id === selectedUploadProviderId)
+    ) {
+      selectedUploadProviderId =
+        defaultUploadProviderId &&
+        enabled.some((entry) => entry.id === defaultUploadProviderId)
+          ? defaultUploadProviderId
+          : enabled[0].id;
+    }
   }
 
-  $: uploadProviders, uploadProviderSummaries, syncUploadProviderSelection();
+  $: uploadProviders, defaultUploadProviderId, syncUploadProviderSelection();
 
   function resolveUploadProviderId(providerId?: string | null): string | null {
     const enabled = getEnabledUploadTargets();
@@ -1626,7 +2201,7 @@
 
     if (event.key.toLowerCase() === 'j') {
       event.preventDefault();
-      seekTo($editor.currentTime - 1);
+      seekBySequence(-1);
       return;
     }
 
@@ -1638,7 +2213,7 @@
 
     if (event.key.toLowerCase() === 'l') {
       event.preventDefault();
-      seekTo($editor.currentTime + 1);
+      seekBySequence(1);
       return;
     }
 
@@ -1717,7 +2292,7 @@
 
       const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
       const step = event.shiftKey ? 5 : frameStep;
-      seekTo($editor.currentTime + (event.key === 'ArrowRight' ? step : -step));
+      seekBySequence(event.key === 'ArrowRight' ? step : -step);
     }
   }
 
@@ -2337,7 +2912,23 @@
     <div class="shell__alerts">
       {#if !ffmpegAvailable}
         <div class="ffmpeg-banner" role="alert">
-          <span>{ffmpegStatus || 'ffmpeg is not available. Export and probe are disabled until ffmpeg is installed or bundled.'}</span>
+          <span>
+            {ffmpegInstalling
+              ? ffmpegInstallMessage || 'Downloading ffmpeg…'
+              : ffmpegStatus ||
+                'ffmpeg is required for export and clip analysis. Download it once (~80 MB) or install ffmpeg on PATH.'}
+            {#if ffmpegInstalling && ffmpegInstallPercent !== null}
+              {' '}({Math.round(ffmpegInstallPercent)}%)
+            {/if}
+          </span>
+          <button
+            type="button"
+            class="secondary"
+            disabled={ffmpegInstalling}
+            on:click={() => void installFfmpeg()}
+          >
+            {ffmpegInstalling ? 'Downloading…' : 'Download ffmpeg'}
+          </button>
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>
       {/if}
@@ -2365,7 +2956,7 @@
       </button>
       {#if recentMenuOpen}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <div class="toolbar-recent__menu" role="menu" on:click|stopPropagation={() => {}}>
+        <div class="toolbar-recent__menu" role="menu" tabindex="-1" on:click|stopPropagation={() => {}}>
           {#if recentSources.length === 0}
             <p class="toolbar-recent__empty">No recent sources yet.</p>
           {:else}
@@ -2562,10 +3153,11 @@
         schedulePersistSession();
       }}
       on:metadata={() => {}}
+      on:previewready={handlePreviewReady}
       on:error={(event) => void handlePreviewError(event.detail.message)}
-      on:timeupdate={(event) => {
-        editor.update((state) => ({ ...state, currentTime: event.detail.currentTime }));
-      }}
+      on:playstate={(event) => handlePreviewPlayState(event.detail.playing)}
+      on:ended={handlePreviewEnded}
+      on:timeupdate={(event) => handlePreviewTimeUpdate(event.detail.currentTime)}
     />
   </section>
 
@@ -2660,6 +3252,13 @@
       >
         Split I/O
       </button>
+      <IconButton
+        icon="keepRange"
+        title="Keep only I/O range — remove all footage outside In/Out"
+        variant="secondary"
+        disabled={!canUseRange}
+        on:click={keepOnlyRange}
+      />
       <button
         type="button"
         class="secondary"
@@ -2826,6 +3425,7 @@
           <button type="button" class="secondary" title="Open export settings" on:click={openExportModal}>Export again</button>
         </div>
       {:else if $editor.exportStatus.outputPath && $editor.exportStatus.state === 'running'}
+        <button type="button" class="secondary" title="Cancel export" on:click={() => void cancelExport()}>Cancel</button>
         <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open folder</button>
       {/if}
     </div>
@@ -2860,7 +3460,7 @@
   on:presetChange={(event) => (exportPresetId = event.detail.presetId)}
   on:openUploadSettings={() => {
     exportModalOpen = false;
-    void openSettings();
+    void openSettings('upload');
   }}
   on:confirm={exportClip}
 />
@@ -2868,13 +3468,13 @@
 <UploadTargetModal
   open={uploadTargetModalOpen}
   filePath={uploadTargetPath}
-  providers={getEnabledUploadTargets()}
-  selectedProviderId={selectedUploadProviderId}
+  providers={uploadPickerProviders}
+  bind:selectedProviderId={selectedUploadProviderId}
   busy={historyBusyPath === uploadTargetPath}
   on:close={() => (uploadTargetModalOpen = false)}
   on:openSettings={() => {
     uploadTargetModalOpen = false;
-    void openSettings();
+    void openSettings('upload');
   }}
   on:upload={(event) => void uploadClip(uploadTargetPath, event.detail.providerId)}
 />
@@ -2914,6 +3514,7 @@
 
 <SettingsModal
   visible={settingsModalOpen}
+  initialTab={settingsInitialTab}
   {watchFolder}
   {watchFolderEnabled}
   {defaultExportDir}
@@ -2930,18 +3531,19 @@
   on:error={(event) => {
     pushToast(event.detail.message, 'error');
   }}
-  on:saved={(event) => {
+  on:saved={async (event) => {
     watchFolder = event.detail.watchFolder;
     watchFolderEnabled = event.detail.watchFolderEnabled;
     defaultExportDir = event.detail.defaultExportDir;
     exportPresetId = event.detail.lastPresetId;
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
-    uploadProviders = event.detail.uploadProviders;
-    defaultUploadProviderId = event.detail.defaultUploadProviderId;
     customExportPresets = event.detail.customExportPresets;
-    selectedUploadProviderId = event.detail.defaultUploadProviderId;
-    void refreshUploadProviderSummaries();
+    try {
+      await reloadUploadProvidersFromDisk();
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : String(error), 'error');
+    }
     void refreshExportPresets();
   }}
 />

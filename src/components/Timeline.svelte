@@ -3,6 +3,8 @@
   import IconButton from './IconButton.svelte';
   import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
+  import { placeMenu } from '../lib/placeMenu';
+  import { sequenceToSourceTime as mapSequenceToSourceTime, sourceToSequenceTime as mapSourceToSequenceTime } from '../lib/timelineMapping';
   import type { TimelineBookmark } from '../lib/types';
   import type { TimelineSegment } from '../stores/editor';
 
@@ -188,49 +190,11 @@
   }
 
   function sequenceToSourceTime(sequenceTime: number): number {
-    let cursor = 0;
-
-    for (const segment of segments) {
-      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
-
-      if (sequenceTime <= cursor + segmentLength) {
-        return segment.sourceStart + clamp(sequenceTime - cursor, 0, segmentLength);
-      }
-
-      cursor += segmentLength;
-    }
-
-    return segments[segments.length - 1]?.sourceEnd ?? 0;
+    return mapSequenceToSourceTime(segments, sequenceTime);
   }
 
   function sourceToSequenceTime(sourceTime: number): number {
-    let cursor = 0;
-    let nearestSequenceTime = 0;
-    let nearestDistance = Number.POSITIVE_INFINITY;
-
-    for (const segment of segments) {
-      const segmentLength = Math.max(0, segment.sourceEnd - segment.sourceStart);
-
-      if (sourceTime >= segment.sourceStart && sourceTime <= segment.sourceEnd) {
-        return cursor + clamp(sourceTime - segment.sourceStart, 0, segmentLength);
-      }
-
-      const startDistance = Math.abs(sourceTime - segment.sourceStart);
-      if (startDistance < nearestDistance) {
-        nearestDistance = startDistance;
-        nearestSequenceTime = cursor;
-      }
-
-      const endDistance = Math.abs(sourceTime - segment.sourceEnd);
-      if (endDistance < nearestDistance) {
-        nearestDistance = endDistance;
-        nearestSequenceTime = cursor + segmentLength;
-      }
-
-      cursor += segmentLength;
-    }
-
-    return clamp(nearestSequenceTime, 0, outputDuration);
+    return mapSourceToSequenceTime(segments, sourceTime);
   }
 
   function updateSeek(event: PointerEvent): void {
@@ -239,6 +203,33 @@
     }
 
     dispatch('seek', { seconds: sequenceToSourceTime(xToSequenceSeconds(event.clientX)) });
+  }
+
+  function handleRulerKeydown(event: KeyboardEvent): void {
+    if (disabled || outputDuration <= 0) {
+      return;
+    }
+
+    const currentSequenceTime = sourceToSequenceTime(currentTime);
+    const step = event.shiftKey ? 5 : 1 / Math.max(1, Math.round(pixelsPerSecond));
+    let nextSequenceTime: number | null = null;
+
+    if (event.key === 'ArrowLeft') {
+      nextSequenceTime = currentSequenceTime - step;
+    } else if (event.key === 'ArrowRight') {
+      nextSequenceTime = currentSequenceTime + step;
+    } else if (event.key === 'Home') {
+      nextSequenceTime = 0;
+    } else if (event.key === 'End') {
+      nextSequenceTime = outputDuration;
+    }
+
+    if (nextSequenceTime === null) {
+      return;
+    }
+
+    event.preventDefault();
+    dispatch('seek', { seconds: sequenceToSourceTime(clamp(nextSequenceTime, 0, outputDuration)) });
   }
 
   function startSeek(event: PointerEvent): void {
@@ -706,6 +697,7 @@
           aria-valuenow={sourceToSequenceTime(currentTime)}
           tabindex={disabled ? -1 : 0}
           on:pointerdown={startSeek}
+          on:keydown={handleRulerKeydown}
         >
           {#each ticks as tick}
             <div class:major={tick.major} class="timeline__ruler-tick" style={`left: ${tick.left}px`}></div>
@@ -877,7 +869,12 @@
 
   {#if bookmarkMenu}
     {@const bookmarkMenuId = bookmarkMenu.id}
-    <div class="timeline-menu" role="menu" style={`left: ${bookmarkMenu.x}px; top: ${bookmarkMenu.y}px`}>
+    <div
+      class="timeline-menu"
+      role="menu"
+      style={`left: ${bookmarkMenu.x}px; top: ${bookmarkMenu.y}px`}
+      use:placeMenu={{ x: bookmarkMenu.x, y: bookmarkMenu.y }}
+    >
       <button type="button" on:click={() => {
         dispatch('bookmarkEdit', { id: bookmarkMenuId });
         closeContextMenu();
@@ -890,7 +887,12 @@
   {/if}
 
   {#if contextMenu}
-    <div class="timeline-menu" role="menu" style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}>
+    <div
+      class="timeline-menu"
+      role="menu"
+      style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}
+      use:placeMenu={{ x: contextMenu.x, y: contextMenu.y }}
+    >
       <button type="button" on:click={() => runContextAction('split')}>Split here</button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}>Delete selected segment</button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => {

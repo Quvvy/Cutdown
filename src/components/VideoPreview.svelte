@@ -38,16 +38,23 @@
   let panOriginX = 0;
   let panOriginY = 0;
   let userAdjustedView = false;
+  let suppressNextPauseEvent = false;
 
   const dispatch = createEventDispatcher<{
     timeupdate: { currentTime: number };
     metadata: { duration: number };
+    previewready: void;
+    playstate: { playing: boolean };
+    ended: void;
     error: { message: string };
     cropChange: { rect: NormalizedCropRect };
   }>();
 
+  let previewReadyForSrc: string | null = null;
+
   $: if (src !== previousSrc) {
     previousSrc = src;
+    previewReadyForSrc = null;
     loadError = '';
     userAdjustedView = false;
     resetView();
@@ -154,14 +161,36 @@
     }
 
     if (video.paused) {
-      void video.play();
+      playPlayback();
     } else {
-      video.pause();
+      pausePlayback();
     }
   }
 
-  export function pausePlayback(): void {
-    video?.pause();
+  export function playPlayback(): void {
+    if (!video) {
+      return;
+    }
+
+    void video.play().catch(() => {
+      dispatch('playstate', { playing: false });
+    });
+  }
+
+  export function pausePlayback(options: { emit?: boolean } = {}): void {
+    if (!video) {
+      return;
+    }
+
+    suppressNextPauseEvent = options.emit === false && !video.paused;
+    video.pause();
+    if (options.emit !== false) {
+      dispatch('playstate', { playing: false });
+    }
+  }
+
+  export function isReady(): boolean {
+    return Boolean(src && previewReadyForSrc === src);
   }
 
   async function handleLoadedMetadata(): Promise<void> {
@@ -172,6 +201,15 @@
     await tick();
     measureViewport();
     dispatch('metadata', { duration: video.duration || 0 });
+  }
+
+  function handleCanPlay(): void {
+    if (!src || src === previewReadyForSrc) {
+      return;
+    }
+
+    previewReadyForSrc = src;
+    dispatch('previewready');
   }
 
   function handleTimeUpdate(): void {
@@ -186,6 +224,23 @@
     }
 
     dispatch('timeupdate', { currentTime: video.currentTime });
+  }
+
+  function handlePlay(): void {
+    dispatch('playstate', { playing: true });
+  }
+
+  function handlePause(): void {
+    if (suppressNextPauseEvent) {
+      suppressNextPauseEvent = false;
+      return;
+    }
+    dispatch('playstate', { playing: false });
+  }
+
+  function handleEnded(): void {
+    suppressNextPauseEvent = false;
+    dispatch('ended');
   }
 
   function handleError(): void {
@@ -397,6 +452,10 @@
           on:click={togglePlayback}
           on:error={handleError}
           on:loadedmetadata={handleLoadedMetadata}
+          on:canplay={handleCanPlay}
+          on:play={handlePlay}
+          on:pause={handlePause}
+          on:ended={handleEnded}
           on:timeupdate={handleTimeUpdate}
         >
           <track kind="captions" />

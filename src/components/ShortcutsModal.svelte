@@ -49,7 +49,9 @@
       items: [
         'Split with S to cut the clip into kept segments. Delete removes the selected segment.',
         'Click a segment to select it; click again, press Esc, use Deselect, or click empty track space to clear selection.',
-        'I/O range defines what gets exported as one trim or what stays when you trim outside.',
+        'Set In (I) and Out (O), then use Keep range on the timeline toolbar to delete everything outside that span (one kept segment).',
+        'Trim outside range (right-click menu) clips existing segments to the I/O span instead of replacing them.',
+        'I/O range also controls single-clip export in the Export modal.',
         'Markers (M) label moments on the source timeline — useful for navigation, not export by themselves.',
         'The audio track shows a waveform; selection uses a border so the waveform stays visible.',
       ],
