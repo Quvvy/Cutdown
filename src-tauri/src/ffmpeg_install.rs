@@ -133,7 +133,7 @@ fn install_ffmpeg_windows(app: Option<&AppHandle>) -> Result<(), String> {
 #[cfg(windows)]
 fn download_package(app: Option<&AppHandle>, url: &str, destination: &Path) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
-        .user_agent("Cutdown/0.2.0")
+        .user_agent("Cutdown/0.2.1")
         .build()
         .map_err(|err| format!("Failed to create HTTP client: {err}"))?;
 

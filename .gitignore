@@ -10,3 +10,5 @@ src-tauri/.tauri
 
 public/ffmpeg/*.exe
 public/ffmpeg/*.dll
+
+release/*.exe
