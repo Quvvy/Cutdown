@@ -25,7 +25,7 @@ The validation script runs frontend typecheck, frontend unit tests, frontend bui
 
 Then complete the manual matrix in `docs/TESTING.md`, with special attention to:
 
-- First-run ffmpeg detection and **Download ffmpeg** banner.
+- Installer post-install step downloads ffmpeg (requires internet); fallback **Install ffmpeg** banner if download failed.
 - Open With / file association launch.
 - Probe, native preview, remux preview, and proxy preview.
 - Split, I/O range export, per-segment batch export, crop, volume, fade, and audio strip.
@@ -41,15 +41,14 @@ Build the installer:
 npm run tauri -- build
 ```
 
-Release installers do not bundle ffmpeg. Users can download the pinned ffmpeg build from the in-app banner or use ffmpeg/ffprobe on `PATH`.
+Release installers do not bundle ffmpeg. The installer runs `Cutdown.exe --install-dependencies` after setup to download the latest essentials build from gyan.dev. Log: `%LOCALAPPDATA%\Cutdown\install-ffmpeg.log`.
 
 ## Smoke Test
 
 On a clean Windows profile or VM:
 
-- Install from the NSIS installer.
-- Start the app with no ffmpeg on PATH and verify the banner appears.
-- Download ffmpeg from the banner and verify `ffmpeg.exe` and `ffprobe.exe` are installed under `%LOCALAPPDATA%\Cutdown\ffmpeg`.
+- Install from the NSIS installer with internet access and verify `%LOCALAPPDATA%\Cutdown\ffmpeg\ffmpeg.exe` exists afterward.
+- On a machine where installer download was skipped, start the app with no ffmpeg on PATH and verify the **Install ffmpeg** banner works.
 - Open a short MP4, split once, export with Lossless Trim, and reveal the output folder.
 - Reopen the app and verify recent source/session restore behavior.
 

@@ -63,7 +63,7 @@ Recommended caps for v0.2: single export at a time; source files up to 4K tested
 
 ## Known Issues and Risks
 
-- ffmpeg/ffprobe: on PATH or `public/ffmpeg/` for dev; release uses in-app download or PATH (not bundled in installer).
+- ffmpeg/ffprobe: on PATH or `public/ffmpeg/` for dev; release installer downloads latest essentials build to `%LOCALAPPDATA%\Cutdown\ffmpeg` (not bundled in the installer package). In-app install is a fallback.
 - Stream-copy cuts may not be frame-perfect (keyframes).
 - Preview uses a single HTML `<video>` element with seek-at-cut transitions; brief A/V blips at segment boundaries are possible (acceptable for v0.2).
 - Discord size targeting is approximate on very short or very long clips.

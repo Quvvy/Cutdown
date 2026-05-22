@@ -2649,7 +2649,7 @@
             {ffmpegInstalling
               ? ffmpegInstallMessage || 'Downloading ffmpeg…'
               : ffmpegStatus ||
-                'ffmpeg is required for export and clip analysis. Download it once (~80 MB) or install ffmpeg on PATH.'}
+                'ffmpeg is required for export and clip analysis. Re-run the installer (downloads latest ffmpeg) or use the button below (~80 MB).'}
             {#if ffmpegInstalling && ffmpegInstallPercent !== null}
               {' '}({Math.round(ffmpegInstallPercent)}%)
             {/if}
@@ -2660,7 +2660,7 @@
             disabled={ffmpegInstalling}
             on:click={() => void installFfmpeg()}
           >
-            {ffmpegInstalling ? 'Downloading…' : 'Download ffmpeg'}
+            {ffmpegInstalling ? 'Downloading…' : 'Install ffmpeg'}
           </button>
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>

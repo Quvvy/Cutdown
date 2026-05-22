@@ -71,7 +71,7 @@ Known limitations:
 
 For development, ffmpeg can be on `PATH`, or copied into `public/ffmpeg/` via `npm run prepare:ffmpeg`.
 
-**Release installers do not bundle ffmpeg.** On first run, use **Download ffmpeg** in the banner (~80 MB, one-time install to `%LOCALAPPDATA%\Cutdown\ffmpeg`). Alternatively, install ffmpeg on PATH yourself.
+**Release installers do not bundle ffmpeg.** The NSIS installer downloads the latest Windows essentials build during setup (~80 MB, one-time install to `%LOCALAPPDATA%\Cutdown\ffmpeg`). If that step fails, use **Install ffmpeg** in the app banner or install ffmpeg on PATH yourself.
 
 ## Development
 

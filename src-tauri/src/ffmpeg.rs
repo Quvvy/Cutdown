@@ -915,6 +915,10 @@ fn proxy_preview(
     )
 }
 
+pub fn ffmpeg_is_available() -> bool {
+    check_ffmpeg().available
+}
+
 #[tauri::command]
 pub fn check_ffmpeg() -> FfmpegCheckResult {
     let ffmpeg = resolve_binary("ffmpeg.exe", "ffmpeg");
@@ -927,7 +931,7 @@ pub fn check_ffmpeg() -> FfmpegCheckResult {
             ffmpeg.source, ffprobe.source
         )
     } else {
-        "ffmpeg is not installed. Use Download ffmpeg in the banner, install ffmpeg on PATH, or run npm run prepare:ffmpeg for development.".to_string()
+        "ffmpeg is not installed. Re-run the Cutdown installer (requires internet), use Download ffmpeg in the app, install ffmpeg on PATH, or run npm run prepare:ffmpeg for development.".to_string()
     };
 
     FfmpegCheckResult {
@@ -1331,21 +1335,7 @@ fn locate_binary(name: &str) -> Option<PathBuf> {
         return Some(dev_path);
     }
 
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(Path::to_path_buf))?;
-
-    [
-        exe_dir.join("ffmpeg").join(name),
-        exe_dir.join("resources").join("ffmpeg").join(name),
-        exe_dir
-            .join("..")
-            .join("Resources")
-            .join("ffmpeg")
-            .join(name),
-    ]
-    .into_iter()
-    .find(|path| path.exists())
+    None
 }
 
 fn bundled_binary(name: &str) -> Option<PathBuf> {
@@ -1365,7 +1355,7 @@ fn binary_source(path: &Path) -> String {
         return "development".to_string();
     }
 
-    "bundled".to_string()
+    "path".to_string()
 }
 
 fn parse_json_f64(value: &Value) -> Option<f64> {

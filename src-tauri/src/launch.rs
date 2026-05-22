@@ -15,7 +15,7 @@ impl LaunchState {
 
 fn parse_launch_file() -> Option<String> {
     for arg in std::env::args().skip(1) {
-        if arg.starts_with('-') {
+        if arg.starts_with('-') || arg == "--install-dependencies" {
             continue;
         }
 

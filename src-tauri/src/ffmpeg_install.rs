@@ -5,10 +5,9 @@ use std::io::{copy, Read, Write};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
-/// Pinned essentials build (Windows x64). ~80 MB download.
+/// Rolling "latest release" essentials package (Windows x64) from gyan.dev.
 const FFMPEG_PACKAGE_URL: &str =
-    "https://www.gyan.dev/ffmpeg/builds/packages/ffmpeg-7.1.1-essentials_build.zip";
-const FFMPEG_PACKAGE_LABEL: &str = "ffmpeg 7.1.1 essentials (Windows x64)";
+    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +29,17 @@ pub fn user_ffmpeg_dir() -> PathBuf {
     dirs_fallback().join("ffmpeg")
 }
 
+pub fn install_log_path() -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Ok(root) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(root).join("Cutdown").join("install-ffmpeg.log");
+        }
+    }
+
+    dirs_fallback().join("install-ffmpeg.log")
+}
+
 fn dirs_fallback() -> PathBuf {
     std::env::temp_dir().join("Cutdown")
 }
@@ -38,19 +48,33 @@ pub fn user_ffmpeg_path(name: &str) -> PathBuf {
     user_ffmpeg_dir().join(name)
 }
 
+/// Used by the NSIS installer and `cutdown.exe --install-dependencies`.
+pub fn run_headless_install() -> Result<(), String> {
+    if crate::ffmpeg::ffmpeg_is_available() {
+        log_install("ffmpeg already available; skipping download.")?;
+        return Ok(());
+    }
+
+    log_install("Starting ffmpeg install from installer…")?;
+    let result = run_install(None);
+    match &result {
+        Ok(()) => log_install("ffmpeg install finished successfully.")?,
+        Err(err) => log_install(&format!("ffmpeg install failed: {err}"))?,
+    }
+    result
+}
+
 #[tauri::command]
 pub async fn install_ffmpeg(app: AppHandle) -> Result<crate::ffmpeg::FfmpegCheckResult, String> {
-    tauri::async_runtime::spawn_blocking(move || install_ffmpeg_blocking(app))
-        .await
-        .map_err(|err| format!("ffmpeg install worker failed: {err}"))?
+    tauri::async_runtime::spawn_blocking(move || {
+        run_install(Some(&app))?;
+        Ok(crate::ffmpeg::check_ffmpeg())
+    })
+    .await
+    .map_err(|err| format!("ffmpeg install worker failed: {err}"))?
 }
 
-fn install_ffmpeg_blocking(app: AppHandle) -> Result<crate::ffmpeg::FfmpegCheckResult, String> {
-    run_install(&app)?;
-    Ok(crate::ffmpeg::check_ffmpeg())
-}
-
-pub fn run_install(app: &AppHandle) -> Result<(), String> {
+pub fn run_install(app: Option<&AppHandle>) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = app;
@@ -67,11 +91,11 @@ pub fn run_install(app: &AppHandle) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn install_ffmpeg_windows(app: &AppHandle) -> Result<(), String> {
+fn install_ffmpeg_windows(app: Option<&AppHandle>) -> Result<(), String> {
     emit(
         app,
         "download",
-        "Downloading ffmpeg (~80 MB). This only happens once.",
+        "Downloading latest ffmpeg essentials build (~80 MB)…",
         Some(0.0),
     );
 
@@ -100,14 +124,14 @@ fn install_ffmpeg_windows(app: &AppHandle) -> Result<(), String> {
     emit(
         app,
         "complete",
-        &format!("Installed {FFMPEG_PACKAGE_LABEL}."),
+        "Installed latest ffmpeg essentials (Windows x64).",
         Some(100.0),
     );
     Ok(())
 }
 
 #[cfg(windows)]
-fn download_package(app: &AppHandle, url: &str, destination: &Path) -> Result<(), String> {
+fn download_package(app: Option<&AppHandle>, url: &str, destination: &Path) -> Result<(), String> {
     let client = reqwest::blocking::Client::builder()
         .user_agent("Cutdown/0.2.0")
         .build()
@@ -229,21 +253,55 @@ fn verify_install(install_dir: &Path) -> Result<(), String> {
 
 #[cfg(windows)]
 fn write_install_note(install_dir: &Path) -> Result<(), String> {
-    let note = format!("Cutdown installed {FFMPEG_PACKAGE_LABEL}\nSource: {FFMPEG_PACKAGE_URL}\n",);
+    let ffmpeg_version = command(install_dir.join("ffmpeg.exe"))
+        .arg("-version")
+        .output()
+        .ok()
+        .map(|output| String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let note = format!(
+        "Cutdown installed ffmpeg essentials (latest release build)\nSource: {FFMPEG_PACKAGE_URL}\n{ffmpeg_version}\n",
+    );
     fs::write(install_dir.join("INSTALL.txt"), note)
         .map_err(|err| format!("Failed to write install note: {err}"))?;
     Ok(())
 }
 
-fn emit(app: &AppHandle, stage: &str, message: &str, percent: Option<f64>) {
-    let _ = app.emit(
-        "ffmpeg_install_progress",
-        FfmpegInstallProgress {
-            stage: stage.to_string(),
-            message: message.to_string(),
-            percent,
-        },
+fn emit(app: Option<&AppHandle>, stage: &str, message: &str, percent: Option<f64>) {
+    if let Some(app) = app {
+        let _ = app.emit(
+            "ffmpeg_install_progress",
+            FfmpegInstallProgress {
+                stage: stage.to_string(),
+                message: message.to_string(),
+                percent,
+            },
+        );
+    }
+}
+
+fn log_install(message: &str) -> Result<(), String> {
+    let path = install_log_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create install log folder: {err}"))?;
+    }
+
+    let line = format!(
+        "[{}] {message}\n",
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
     );
+
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|err| format!("Failed to open install log: {err}"))?;
+    file.write_all(line.as_bytes())
+        .map_err(|err| format!("Failed to write install log: {err}"))?;
+    Ok(())
 }
 
 fn temp_stamp() -> u128 {

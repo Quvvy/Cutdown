@@ -144,6 +144,15 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
+    if std::env::args().any(|arg| arg == "--install-dependencies") {
+        let code = if ffmpeg_install::run_headless_install().is_ok() {
+            0
+        } else {
+            1
+        };
+        std::process::exit(code);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
