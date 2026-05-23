@@ -6,22 +6,26 @@ const RUN_VALUE: &str = "Cutdown";
 #[tauri::command]
 pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
     if enabled {
-        #[cfg(debug_assertions)]
-        {
-            return Err(
-                "Run at startup is only available in release builds. Install Cutdown from the release installer, then enable this option in Settings.".to_string(),
-            );
-        }
-
-        let exe =
-            std::env::current_exe().map_err(|err| format!("Failed to resolve app path: {err}"))?;
-        let quoted = format!("\"{}\"", exe.to_string_lossy());
-        run_reg(&[
-            "add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f",
-        ])
+        enable_run_at_startup()
     } else {
         delete_startup_entry()
     }
+}
+
+#[cfg(debug_assertions)]
+fn enable_run_at_startup() -> Result<(), String> {
+    Err(
+        "Run at startup is only available in release builds. Install Cutdown from the release installer, then enable this option in Settings.".to_string(),
+    )
+}
+
+#[cfg(not(debug_assertions))]
+fn enable_run_at_startup() -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|err| format!("Failed to resolve app path: {err}"))?;
+    let quoted = format!("\"{}\"", exe.to_string_lossy());
+    run_reg(&[
+        "add", RUN_KEY, "/v", RUN_VALUE, "/t", "REG_SZ", "/d", &quoted, "/f",
+    ])
 }
 
 fn delete_startup_entry() -> Result<(), String> {
@@ -45,6 +49,7 @@ fn delete_startup_entry() -> Result<(), String> {
     ))
 }
 
+#[cfg(not(debug_assertions))]
 fn run_reg(args: &[&str]) -> Result<(), String> {
     let output = command("reg")
         .args(args)

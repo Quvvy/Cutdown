@@ -10,15 +10,6 @@ pub struct SavedSegment {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SavedBookmark {
-    pub id: String,
-    pub time: f64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct NormalizedCropRect {
     pub x: f64,
     pub y: f64,

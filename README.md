@@ -18,11 +18,11 @@ The current milestone is a working local multi-cut editor with compression prese
 - Export with **Lossless Trim** (stream-copy) or compressed presets: **Discord**, **Archive**, **Twitter/X**, plus **custom presets** you define in Settings.
 - Export kept segments as a sequence, or export the I/O range as a single trim.
 - Watch an OBS replay folder and get a toast when a new clip appears.
-- Use the system tray: close (X) minimizes to tray; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits.
+- Use the system tray: close (X) minimizes to tray; **Shift+X** quits; left-click the tray icon or choose **Open Editor** to restore; **Quit** exits. Optional **start minimized to tray** at login (Settings → General).
 - Review recent exports in **History**, upload to **Catbox**, **File Garden**, or a **custom HTTP server**, and copy share links.
 - Crop the preview (16:9, 9:16, or free) before export.
 - Adjust clip volume for preview and export, or **strip audio** on export.
-- **Fit**, zoom, and pan the preview; editor restores your last cut when you reopen the same source file.
+- **Fit**, zoom, and pan the preview; save edits in a **`.cutdown` project** file to reopen them later (opening a video alone always starts a fresh timeline).
 
 ### Upload targets
 

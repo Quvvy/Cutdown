@@ -2,7 +2,7 @@
 
 ## Current Status
 
-Cutdown is a multi-cut editor with I/O range editing, built-in and custom compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden via `api.filegarden.com`, custom HTTP), per-source session restore, session crop, clip volume, preview fit/zoom/pan, custom toolbar icons, and Windows tray integration.
+Cutdown is a multi-cut editor with I/O range editing, built-in and custom compression presets, watch-folder workflow, clip history, pluggable upload targets (Catbox, File Garden via `api.filegarden.com`, custom HTTP), `.cutdown` project save/open, session crop, clip volume, preview fit/zoom/pan, custom toolbar icons, and Windows tray integration (minimize on close, optional start minimized).
 
 **Timeline and segment preview are frozen for v0.2.x.** Further timeline work is limited to user-reported regressions only (no architectural churn). See [src/lib/sequencePlayback.ts](src/lib/sequencePlayback.ts).
 
@@ -14,10 +14,10 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 - Discord preset with target-size retries.
 - Export progress percent from ffmpeg stderr.
 - Watch-folder monitoring with Windows toasts (2s debounce per path).
-- Settings: watch folder, default export folder, GPU preference, run at startup, upload targets.
+- Settings: watch folder, default export folder, GPU preference, run at startup, start minimized to tray, upload targets.
 - Open With file associations and CLI launch path.
 - Editable auto-generated export filenames.
-- Minimize-to-tray on window close; left-click tray restores editor.
+- Minimize-to-tray on window close (Shift+X quits); left-click tray restores editor; optional start minimized at login.
 - Clip history drawer (`%APPDATA%/Cutdown/history.json`, 50 entries).
 - Pluggable upload providers: Catbox, File Garden (legacy API at `api.filegarden.com`, email/password), custom HTTP multipart (self-hosted).
 - Custom export presets (CRF, bitrate, target size, lossless) in Settings and Export modal.
@@ -29,8 +29,9 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 - Keyboard shortcuts modal (`?`).
 - Drag-and-drop open; recent sources toolbar menu.
 - Accurate trim export option.
-- Per-source session restore (segments, I/O, crop, volume).
-- `.cutdown` project save/open; export batch per segment; queued upload after export.
+- `.cutdown` project save/open (edits persist only via project files; reopening a video starts fresh).
+- Export batch per segment; queued upload after export.
+- Startup: deferred watch-folder init (avoids hang when drive not ready at login).
 - Audio fade in/out on export; trim quality hints in export modal.
 - Latest replay from watch folder; tray Open Watch Folder; tray minimize hint in Settings.
 - Preview playback speed (0.5×–2×) and on-demand proxy preview.
@@ -43,6 +44,7 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 
 - `npm run check` — 0 errors.
 - `cargo check` — passes.
+- `cargo test` — unit tests plus `integration_probe_and_lossless_export` when ffmpeg/ffprobe are available.
 - `npm test` — frontend unit tests (timeline mapping, sequence playback).
 - Manual matrix: [docs/TESTING.md](docs/TESTING.md) (run on real OBS clips before release).
 
@@ -89,7 +91,7 @@ Recommended caps for v0.2: single export at a time; source files up to 4K tested
 | 11 Trim Accuracy | Partial (accurate trim + export hints; UI copy polish optional) |
 | 12 Audio Editing | Partial (strip audio, fades, waveform lane; advanced audio optional) |
 | 13 Timeline Workflow | Complete (reorder, duplicate, J/K/L, snap I/O, shortcuts, keep range) |
-| 14 Session / Project Save | Complete (AppData session + `.cutdown` projects) |
+| 14 Session / Project Save | Complete (`.cutdown` projects only; no per-video auto-restore) |
 | 15 Export & Presets v2 | Partial (custom presets, batch, queued upload; queue hardening optional) |
 | 16 Preview & Input v2 | Complete (drag-drop, recent menu, fit/zoom/pan, speed, proxy) |
 | 17 OBS & Tray Workflow | Partial (watch folder, latest replay from folder; WebSocket deferred) |

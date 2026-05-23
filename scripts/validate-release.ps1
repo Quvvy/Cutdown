@@ -18,9 +18,32 @@ cargo check --manifest-path src-tauri/Cargo.toml
 Write-Host "Running cargo test..."
 cargo test --manifest-path src-tauri/Cargo.toml
 
+$ffmpegReady = $false
+if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
+  if (Get-Command ffprobe -ErrorAction SilentlyContinue) {
+    $ffmpegReady = $true
+  }
+}
+$ffmpegDevDir = Join-Path $projectRoot "public\ffmpeg"
+if (-not $ffmpegReady -and (Test-Path (Join-Path $ffmpegDevDir "ffmpeg.exe")) -and (Test-Path (Join-Path $ffmpegDevDir "ffprobe.exe"))) {
+  $env:PATH = "$ffmpegDevDir;$env:PATH"
+  $ffmpegReady = $true
+  Write-Host "Using development ffmpeg from public/ffmpeg for integration tests."
+}
+
+if ($ffmpegReady) {
+  Write-Host "Running ffmpeg integration test (integration_probe_and_lossless_export)..."
+  cargo test --manifest-path src-tauri/Cargo.toml integration_probe_and_lossless_export -- --nocapture
+} else {
+  Write-Warning "ffmpeg/ffprobe not available; integration_probe_and_lossless_export will be skipped in cargo test."
+}
+
 if (Get-Command cargo-clippy -ErrorAction SilentlyContinue) {
   Write-Host "Running cargo clippy..."
   cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+  if ($LASTEXITCODE -ne 0) {
+    throw "cargo clippy failed with exit code $LASTEXITCODE"
+  }
 } else {
   Write-Host "cargo-clippy is not installed; skipping clippy."
 }

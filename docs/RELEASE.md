@@ -50,7 +50,7 @@ On a clean Windows profile or VM:
 - Install from the NSIS installer with internet access and verify `%LOCALAPPDATA%\Cutdown\ffmpeg\ffmpeg.exe` exists afterward.
 - On a machine where installer download was skipped, start the app with no ffmpeg on PATH and verify the **Install ffmpeg** banner works.
 - Open a short MP4, split once, export with Lossless Trim, and reveal the output folder.
-- Reopen the app and verify recent source/session restore behavior.
+- Reopen the app: run-at-startup and start-minimized-to-tray behave as configured; reopening the same video does not restore cuts (only `.cutdown` projects do).
 
 ## Publish
 

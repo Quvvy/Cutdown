@@ -1597,4 +1597,82 @@ mod tests {
         assert_eq!(waveform_sample_rate(10_000.0, 2000), 50);
         assert_eq!(waveform_sample_rate(0.01, 8000), 4000);
     }
+
+    /// End-to-end probe + lossless stream-copy export (skipped when ffmpeg/ffprobe unavailable).
+    #[test]
+    fn integration_probe_and_lossless_export() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        if !ffmpeg_is_available() {
+            eprintln!("integration_probe_and_lossless_export: skipping (ffmpeg/ffprobe not available)");
+            return;
+        }
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_millis())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!("cutdown-integration-{stamp}"));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+
+        let input = dir.join("fixture.mp4");
+        let output = dir.join("export.mp4");
+
+        let fixture_output = command(ffmpeg_path())
+            .args([
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=30:duration=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440:duration=1",
+                "-shortest",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
+            ])
+            .arg(&input)
+            .output()
+            .expect("ffmpeg fixture command");
+
+        assert!(
+            fixture_output.status.success(),
+            "fixture encode failed: {}",
+            String::from_utf8_lossy(&fixture_output.stderr)
+        );
+
+        let input_key = input.to_string_lossy().to_string();
+        let metadata = probe_video(input_key).expect("probe_video should succeed");
+        assert!(metadata.duration > 0.5, "expected ~1s fixture duration");
+        assert!(metadata.width > 0 && metadata.height > 0);
+
+        export_segment(
+            None,
+            &input,
+            &output,
+            0.0,
+            metadata.duration.min(0.5),
+            AudioMode::Preserve,
+            1.0,
+            0.0,
+            0.0,
+            metadata.duration.min(0.5),
+        )
+        .expect("lossless export should succeed");
+
+        let exported_size = std::fs::metadata(&output)
+            .expect("exported file metadata")
+            .len();
+        assert!(exported_size > 1024, "exported file should be non-trivial");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
