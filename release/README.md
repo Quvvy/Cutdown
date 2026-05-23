@@ -2,6 +2,12 @@
 
 Installer builds are written here locally and are not committed to git.
 
+## v0.2.3
+
+- **File:** `Cutdown_0.2.3_x64-setup.exe`
+- **Build:** `npm run validate:release` then `npm run tauri -- build`
+- **Notes:** Fixes timeline layout (video/audio tracks fill the pane; drag resize works; no blank gap under tracks).
+
 ## v0.2.2
 
 - **File:** `Cutdown_0.2.2_x64-setup.exe`
