@@ -86,6 +86,17 @@ fn save_editor_settings(
     Ok(settings)
 }
 
+#[cfg(windows)]
+fn shift_key_held() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SHIFT};
+    unsafe { GetAsyncKeyState(VK_SHIFT as i32) as u16 & 0x8000 != 0 }
+}
+
+#[cfg(not(windows))]
+fn shift_key_held() -> bool {
+    false
+}
+
 fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     let open_editor = MenuItem::with_id(app, "open_editor", "Open Editor", true, None::<&str>)?;
     let open_watch_folder = MenuItem::with_id(
@@ -162,8 +173,13 @@ fn main() {
 
             if let Some(window) = app.get_webview_window("main") {
                 let window_for_close = window.clone();
+                let app_for_close = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
+                        if shift_key_held() {
+                            app_for_close.exit(0);
+                            return;
+                        }
                         api.prevent_close();
                         let _ = window_for_close.hide();
                     }
@@ -171,6 +187,13 @@ fn main() {
             }
 
             watch_folder::manage_state(app)?;
+
+            if settings::load_settings().start_minimized_to_tray {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -205,8 +228,6 @@ fn main() {
             upload::save_upload_providers,
             upload::get_upload_providers_for_editor,
             upload::copy_text_to_clipboard,
-            source_session::get_source_session,
-            source_session::save_source_session,
             project::save_project_file,
             project::load_project_file,
             obs::find_latest_replay_in_folder,

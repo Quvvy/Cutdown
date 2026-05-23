@@ -95,6 +95,7 @@
     lastPresetId: string;
     preferGpuEncoding: boolean;
     runAtStartup: boolean;
+    startMinimizedToTray: boolean;
     catboxUserHash: string | null;
     catboxApiUrl: string | null;
     recentSources: string[];
@@ -106,19 +107,6 @@
   type PreviewResult = {
     previewPath: string;
     strategy: 'Preview remux' | 'Preview proxy';
-  };
-
-  type SourceSession = {
-    sourcePath: string;
-    segments: TimelineSegment[];
-    selectedSegmentId: string | null;
-    rangeStart: number | null;
-    rangeEnd: number | null;
-    cropEnabled: boolean;
-    cropRect: NormalizedCropRect;
-    clipVolume: number;
-    currentTime: number | null;
-    bookmarks?: TimelineBookmark[];
   };
 
   let preview:
@@ -156,7 +144,6 @@
   let fadeOutSeconds = 0;
   let previewPlaybackRate = 1;
   let exportQueueProcessing = false;
-  let persistSessionTimer: ReturnType<typeof setTimeout> | null = null;
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
   let cropEnabled = false;
@@ -178,6 +165,7 @@
   let preferGpuEncoding = true;
   let defaultExportDir: string | null = null;
   let runAtStartup = false;
+  let startMinimizedToTray = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
   const sequencePlayback = createSequencePlaybackDriver(
@@ -465,6 +453,7 @@
       exportPresetId = settings.lastPresetId || 'lossless-trim';
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
+      startMinimizedToTray = settings.startMinimizedToTray;
       uploadProviders = resolveUploadProvidersFromSettings(settings);
       const bootstrapSettingsRecord = settings as AppSettings & Record<string, unknown>;
       defaultUploadProviderId =
@@ -758,48 +747,6 @@
     redoHistory = [];
   }
 
-  function schedulePersistSession(): void {
-    if (!$editor.currentFile || !metadata) {
-      return;
-    }
-
-    if (persistSessionTimer) {
-      clearTimeout(persistSessionTimer);
-    }
-
-    persistSessionTimer = setTimeout(() => {
-      persistSessionTimer = null;
-      void persistSession();
-    }, 500);
-  }
-
-  async function persistSession(): Promise<void> {
-    const file = get(editor).currentFile;
-    if (!file || !metadata) {
-      return;
-    }
-
-    try {
-      await invoke('save_source_session', {
-        session: {
-          sourcePath: file,
-          segments: get(editor).segments,
-          selectedSegmentId: get(editor).selectedSegmentId,
-          rangeStart,
-          rangeEnd,
-          cropEnabled,
-          cropRect,
-          clipVolume,
-          currentTime: get(editor).currentTime,
-          bookmarks,
-        },
-        duration: metadata.duration,
-      });
-    } catch {
-      // Session persistence is best-effort.
-    }
-  }
-
   function undoSegmentEdit(): void {
     const snapshot = segmentHistory[segmentHistory.length - 1];
 
@@ -821,7 +768,6 @@
       selectedSegmentId: snapshot.selectedSegmentId,
     }));
     pushToast('Undid last edit.');
-    schedulePersistSession();
   }
 
   function redoSegmentEdit(): void {
@@ -845,7 +791,6 @@
       selectedSegmentId: snapshot.selectedSegmentId,
     }));
     pushToast('Redid edit.');
-    schedulePersistSession();
   }
 
   async function chooseClip(): Promise<void> {
@@ -885,10 +830,6 @@
     }
 
     void cleanupPreview($editor.previewTempPath);
-    if (persistSessionTimer) {
-      clearTimeout(persistSessionTimer);
-      persistSessionTimer = null;
-    }
 
     segmentHistory = [];
     redoHistory = [];
@@ -925,49 +866,18 @@
 
     try {
       const probed = await invoke<VideoMetadata>('probe_video', { path: selected });
-      const saved = await invoke<SourceSession | null>('get_source_session', {
-        path: selected,
-        duration: probed.duration,
-      });
-
-      if (saved?.segments?.length) {
-        rangeStart = saved.rangeStart ?? 0;
-        rangeEnd = saved.rangeEnd ?? probed.duration;
-        clipVolume = clamp(saved.clipVolume ?? 1, 0, 1);
-        cropEnabled = saved.cropEnabled;
-        cropRect = saved.cropRect;
-        bookmarks = (saved.bookmarks ?? []).map((bookmark) => ({
-          id: bookmark.id,
-          time: bookmark.time,
-          label: bookmark.label,
-        }));
-        editor.update((state) => ({
-          ...state,
-          metadata: probed,
-          segments: saved.segments,
-          selectedSegmentId: saved.selectedSegmentId,
-          currentTime: clamp(saved.currentTime ?? 0, 0, probed.duration),
-          exportStatus: {
-            state: 'idle',
-            message: `Restored session for ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
-          },
-        }));
-        await tick();
-        seekTo(get(editor).currentTime);
-      } else {
-        rangeStart = 0;
-        rangeEnd = probed.duration;
-        editor.update((state) => ({
-          ...state,
-          metadata: probed,
-          segments: [createFullSegment(probed.duration)],
-          selectedSegmentId: null,
-          exportStatus: {
-            state: 'idle',
-            message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
-          },
-        }));
-      }
+      rangeStart = 0;
+      rangeEnd = probed.duration;
+      editor.update((state) => ({
+        ...state,
+        metadata: probed,
+        segments: [createFullSegment(probed.duration)],
+        selectedSegmentId: null,
+        exportStatus: {
+          state: 'idle',
+          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
+        },
+      }));
 
       queueWaveformAfterPreview(selected, probed.audioCodec != null, probed.duration);
       syncExportDefaultsForClip();
@@ -1085,7 +995,6 @@
     }
     refreshPreviewPlaybackAfterSegmentEdit();
     if (persist) {
-      schedulePersistSession();
     }
   }
 
@@ -1111,7 +1020,6 @@
     }));
     pushToast('Deleted selected segment.');
     refreshPreviewPlaybackAfterSegmentEdit();
-    schedulePersistSession();
   }
 
   function duplicateSelectedSegment(): void {
@@ -1144,7 +1052,6 @@
     });
     pushToast('Duplicated selected segment.');
     refreshPreviewPlaybackAfterSegmentEdit();
-    schedulePersistSession();
   }
 
   function reorderSegment(id: string, toIndex: number): void {
@@ -1171,7 +1078,6 @@
       };
     });
     refreshPreviewPlaybackAfterSegmentEdit();
-    schedulePersistSession();
   }
 
   function splitAtRangeMarkers(): void {
@@ -1184,7 +1090,6 @@
     splitAtTime(normalizedRange.end, { recordUndo: false, persist: false, toast: false });
     pushToast(`Split at I/O markers.`);
     refreshPreviewPlaybackAfterSegmentEdit();
-    schedulePersistSession();
   }
 
   function keepOnlyRange(): void {
@@ -1210,7 +1115,6 @@
     }));
     pushToast(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`, 'success');
     seekTo(normalizedRange.start);
-    schedulePersistSession();
   }
 
   function deleteOutsideRange(): void {
@@ -1258,13 +1162,11 @@
       };
     });
     refreshPreviewPlaybackAfterSegmentEdit();
-    schedulePersistSession();
   }
 
   function handleVolumeInput(event: Event): void {
     const value = Number((event.currentTarget as HTMLInputElement).value);
     clipVolume = clamp(value / 100, 0, 1);
-    schedulePersistSession();
   }
 
   function toggleRangeLoop(): void {
@@ -1300,13 +1202,11 @@
       rangeEnd = nextTime;
     }
 
-    schedulePersistSession();
   }
 
   function clearRange(): void {
     rangeStart = null;
     rangeEnd = null;
-    schedulePersistSession();
   }
 
   function defaultBookmarkLabel(): string {
@@ -1331,7 +1231,6 @@
     };
     bookmarks = [...bookmarks, entry].sort((left, right) => left.time - right.time);
     selectedBookmarkId = entry.id;
-    schedulePersistSession();
   }
 
   function updateBookmarkLabel(id: string, label: string): void {
@@ -1339,7 +1238,6 @@
     bookmarks = bookmarks.map((bookmark) =>
       bookmark.id === id ? { ...bookmark, label: trimmed || formatTime(bookmark.time) } : bookmark,
     );
-    schedulePersistSession();
   }
 
   function removeBookmark(id: string): void {
@@ -1347,7 +1245,6 @@
     if (selectedBookmarkId === id) {
       selectedBookmarkId = null;
     }
-    schedulePersistSession();
   }
 
   function deleteSelectedBookmark(): void {
@@ -1590,6 +1487,7 @@
     exportPresetId = settings.lastPresetId || 'lossless-trim';
     preferGpuEncoding = settings.preferGpuEncoding;
     runAtStartup = settings.runAtStartup;
+    startMinimizedToTray = settings.startMinimizedToTray;
     uploadProviders = resolveUploadProvidersFromSettings(settings);
     defaultUploadProviderId =
       readDefaultUploadProviderId(settingsRecord) ??
@@ -1639,14 +1537,12 @@
 
     if (aspect === 'free') {
       cropLockAspect = false;
-      schedulePersistSession();
       return;
     }
 
     cropLockAspect = true;
 
     if (!metadata) {
-      schedulePersistSession();
       return;
     }
 
@@ -1678,7 +1574,6 @@
       width,
       height,
     };
-    schedulePersistSession();
   }
 
   async function refreshClipHistory(): Promise<void> {
@@ -2512,7 +2407,6 @@
       currentTime: clamp(project.currentTime ?? 0, 0, state.metadata?.duration ?? 0),
       exportStatus: { state: 'idle', message: `Loaded project ${projectLabel}.` },
     }));
-    schedulePersistSession();
     await tick();
     seekTo(get(editor).currentTime);
     pushToast(`Loaded project ${projectLabel}.`, 'success');
@@ -2667,7 +2561,7 @@
       {/if}
       {#if !trayHintDismissed}
         <div class="tray-hint-banner">
-          <span>Closing the window minimizes Cutdown to the system tray. Use the tray icon or Open Editor to restore.</span>
+          <span>Closing the window minimizes Cutdown to the system tray. Hold Shift while clicking X to quit. Use the tray icon or Open Editor to restore.</span>
           <button type="button" class="secondary" on:click={dismissTrayHint}>Dismiss</button>
         </div>
       {/if}
@@ -2748,7 +2642,6 @@
         disabled={!$editor.currentFile}
         on:click={() => {
           cropEnabled = !cropEnabled;
-          schedulePersistSession();
         }}
       />
       <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
@@ -2883,7 +2776,6 @@
       lockedAspectRatio={cropLockedAspectRatio}
       on:cropChange={(event) => {
         cropRect = event.detail.rect;
-        schedulePersistSession();
       }}
       on:metadata={() => {}}
       on:previewready={handlePreviewReady}
@@ -3254,6 +3146,7 @@
   {exportPresetId}
   {preferGpuEncoding}
   {runAtStartup}
+  {startMinimizedToTray}
   bind:uploadProviders
   bind:defaultUploadProviderId
   bind:customExportPresets
@@ -3271,6 +3164,7 @@
     exportPresetId = event.detail.lastPresetId;
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
+    startMinimizedToTray = event.detail.startMinimizedToTray;
     customExportPresets = event.detail.customExportPresets;
     try {
       await reloadUploadProvidersFromDisk();

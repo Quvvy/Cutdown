@@ -6,6 +6,13 @@ const RUN_VALUE: &str = "Cutdown";
 #[tauri::command]
 pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
     if enabled {
+        #[cfg(debug_assertions)]
+        {
+            return Err(
+                "Run at startup is only available in release builds. Install Cutdown from the release installer, then enable this option in Settings.".to_string(),
+            );
+        }
+
         let exe =
             std::env::current_exe().map_err(|err| format!("Failed to resolve app path: {err}"))?;
         let quoted = format!("\"{}\"", exe.to_string_lossy());

@@ -1711,6 +1711,20 @@ kbd {
   gap: 10px;
 }
 
+label.modal__mode {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  font-size: 0.9rem;
+  gap: 8px;
+}
+
+label.modal__mode input[type='checkbox'],
+label.modal__mode input[type='radio'] {
+  flex-shrink: 0;
+}
+
 .modal__mode label {
   align-items: flex-start;
   display: flex;
@@ -1970,6 +1984,18 @@ kbd {
   font-family: inherit;
   gap: 4px;
   margin-top: 8px;
+}
+
+label.modal__stack:has(> input[type='checkbox']) {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+label.modal__stack:has(> input[type='checkbox']) input[type='checkbox'] {
+  flex-shrink: 0;
 }
 
 .modal__stack span {
