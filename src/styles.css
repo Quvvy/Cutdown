@@ -804,7 +804,8 @@ kbd {
   display: grid;
   flex: 1 1 auto;
   grid-template-columns: 78px minmax(0, 1fr);
-  grid-template-rows: 25px var(--video-track-height, 80px) 6px var(--audio-track-height, 64px);
+  /* Row sizes are set inline from Timeline (fr split fills the pane — no dead space below tracks). */
+  grid-template-rows: 25px minmax(42px, 1fr) 6px minmax(38px, 1fr);
   min-height: 0;
   overflow: hidden;
   position: relative;

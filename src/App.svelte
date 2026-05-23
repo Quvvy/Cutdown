@@ -2916,8 +2916,8 @@
     rangeStart={normalizedRange?.start ?? null}
     rangeEnd={normalizedRange?.end ?? null}
     zoom={timelineZoom}
-    videoTrackHeight={videoTrackHeight}
-    audioTrackHeight={audioTrackHeight}
+    bind:videoTrackHeight
+    bind:audioTrackHeight
     audioCodec={metadata?.audioCodec ?? null}
     audioChannels={metadata?.audioChannels ?? null}
     on:seek={(event) => seekTo(event.detail.seconds)}

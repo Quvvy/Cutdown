@@ -18,6 +18,8 @@
   export let zoom = 28;
   export let videoTrackHeight = 68;
   export let audioTrackHeight = 58;
+  /** Filled by layout; used for waveform canvas sizing. */
+  let audioLaneHeight = 58;
   export let audioCodec: string | null = null;
   export let audioChannels: number | null = null;
   export let bookmarks: TimelineBookmark[] = [];
@@ -42,8 +44,7 @@
   let activeMarker: 'start' | 'end' | null = null;
   let activeResize = false;
   let resizeStartY = 0;
-  let resizeStartVideoHeight = 0;
-  let resizeStartAudioHeight = 0;
+  let resizeStartSplitRatio = 0.55;
   let contextMenu:
     | {
         x: number;
@@ -432,49 +433,66 @@
     );
   }
 
-  function emitTrackHeights(video: number, audio: number): void {
+  function syncTrackHeightProps(video: number, audio: number): void {
     if (video === videoTrackHeight && audio === audioTrackHeight) {
       return;
     }
 
+    videoTrackHeight = video;
+    audioTrackHeight = audio;
     dispatch('trackHeightChange', { videoHeight: video, audioHeight: audio });
   }
 
-  function layoutTracksFromBody(): void {
+  function measureTrackHeights(): void {
+    if (!timelineBody) {
+      return;
+    }
+
     const usable = usableTrackHeight();
     const video = clamp(
       Math.round(usable * trackSplitRatio),
       MIN_VIDEO_TRACK_HEIGHT,
       usable - MIN_AUDIO_TRACK_HEIGHT,
     );
-    const audio = usable - video;
-    trackSplitRatio = video / usable;
-    emitTrackHeights(video, audio);
+    const audio = Math.max(MIN_AUDIO_TRACK_HEIGHT, usable - video);
+    syncTrackHeightProps(video, audio);
   }
+
+  $: trackGridTemplateRows = `25px minmax(${MIN_VIDEO_TRACK_HEIGHT}px, ${trackSplitRatio}fr) 6px minmax(${MIN_AUDIO_TRACK_HEIGHT}px, ${1 - trackSplitRatio}fr)`;
 
   onMount(() => {
     trackSplitRatio = readTrackSplitRatio();
-    const observer = new ResizeObserver(() => {
+
+    const bodyObserver = new ResizeObserver(() => {
       if (!activeResize) {
-        layoutTracksFromBody();
+        measureTrackHeights();
+      }
+
+      if (audioScroll) {
+        audioLaneHeight = audioScroll.clientHeight;
       }
     });
 
     if (timelineBody) {
-      observer.observe(timelineBody);
+      bodyObserver.observe(timelineBody);
     }
 
-    void tick().then(() => layoutTracksFromBody());
+    void tick().then(() => {
+      measureTrackHeights();
 
-    return () => observer.disconnect();
+      if (audioScroll) {
+        audioLaneHeight = audioScroll.clientHeight;
+      }
+    });
+
+    return () => bodyObserver.disconnect();
   });
 
   function startTrackResize(event: PointerEvent): void {
     event.preventDefault();
     activeResize = true;
     resizeStartY = event.clientY;
-    resizeStartVideoHeight = videoTrackHeight;
-    resizeStartAudioHeight = audioTrackHeight;
+    resizeStartSplitRatio = trackSplitRatio;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
 
@@ -483,14 +501,9 @@
       return;
     }
 
-    const usable = usableTrackHeight();
+    const usable = Math.max(usableTrackHeight(), 1);
     const delta = event.clientY - resizeStartY;
-    const video = clamp(
-      resizeStartVideoHeight + delta,
-      MIN_VIDEO_TRACK_HEIGHT,
-      usable - MIN_AUDIO_TRACK_HEIGHT,
-    );
-    emitTrackHeights(video, usable - video);
+    trackSplitRatio = clamp(resizeStartSplitRatio + delta / usable, 0.22, 0.78);
   }
 
   function stopTrackResize(event: PointerEvent): void {
@@ -500,21 +513,17 @@
     }
 
     if (activeResize) {
-      const usable = usableTrackHeight();
-      trackSplitRatio = clamp(videoTrackHeight / usable, 0.22, 0.78);
       persistTrackSplitRatio();
     }
 
     activeResize = false;
-    layoutTracksFromBody();
+    measureTrackHeights();
   }
 
   function toggleAudioExpanded(): void {
-    const usable = usableTrackHeight();
-    trackSplitRatio =
-      audioTrackHeight < usable * 0.42 ? 0.58 : 0.38;
+    trackSplitRatio = trackSplitRatio < 0.45 ? 0.58 : 0.38;
     persistTrackSplitRatio();
-    layoutTracksFromBody();
+    measureTrackHeights();
   }
 
   function segmentSequenceStart(index: number): number {
@@ -678,7 +687,7 @@
   <div
     class="timeline__body"
     bind:this={timelineBody}
-    style={`--video-track-height: ${videoTrackHeight}px; --audio-track-height: ${audioTrackHeight}px`}
+    style={`grid-template-rows: ${trackGridTemplateRows}`}
   >
     {#if disabled}
       <div class="timeline__empty">Open a video or drop a file to start cutting.</div>
@@ -840,7 +849,7 @@
             {selectedSegmentId}
             pixelsPerSecond={pixelsPerSecond}
             width={timelineWidth}
-            height={Math.max(24, audioTrackHeight - 8)}
+            height={Math.max(24, audioLaneHeight - 8)}
             outputDuration={outputDuration}
           />
         {/if}
