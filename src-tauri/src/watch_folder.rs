@@ -32,8 +32,31 @@ impl WatchFolderState {
 
 pub fn manage_state(app: &tauri::App) -> Result<(), String> {
     app.manage(Mutex::new(WatchFolderState::new()));
-    restart_watcher(app.handle().clone())?;
+    // Never block app startup on folder I/O — at login a watch path on H: or a network
+    // drive can stall `is_dir()` long enough to freeze the window (white screen).
+    spawn_restart_watcher(app.handle().clone());
     Ok(())
+}
+
+/// Starts or restarts the watcher on a background thread with retries (login / drive spin-up).
+pub fn spawn_restart_watcher(app: AppHandle) {
+    std::thread::spawn(move || {
+        const MAX_ATTEMPTS: u32 = 12;
+        const RETRY_DELAY: Duration = Duration::from_secs(5);
+
+        for attempt in 0..MAX_ATTEMPTS {
+            if attempt > 0 {
+                std::thread::sleep(RETRY_DELAY);
+            }
+            match restart_watcher(app.clone()) {
+                Ok(()) => return,
+                Err(err) => eprintln!(
+                    "watch folder watcher (attempt {}/{MAX_ATTEMPTS}): {err}",
+                    attempt + 1
+                ),
+            }
+        }
+    });
 }
 
 pub fn restart_watcher(app: AppHandle) -> Result<(), String> {
@@ -56,9 +79,7 @@ pub fn restart_watcher(app: AppHandle) -> Result<(), String> {
         .ok_or_else(|| "Watch folder is not configured.".to_string())?;
     let folder_path = PathBuf::from(folder);
 
-    if !folder_path.is_dir() {
-        return Err(format!("Watch folder does not exist: {folder}"));
-    }
+    watch_folder_accessible(&folder_path)?;
 
     let app_handle = app.clone();
     let watcher = notify::recommended_watcher(move |result| {
@@ -75,6 +96,57 @@ pub fn restart_watcher(app: AppHandle) -> Result<(), String> {
 
     guard.watcher = Some(watcher);
     Ok(())
+}
+
+fn watch_folder_accessible(folder_path: &Path) -> Result<(), String> {
+    if !path_root_is_available(folder_path) {
+        return Err(format!(
+            "Watch folder drive is not available yet: {}",
+            folder_path.display()
+        ));
+    }
+
+    if !folder_path.is_dir() {
+        return Err(format!(
+            "Watch folder does not exist: {}",
+            folder_path.display()
+        ));
+    }
+
+    Ok(())
+}
+
+/// Returns false when a Windows drive letter is not mounted yet (avoids blocking I/O).
+fn path_root_is_available(path: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::GetDriveTypeW;
+
+        let Some(text) = path.to_str() else {
+            return true;
+        };
+
+        let prefix = if text.len() >= 2 && text.as_bytes()[1] == b':' {
+            format!("{}\\", &text[..2])
+        } else {
+            return true;
+        };
+
+        let wide: Vec<u16> = std::ffi::OsStr::new(&prefix)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
+        let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
+        // DRIVE_UNKNOWN (0) and DRIVE_NO_ROOT_DIR (1) — drive letter not ready at login.
+        return drive_type > 1;
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = path;
+        true
+    }
 }
 
 fn handle_notify_event(app: &AppHandle, event: notify::Event) {
