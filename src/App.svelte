@@ -1,5 +1,6 @@
 <script lang="ts">
   import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+  import { getVersion } from '@tauri-apps/api/app';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { confirm, open, save } from '@tauri-apps/plugin-dialog';
@@ -19,7 +20,9 @@
   import Timeline from './components/Timeline.svelte';
   import ToastHost from './components/ToastHost.svelte';
   import UploadTargetModal from './components/UploadTargetModal.svelte';
+  import UpdateModal from './components/UpdateModal.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
+  import { checkForAppUpdate, installAppUpdate } from './lib/appUpdate';
   import {
     clamp,
     formatBytes,
@@ -56,6 +59,7 @@
     type VideoMetadata,
   } from './stores/editor';
   import { pushToast } from './stores/toasts';
+  import type { Update } from '@tauri-apps/plugin-updater';
 
   type ExportResult = {
     outputPath: string;
@@ -144,6 +148,16 @@
     | undefined;
   let exportModalOpen = false;
   let settingsModalOpen = false;
+  let updateModalOpen = false;
+  let pendingUpdate: Update | null = null;
+  let updateInstallVersion = '';
+  let updateInstallNotes = '';
+  let updateInstalling = false;
+  let updateInstallError = '';
+  let updateDownloadedBytes = 0;
+  let updateTotalBytes: number | null = null;
+  let updateCheckRunning = false;
+  let appVersion = '0.0.0';
   let settingsInitialTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
   let shortcutsModalOpen = false;
   let historyDrawerOpen = false;
@@ -355,6 +369,10 @@
     }
     void bootstrapApp();
 
+    const updateCheckTimer = window.setTimeout(() => {
+      void checkForUpdates();
+    }, 8000);
+
     const unlistenFfmpegInstall = listen<{
       stage: string;
       message: string;
@@ -403,6 +421,7 @@
     });
 
     return () => {
+      window.clearTimeout(updateCheckTimer);
       sequencePlayback.dispose();
       void unlistenFfmpegInstall.then((stop) => stop());
       void unlistenExport.then((stop) => stop());
@@ -451,8 +470,76 @@
     }
   }
 
+  async function refreshAppVersion(): Promise<void> {
+    try {
+      appVersion = await getVersion();
+    } catch {
+      appVersion = '0.0.0';
+    }
+  }
+
+  function openUpdateModal(update: Update): void {
+    pendingUpdate = update;
+    updateInstallVersion = update.version;
+    updateInstallNotes = update.body ?? '';
+    updateInstallError = '';
+    updateInstalling = false;
+    updateDownloadedBytes = 0;
+    updateTotalBytes = null;
+    updateModalOpen = true;
+  }
+
+  async function checkForUpdates(options: { manual?: boolean } = {}): Promise<void> {
+    if (updateCheckRunning) {
+      return;
+    }
+
+    updateCheckRunning = true;
+    try {
+      const result = await checkForAppUpdate();
+      if (result.status === 'available') {
+        openUpdateModal(result.update);
+        return;
+      }
+
+      if (result.status === 'upToDate') {
+        if (options.manual) {
+          pushToast('Cutdown is up to date.', 'success');
+        }
+        return;
+      }
+
+      if (options.manual) {
+        pushToast(result.message, 'error');
+      }
+    } finally {
+      updateCheckRunning = false;
+    }
+  }
+
+  async function installPendingUpdate(): Promise<void> {
+    if (!pendingUpdate || updateInstalling) {
+      return;
+    }
+
+    updateInstalling = true;
+    updateInstallError = '';
+
+    try {
+      await installAppUpdate(pendingUpdate, ({ downloadedBytes, totalBytes }) => {
+        updateDownloadedBytes = downloadedBytes;
+        updateTotalBytes = totalBytes;
+      });
+    } catch (error) {
+      updateInstalling = false;
+      updateInstallError = error instanceof Error ? error.message : String(error);
+      pushToast(updateInstallError, 'error');
+    }
+  }
+
   async function bootstrapApp(): Promise<void> {
     try {
+      await refreshAppVersion();
       const [settings, ffmpeg, presets, encoders, launchPath] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<FfmpegCheckResult>('check_ffmpeg'),
@@ -1175,6 +1262,71 @@
     });
     refreshPreviewPlaybackAfterSegmentEdit();
     schedulePersistSession();
+  }
+
+  function resizeSegment(
+    id: string,
+    sourceStart: number,
+    sourceEnd: number,
+    options: { recordUndo?: boolean; commit?: boolean } = {},
+  ): void {
+    const { recordUndo = false, commit = false } = options;
+    if (!canExport) {
+      return;
+    }
+
+    const targetSegment = $editor.segments.find((segment) => segment.id === id);
+    if (!targetSegment) {
+      return;
+    }
+
+    if (
+      sourceStart === targetSegment.sourceStart &&
+      sourceEnd === targetSegment.sourceEnd &&
+      !commit
+    ) {
+      if (recordUndo) {
+        pushUndoSnapshot();
+      }
+      return;
+    }
+
+    if (recordUndo) {
+      pushUndoSnapshot();
+    }
+
+    editor.update((state) => {
+      const nextSegments = state.segments.map((segment) =>
+        segment.id === id ? { ...segment, sourceStart, sourceEnd } : segment,
+      );
+      const resizedSegment = nextSegments.find((segment) => segment.id === id);
+      let nextCurrentTime = state.currentTime;
+
+      if (
+        resizedSegment &&
+        state.currentTime >= targetSegment.sourceStart &&
+        state.currentTime <= targetSegment.sourceEnd
+      ) {
+        nextCurrentTime = clamp(
+          state.currentTime,
+          resizedSegment.sourceStart,
+          Math.max(resizedSegment.sourceStart, resizedSegment.sourceEnd - 0.001),
+        );
+      }
+
+      return {
+        ...state,
+        segments: nextSegments,
+        currentTime: nextCurrentTime,
+        selectedSegmentId: id,
+      };
+    });
+
+    refreshPreviewPlaybackAfterSegmentEdit();
+
+    if (commit) {
+      schedulePersistSession();
+    }
   }
 
   function splitAtRangeMarkers(): void {
@@ -3050,6 +3202,11 @@
     on:trimOutsideRange={deleteOutsideRange}
     on:toggleRangeLoop={toggleRangeLoop}
     on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.toIndex)}
+    on:segmentResize={(event) =>
+      resizeSegment(event.detail.id, event.detail.sourceStart, event.detail.sourceEnd, {
+        recordUndo: event.detail.recordUndo,
+        commit: event.detail.commit,
+      })}
     on:bookmarkClick={(event) => {
       const bookmark = bookmarks.find((entry) => entry.id === event.detail.id);
       if (bookmark) {
@@ -3259,6 +3416,7 @@
   {preferGpuEncoding}
   {runAtStartup}
   {startMinimizedToTray}
+  {appVersion}
   bind:uploadProviders
   bind:defaultUploadProviderId
   bind:customExportPresets
@@ -3266,6 +3424,7 @@
   {gpuEncoders}
   on:close={() => (settingsModalOpen = false)}
   on:restoreTrayHint={restoreTrayHint}
+  on:checkForUpdates={() => void checkForUpdates({ manual: true })}
   on:error={(event) => {
     pushToast(event.detail.message, 'error');
   }}
@@ -3302,6 +3461,23 @@
 />
 
 <ShortcutsModal open={shortcutsModalOpen} on:close={() => (shortcutsModalOpen = false)} />
+
+<UpdateModal
+  visible={updateModalOpen}
+  version={updateInstallVersion}
+  notes={updateInstallNotes}
+  currentVersion={appVersion}
+  installing={updateInstalling}
+  installError={updateInstallError}
+  downloadedBytes={updateDownloadedBytes}
+  totalBytes={updateTotalBytes}
+  on:close={() => {
+    if (!updateInstalling) {
+      updateModalOpen = false;
+    }
+  }}
+  on:install={() => void installPendingUpdate()}
+/>
 
 <ClipHistoryDrawer
   open={historyDrawerOpen}

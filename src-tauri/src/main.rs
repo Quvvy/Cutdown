@@ -154,6 +154,8 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(LaunchState::new())
@@ -172,7 +174,10 @@ fn main() {
 
             watch_folder::manage_state(app)?;
 
-            if settings::load_settings().start_minimized_to_tray {
+            let settings = settings::load_settings();
+            windows_integration::ensure_run_at_startup_on_launch(settings.run_at_startup);
+
+            if settings.start_minimized_to_tray {
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.hide();
                 }

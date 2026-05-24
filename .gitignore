@@ -2,6 +2,7 @@ node_modules
 dist
 dist-ssr
 *.local
+.tauri/
 
 src-tauri/target
 target

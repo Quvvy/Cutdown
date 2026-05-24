@@ -35,6 +35,7 @@
   export let preferGpuEncoding = true;
   export let runAtStartup = false;
   export let startMinimizedToTray = false;
+  export let appVersion = '0.0.0';
   export let uploadProviders: UploadProvider[] = [];
   export let defaultUploadProviderId: string | null = null;
   export let customExportPresets: CustomExportPreset[] = [];
@@ -59,6 +60,7 @@
   const dispatch = createEventDispatcher<{
     close: void;
     restoreTrayHint: void;
+    checkForUpdates: void;
     error: { message: string };
     saved: {
       watchFolder: string | null;
@@ -334,6 +336,16 @@
         <button type="button" class="secondary" on:click={() => dispatch('restoreTrayHint')}>
           Show tray minimize tip again
         </button>
+      </div>
+      <div class="panel-field">
+        <span>Updates</span>
+        <div class="panel-info">Installed version {appVersion}</div>
+        <button type="button" class="secondary" on:click={() => dispatch('checkForUpdates')}>
+          Check for updates
+        </button>
+        <p class="modal__hint">
+          Updates download from GitHub releases and install in place. Cutdown restarts automatically after installing.
+        </p>
       </div>
     </div>
   {:else if activeTab === 'folders'}

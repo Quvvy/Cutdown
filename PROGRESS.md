@@ -38,6 +38,7 @@ Cutdown is a multi-cut editor with I/O range editing, built-in and custom compre
 - Segment-aware preview driver (`sequencePlayback.ts`) for reordered timelines.
 - Keep-only I/O range; `npm run validate:release` smoke script.
 - GitHub Actions CI (Windows): typecheck, frontend tests, Rust check/test, Clippy when available.
+- **v0.2.4:** In-app updater (GitHub releases + signed NSIS), Settings check-for-updates, run-at-startup targets installed app, segment edge drag to trim/extend cuts.
 
 ## Validation
 

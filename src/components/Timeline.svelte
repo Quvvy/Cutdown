@@ -4,6 +4,7 @@
   import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
   import { placeMenu } from '../lib/placeMenu';
+  import { resizeSegmentBounds, type SegmentEdge } from '../lib/segmentBounds';
   import { sequenceToSourceTime as mapSequenceToSourceTime, sourceToSequenceTime as mapSourceToSequenceTime } from '../lib/timelineMapping';
   import type { TimelineBookmark } from '../lib/types';
   import type { TimelineSegment } from '../stores/editor';
@@ -77,6 +78,13 @@
     trimOutsideRange: void;
     toggleRangeLoop: void;
     reorderSegment: { id: string; toIndex: number };
+    segmentResize: {
+      id: string;
+      sourceStart: number;
+      sourceEnd: number;
+      recordUndo: boolean;
+      commit: boolean;
+    };
     bookmarkClick: { id: string };
     bookmarkRemove: { id: string };
     bookmarkSelect: { id: string };
@@ -92,6 +100,17 @@
       }
     | null = null;
   let segmentDragTargetIndex: number | null = null;
+  let segmentResize:
+    | {
+        id: string;
+        edge: SegmentEdge;
+        startX: number;
+        initialStart: number;
+        initialEnd: number;
+      }
+    | null = null;
+
+  const MIN_SEGMENT_HANDLE_WIDTH = 20;
 
   function zoomLevelForSequenceSeconds(sequenceSeconds: number): number {
     if (sequenceSeconds <= 0) {
@@ -368,11 +387,115 @@
     segmentDragTargetIndex = null;
   }
 
+  function startSegmentResize(
+    segment: TimelineSegment,
+    edge: SegmentEdge,
+    event: PointerEvent,
+  ): void {
+    if (disabled || event.button !== 0 || sourceDuration <= 0) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    closeContextMenu();
+    if (selectedSegmentId !== segment.id) {
+      dispatch('selectSegment', { id: segment.id });
+    }
+
+    segmentResize = {
+      id: segment.id,
+      edge,
+      startX: event.clientX,
+      initialStart: segment.sourceStart,
+      initialEnd: segment.sourceEnd,
+    };
+    videoScroll?.setPointerCapture(event.pointerId);
+    updateSegmentResize(event, true);
+  }
+
+  function updateSegmentResize(event: PointerEvent, recordUndo = false): void {
+    if (!segmentResize) {
+      return;
+    }
+
+    const segment = segments.find((entry) => entry.id === segmentResize?.id);
+    if (!segment) {
+      return;
+    }
+
+    const deltaSource = (event.clientX - segmentResize.startX) / pixelsPerSecond;
+    const proposed =
+      segmentResize.edge === 'start'
+        ? segmentResize.initialStart + deltaSource
+        : segmentResize.initialEnd + deltaSource;
+    const nextBounds = resizeSegmentBounds(
+      {
+        ...segment,
+        sourceStart: segmentResize.initialStart,
+        sourceEnd: segmentResize.initialEnd,
+      },
+      segmentResize.edge,
+      proposed,
+      sourceDuration,
+      segments,
+    );
+
+    dispatch('segmentResize', {
+      id: segmentResize.id,
+      sourceStart: nextBounds.sourceStart,
+      sourceEnd: nextBounds.sourceEnd,
+      recordUndo,
+      commit: false,
+    });
+  }
+
+  function stopSegmentResize(event: PointerEvent): void {
+    if (!segmentResize) {
+      return;
+    }
+
+    if (videoScroll?.hasPointerCapture(event.pointerId)) {
+      videoScroll.releasePointerCapture(event.pointerId);
+    }
+
+    const segment = segments.find((entry) => entry.id === segmentResize?.id);
+    if (segment) {
+      const deltaSource = (event.clientX - segmentResize.startX) / pixelsPerSecond;
+      const proposed =
+        segmentResize.edge === 'start'
+          ? segmentResize.initialStart + deltaSource
+          : segmentResize.initialEnd + deltaSource;
+      const nextBounds = resizeSegmentBounds(
+        {
+          ...segment,
+          sourceStart: segmentResize.initialStart,
+          sourceEnd: segmentResize.initialEnd,
+        },
+        segmentResize.edge,
+        proposed,
+        sourceDuration,
+        segments,
+      );
+
+      dispatch('segmentResize', {
+        id: segmentResize.id,
+        sourceStart: nextBounds.sourceStart,
+        sourceEnd: nextBounds.sourceEnd,
+        recordUndo: false,
+        commit: true,
+      });
+    }
+
+    segmentResize = null;
+  }
+
   function handlePointerMove(event: PointerEvent): void {
     updateSeek(event);
     updateMarker(event);
     updateTrackResize(event);
     updateSegmentDrag(event);
+    updateSegmentResize(event);
   }
 
   function handlePointerUp(event: PointerEvent): void {
@@ -380,6 +503,7 @@
     stopMarkerDrag(event);
     stopTrackResize(event);
     stopSegmentDrag(event);
+    stopSegmentResize(event);
   }
 
   function updateZoom(nextZoom: number): void {
@@ -779,24 +903,43 @@
           <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
         {/if}
         {#each segmentLayouts as layout, index (layout.segment.id)}
-          <button
-            aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
-            class:selected={layout.segment.id === selectedSegmentId}
-            class:timeline__segment--sole={segments.length === 1}
+          <div
+            class="timeline__segment-shell"
             class:timeline__segment--drag-target={segmentDrag?.active && segmentDragTargetIndex === index}
-            class:timeline__segment--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
-            class="timeline__segment timeline__segment--video"
+            class:timeline__segment-shell--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
             style={segmentStyle(layout)}
-            type="button"
-            on:pointerdown={(event) => startSegmentDrag(layout.segment, index, event)}
-            on:dblclick={(event) => {
-              event.stopPropagation();
-              dispatch('seek', { seconds: layout.segment.sourceStart });
-            }}
           >
-            <span>{formatTime(layout.segment.sourceStart)}</span>
-            <strong>{formatTime(layout.segment.sourceEnd - layout.segment.sourceStart)}</strong>
-          </button>
+            <button
+              aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+              class:selected={layout.segment.id === selectedSegmentId}
+              class:timeline__segment--sole={segments.length === 1}
+              class:timeline__segment--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
+              class="timeline__segment timeline__segment--video"
+              type="button"
+              on:pointerdown={(event) => startSegmentDrag(layout.segment, index, event)}
+              on:dblclick={(event) => {
+                event.stopPropagation();
+                dispatch('seek', { seconds: layout.segment.sourceStart });
+              }}
+            >
+              <span>{formatTime(layout.segment.sourceStart)}</span>
+              <strong>{formatTime(layout.segment.sourceEnd - layout.segment.sourceStart)}</strong>
+            </button>
+            {#if layout.segment.id === selectedSegmentId && layout.width >= MIN_SEGMENT_HANDLE_WIDTH}
+              <button
+                type="button"
+                class="timeline__segment-handle timeline__segment-handle--start"
+                aria-label="Trim segment start"
+                on:pointerdown={(event) => startSegmentResize(layout.segment, 'start', event)}
+              ></button>
+              <button
+                type="button"
+                class="timeline__segment-handle timeline__segment-handle--end"
+                aria-label="Trim segment end"
+                on:pointerdown={(event) => startSegmentResize(layout.segment, 'end', event)}
+              ></button>
+            {/if}
+          </div>
         {/each}
         <div class="timeline__playhead" style={`left: ${playheadLeft}px`}></div>
       </div>

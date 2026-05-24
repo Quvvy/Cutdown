@@ -41,7 +41,38 @@ Build the installer:
 npm run tauri -- build
 ```
 
+For in-app updates, sign release builds with the updater private key (stored locally in `.tauri/cutdown.key`, not committed):
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw .tauri\cutdown.key
+npm run tauri -- build
+```
+
+The build emits the NSIS installer plus a `.sig` file when `createUpdaterArtifacts` is enabled in `src-tauri/tauri.conf.json`.
+
 Release installers do not bundle ffmpeg. The installer runs `Cutdown.exe --install-dependencies` after setup to download the latest essentials build from gyan.dev. Log: `%LOCALAPPDATA%\Cutdown\install-ffmpeg.log`.
+
+## In-app updater
+
+The app checks GitHub for updates on startup (after a short delay) and via **Settings → Check for updates**.
+
+After a signed build, generate `latest.json` for the release:
+
+```powershell
+.\scripts\generate-latest-json.ps1 `
+  -Version 0.2.4 `
+  -InstallerPath release\Cutdown_0.2.4_x64-setup.exe `
+  -SignaturePath release\Cutdown_0.2.4_x64-setup.exe.sig `
+  -Notes "Release notes here"
+```
+
+Upload these assets to the GitHub release (same tag as the version, e.g. `v0.2.4`):
+
+- `Cutdown_*_x64-setup.exe` — NSIS installer (required for updates; do not use MSI)
+- `Cutdown_*_x64-setup.exe.sig` — signature from the signed build
+- `latest.json` — update manifest (must be named exactly `latest.json` for the `/releases/latest/download/` URL)
+
+The updater endpoint in `tauri.conf.json` points at `https://github.com/Quvvy/Cutdown/releases/latest/download/latest.json`. The public signing key is embedded in the app; keep the private key secret and use it only when building release installers.
 
 ## Smoke Test
 
@@ -55,5 +86,5 @@ On a clean Windows profile or VM:
 ## Publish
 
 - Create or update release notes with user-visible changes, fixes, and known limitations.
-- Attach the NSIS installer artifact.
+- Attach the NSIS installer artifact, its `.sig` file, and `latest.json` (see **In-app updater** above).
 - Tag the release after the installer has passed the smoke test.

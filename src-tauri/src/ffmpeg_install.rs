@@ -6,8 +6,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 /// Rolling "latest release" essentials package (Windows x64) from gyan.dev.
-const FFMPEG_PACKAGE_URL: &str =
-    "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
+const FFMPEG_PACKAGE_URL: &str = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,7 +32,9 @@ pub fn install_log_path() -> PathBuf {
     #[cfg(windows)]
     {
         if let Ok(root) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(root).join("Cutdown").join("install-ffmpeg.log");
+            return PathBuf::from(root)
+                .join("Cutdown")
+                .join("install-ffmpeg.log");
         }
     }
 
@@ -257,7 +258,13 @@ fn write_install_note(install_dir: &Path) -> Result<(), String> {
         .arg("-version")
         .output()
         .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).lines().next().unwrap_or("").to_string())
+        .map(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .next()
+                .unwrap_or("")
+                .to_string()
+        })
         .unwrap_or_else(|| "unknown".to_string());
 
     let note = format!(

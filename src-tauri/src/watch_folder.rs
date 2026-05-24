@@ -139,7 +139,7 @@ fn path_root_is_available(path: &Path) -> bool {
             .collect();
         let drive_type = unsafe { GetDriveTypeW(wide.as_ptr()) };
         // DRIVE_UNKNOWN (0) and DRIVE_NO_ROOT_DIR (1) — drive letter not ready at login.
-        return drive_type > 1;
+        drive_type > 1
     }
 
     #[cfg(not(windows))]
