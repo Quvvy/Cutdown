@@ -1,6 +1,6 @@
 [package]
 name = "cutdown"
-version = "0.2.2"
+version = "0.2.3"
 description = "Fast desktop video clipping and compression tool."
 authors = ["Cutdown"]
 edition = "2021"

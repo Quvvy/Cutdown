@@ -171,6 +171,13 @@ fn main() {
             }
 
             watch_folder::manage_state(app)?;
+
+            if settings::load_settings().start_minimized_to_tray {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.hide();
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

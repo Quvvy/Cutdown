@@ -95,6 +95,7 @@
     lastPresetId: string;
     preferGpuEncoding: boolean;
     runAtStartup: boolean;
+    startMinimizedToTray: boolean;
     catboxUserHash: string | null;
     catboxApiUrl: string | null;
     recentSources: string[];
@@ -178,6 +179,7 @@
   let preferGpuEncoding = true;
   let defaultExportDir: string | null = null;
   let runAtStartup = false;
+  let startMinimizedToTray = false;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
   const sequencePlayback = createSequencePlaybackDriver(
@@ -465,6 +467,7 @@
       exportPresetId = settings.lastPresetId || 'lossless-trim';
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
+      startMinimizedToTray = settings.startMinimizedToTray;
       uploadProviders = resolveUploadProvidersFromSettings(settings);
       const bootstrapSettingsRecord = settings as AppSettings & Record<string, unknown>;
       defaultUploadProviderId =
@@ -1590,6 +1593,7 @@
     exportPresetId = settings.lastPresetId || 'lossless-trim';
     preferGpuEncoding = settings.preferGpuEncoding;
     runAtStartup = settings.runAtStartup;
+    startMinimizedToTray = settings.startMinimizedToTray;
     uploadProviders = resolveUploadProvidersFromSettings(settings);
     defaultUploadProviderId =
       readDefaultUploadProviderId(settingsRecord) ??
@@ -3254,6 +3258,7 @@
   {exportPresetId}
   {preferGpuEncoding}
   {runAtStartup}
+  {startMinimizedToTray}
   bind:uploadProviders
   bind:defaultUploadProviderId
   bind:customExportPresets
@@ -3271,6 +3276,7 @@
     exportPresetId = event.detail.lastPresetId;
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
+    startMinimizedToTray = event.detail.startMinimizedToTray;
     customExportPresets = event.detail.customExportPresets;
     try {
       await reloadUploadProvidersFromDisk();

@@ -42,6 +42,8 @@ pub struct AppSettings {
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
     #[serde(default)]
+    pub start_minimized_to_tray: bool,
+    #[serde(default)]
     pub catbox_user_hash: Option<String>,
     #[serde(default)]
     pub catbox_api_url: Option<String>,
@@ -73,6 +75,7 @@ impl Default for AppSettings {
             last_preset_id: crate::presets::PRESET_LOSSLESS.to_string(),
             prefer_gpu_encoding: true,
             run_at_startup: false,
+            start_minimized_to_tray: false,
             catbox_user_hash: None,
             catbox_api_url: None,
             recent_sources: Vec::new(),
@@ -108,6 +111,7 @@ pub struct SaveEditorSettingsParams {
     pub last_preset_id: Option<String>,
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
+    pub start_minimized_to_tray: bool,
     pub providers: Vec<UploadProvider>,
     pub default_upload_provider_id: Option<String>,
     pub custom_export_presets: Vec<CustomExportPreset>,
@@ -125,6 +129,7 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
         .filter(|value| !value.trim().is_empty());
     settings.prefer_gpu_encoding = params.prefer_gpu_encoding;
     settings.run_at_startup = params.run_at_startup;
+    settings.start_minimized_to_tray = params.start_minimized_to_tray;
     settings.upload_providers = params.providers;
     settings.default_upload_provider_id = params
         .default_upload_provider_id

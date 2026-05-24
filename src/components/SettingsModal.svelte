@@ -34,6 +34,7 @@
   export let exportPresetId = 'lossless-trim';
   export let preferGpuEncoding = true;
   export let runAtStartup = false;
+  export let startMinimizedToTray = false;
   export let uploadProviders: UploadProvider[] = [];
   export let defaultUploadProviderId: string | null = null;
   export let customExportPresets: CustomExportPreset[] = [];
@@ -66,6 +67,7 @@
       lastPresetId: string;
       preferGpuEncoding: boolean;
       runAtStartup: boolean;
+      startMinimizedToTray: boolean;
       uploadProviders: UploadProvider[];
       defaultUploadProviderId: string | null;
       customExportPresets: CustomExportPreset[];
@@ -227,6 +229,7 @@
         lastPresetId: string;
         preferGpuEncoding: boolean;
         runAtStartup: boolean;
+        startMinimizedToTray: boolean;
         uploadProviders: UploadProvider[];
         defaultUploadProviderId: string | null;
         customExportPresets: CustomExportPreset[];
@@ -238,6 +241,7 @@
           lastPresetId: exportPresetId,
           preferGpuEncoding,
           runAtStartup,
+          startMinimizedToTray,
           providers,
           defaultUploadProviderId,
           customExportPresets: presets,
@@ -267,6 +271,7 @@
         lastPresetId: saved.lastPresetId,
         preferGpuEncoding: saved.preferGpuEncoding,
         runAtStartup: saved.runAtStartup,
+        startMinimizedToTray: saved.startMinimizedToTray,
         uploadProviders,
         defaultUploadProviderId,
         customExportPresets,
@@ -317,6 +322,10 @@
         <label class="modal__mode">
           <input type="checkbox" bind:checked={runAtStartup} />
           Start Cutdown when Windows starts
+        </label>
+        <label class="modal__mode">
+          <input type="checkbox" bind:checked={startMinimizedToTray} />
+          Start minimized to system tray
         </label>
         <p class="modal__hint">
           Closing the window minimizes Cutdown to the system tray. Left-click the tray icon or choose Open Editor to
