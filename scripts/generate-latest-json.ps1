@@ -45,6 +45,6 @@ if (-not $OutPath) {
 }
 
 $json = $manifest | ConvertTo-Json -Depth 6
-Set-Content -LiteralPath $OutPath -Value $json -Encoding utf8NoBOM
+[System.IO.File]::WriteAllText($OutPath, $json, [System.Text.UTF8Encoding]::new($false))
 Write-Host "Wrote $OutPath"
 Write-Host "Upload $OutPath and $installerName to GitHub release $tag"
