@@ -6,6 +6,13 @@
   import { placeMenu } from '../lib/placeMenu';
   import { resizeSegmentBounds, type SegmentEdge } from '../lib/segmentBounds';
   import { sequenceToSourceTime as mapSequenceToSourceTime, sourceToSequenceTime as mapSourceToSequenceTime } from '../lib/timelineMapping';
+  import {
+    calculateTimelineTrackHeights,
+    parseStoredTrackSplitRatio,
+    timelineTrackGridRows,
+    trackSplitRatioFromDrag,
+    usableTimelineTrackHeight,
+  } from '../lib/timelineTrackSizing';
   import type { TimelineBookmark } from '../lib/types';
   import type { TimelineSegment } from '../stores/editor';
 
@@ -19,6 +26,7 @@
   export let zoom = 28;
   export let videoTrackHeight = 68;
   export let audioTrackHeight = 58;
+  let audioLaneHeight = 58;
   export let audioCodec: string | null = null;
   export let audioChannels: number | null = null;
   export let bookmarks: TimelineBookmark[] = [];
@@ -28,10 +36,6 @@
   export let sourceDuration = 0;
 
   const TRACK_SPLIT_STORAGE_KEY = 'cutdown-track-split';
-  const RULER_HEIGHT = 25;
-  const RESIZE_BAR_HEIGHT = 6;
-  const MIN_VIDEO_TRACK_HEIGHT = 42;
-  const MIN_AUDIO_TRACK_HEIGHT = 38;
 
   let scrollArea: HTMLDivElement;
   let videoScroll: HTMLDivElement;
@@ -43,8 +47,7 @@
   let activeMarker: 'start' | 'end' | null = null;
   let activeResize = false;
   let resizeStartY = 0;
-  let resizeStartVideoHeight = 0;
-  let resizeStartAudioHeight = 0;
+  let resizeStartSplitRatio = 0.55;
   let contextMenu:
     | {
         x: number;
@@ -171,6 +174,7 @@
   $: segmentLayouts = buildSegmentLayouts(segments, pixelsPerSecond);
   $: ticks = buildTicks(outputDuration, pixelsPerSecond);
   $: audioLabel = audioCodec ? `${audioCodec}${audioChannels ? ` ${audioChannels}ch` : ''}` : 'no audio';
+  $: trackGridTemplateRows = timelineTrackGridRows(trackSplitRatio);
   $: bookmarkLayouts = bookmarks.map((bookmark) => ({
     bookmark,
     left: sourceToSequenceTime(bookmark.time) * pixelsPerSecond,
@@ -537,8 +541,7 @@
 
   function readTrackSplitRatio(): number {
     const raw = localStorage.getItem(TRACK_SPLIT_STORAGE_KEY);
-    const parsed = raw ? Number.parseFloat(raw) : Number.NaN;
-    return Number.isFinite(parsed) ? clamp(parsed, 0.22, 0.78) : 0.55;
+    return parseStoredTrackSplitRatio(raw);
   }
 
   function persistTrackSplitRatio(): void {
@@ -547,40 +550,44 @@
 
   function usableTrackHeight(): number {
     if (!timelineBody) {
-      return MIN_VIDEO_TRACK_HEIGHT + MIN_AUDIO_TRACK_HEIGHT;
+      return usableTimelineTrackHeight(0);
     }
 
-    return Math.max(
-      MIN_VIDEO_TRACK_HEIGHT + MIN_AUDIO_TRACK_HEIGHT,
-      timelineBody.clientHeight - RULER_HEIGHT - RESIZE_BAR_HEIGHT,
-    );
+    return usableTimelineTrackHeight(timelineBody.clientHeight);
   }
 
-  function emitTrackHeights(video: number, audio: number): void {
+  function syncTrackHeightProps(video: number, audio: number): void {
     if (video === videoTrackHeight && audio === audioTrackHeight) {
       return;
     }
 
+    videoTrackHeight = video;
+    audioTrackHeight = audio;
     dispatch('trackHeightChange', { videoHeight: video, audioHeight: audio });
   }
 
-  function layoutTracksFromBody(): void {
-    const usable = usableTrackHeight();
-    const video = clamp(
-      Math.round(usable * trackSplitRatio),
-      MIN_VIDEO_TRACK_HEIGHT,
-      usable - MIN_AUDIO_TRACK_HEIGHT,
+  function measureTrackHeights(): void {
+    if (!timelineBody) {
+      return;
+    }
+
+    const { videoHeight, audioHeight, splitRatio } = calculateTimelineTrackHeights(
+      usableTrackHeight(),
+      trackSplitRatio,
     );
-    const audio = usable - video;
-    trackSplitRatio = video / usable;
-    emitTrackHeights(video, audio);
+    trackSplitRatio = splitRatio;
+    syncTrackHeightProps(videoHeight, audioHeight);
   }
 
   onMount(() => {
     trackSplitRatio = readTrackSplitRatio();
     const observer = new ResizeObserver(() => {
       if (!activeResize) {
-        layoutTracksFromBody();
+        measureTrackHeights();
+      }
+
+      if (audioScroll) {
+        audioLaneHeight = audioScroll.clientHeight;
       }
     });
 
@@ -588,7 +595,13 @@
       observer.observe(timelineBody);
     }
 
-    void tick().then(() => layoutTracksFromBody());
+    void tick().then(() => {
+      measureTrackHeights();
+
+      if (audioScroll) {
+        audioLaneHeight = audioScroll.clientHeight;
+      }
+    });
 
     return () => observer.disconnect();
   });
@@ -597,8 +610,7 @@
     event.preventDefault();
     activeResize = true;
     resizeStartY = event.clientY;
-    resizeStartVideoHeight = videoTrackHeight;
-    resizeStartAudioHeight = audioTrackHeight;
+    resizeStartSplitRatio = trackSplitRatio;
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
   }
 
@@ -607,14 +619,8 @@
       return;
     }
 
-    const usable = usableTrackHeight();
     const delta = event.clientY - resizeStartY;
-    const video = clamp(
-      resizeStartVideoHeight + delta,
-      MIN_VIDEO_TRACK_HEIGHT,
-      usable - MIN_AUDIO_TRACK_HEIGHT,
-    );
-    emitTrackHeights(video, usable - video);
+    trackSplitRatio = trackSplitRatioFromDrag(resizeStartSplitRatio, delta, usableTrackHeight());
   }
 
   function stopTrackResize(event: PointerEvent): void {
@@ -624,27 +630,17 @@
     }
 
     if (activeResize) {
-      const usable = usableTrackHeight();
-      trackSplitRatio = clamp(videoTrackHeight / usable, 0.22, 0.78);
       persistTrackSplitRatio();
     }
 
     activeResize = false;
-    layoutTracksFromBody();
+    measureTrackHeights();
   }
 
   function toggleAudioExpanded(): void {
-    const usable = usableTrackHeight();
-    trackSplitRatio =
-      audioTrackHeight < usable * 0.42 ? 0.58 : 0.38;
+    trackSplitRatio = trackSplitRatio < 0.45 ? 0.58 : 0.38;
     persistTrackSplitRatio();
-    layoutTracksFromBody();
-  }
-
-  function segmentSequenceStart(index: number): number {
-    return segments
-      .slice(0, index)
-      .reduce((total, segment) => total + Math.max(0, segment.sourceEnd - segment.sourceStart), 0);
+    measureTrackHeights();
   }
 
   function buildSegmentLayouts(sourceSegments: TimelineSegment[], pxPerSecond: number): SegmentLayout[] {
@@ -660,10 +656,6 @@
       cursor += segmentLength;
       return layout;
     });
-  }
-
-  function segmentStyle(layout: SegmentLayout): string {
-    return `left: ${layout.left}px; width: ${layout.width}px`;
   }
 
   function toggleSegmentSelection(segmentId: string): void {
@@ -785,7 +777,7 @@
         value={zoom}
         disabled={disabled}
         aria-label="Timeline zoom"
-        style={`--slider-fill: ${(zoom / MAX_ZOOM) * 100}%`}
+        style:--slider-fill={`${(zoom / MAX_ZOOM) * 100}%`}
         on:input={handleZoomInput}
       />
       <IconButton icon="scaleFit" title="Fit timeline to window" variant="mini" disabled={disabled} on:click={() => dispatch('zoomFit')} />
@@ -802,14 +794,14 @@
   <div
     class="timeline__body"
     bind:this={timelineBody}
-    style={`--video-track-height: ${videoTrackHeight}px; --audio-track-height: ${audioTrackHeight}px`}
+    style:grid-template-rows={trackGridTemplateRows}
   >
     {#if disabled}
       <div class="timeline__empty">Open a video or drop a file to start cutting.</div>
     {/if}
     <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
     <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>
-      <div class="timeline__content" style={`width: ${timelineWidth}px`}>
+      <div class="timeline__content" style:width={`${timelineWidth}px`}>
         <div
           bind:this={ruler}
           class="timeline__ruler"
@@ -824,9 +816,9 @@
           on:keydown={handleRulerKeydown}
         >
           {#each ticks as tick}
-            <div class:major={tick.major} class="timeline__ruler-tick" style={`left: ${tick.left}px`}></div>
+            <div class:major={tick.major} class="timeline__ruler-tick" style:left={`${tick.left}px`}></div>
             {#if tick.major}
-              <span style={`left: ${tick.left}px`}>{formatTime(tick.seconds)}</span>
+              <span style:left={`${tick.left}px`}>{formatTime(tick.seconds)}</span>
             {/if}
           {/each}
 
@@ -835,7 +827,7 @@
               type="button"
               class="timeline__bookmark"
               class:selected={layout.bookmark.id === selectedBookmarkId}
-              style={`left: ${layout.left}px`}
+              style:left={`${layout.left}px`}
               title={`${bookmarkLabel(layout.bookmark)} · ${formatTime(layout.bookmark.time)}`}
               aria-label={`Marker ${bookmarkLabel(layout.bookmark)} at ${formatTime(layout.bookmark.time)}`}
               on:pointerdown|stopPropagation={(event) => {
@@ -851,31 +843,31 @@
             <span
               class="timeline__bookmark-label"
               class:selected={layout.bookmark.id === selectedBookmarkId}
-              style={`left: ${layout.left}px`}
+              style:left={`${layout.left}px`}
             >
               {bookmarkLabel(layout.bookmark)}
             </span>
           {/each}
 
           {#if normalizedRange}
-            <div class="timeline__range-fill" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+            <div class="timeline__range-fill" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
             <button
               type="button"
               class="timeline__marker timeline__marker--in"
-              style={`left: ${rangeLeft}px`}
+              style:left={`${rangeLeft}px`}
               aria-label="Range start"
               on:pointerdown={(event) => startMarkerDrag('start', event)}
             ></button>
             <button
               type="button"
               class="timeline__marker timeline__marker--out"
-              style={`left: ${rangeLeft + rangeWidth}px`}
+              style:left={`${rangeLeft + rangeWidth}px`}
               aria-label="Range end"
               on:pointerdown={(event) => startMarkerDrag('end', event)}
             ></button>
           {/if}
 
-          <div class="timeline__playhead timeline__playhead--ruler" style={`left: ${playheadLeft}px`}></div>
+          <div class="timeline__playhead timeline__playhead--ruler" style:left={`${playheadLeft}px`}></div>
         </div>
       </div>
     </div>
@@ -893,21 +885,22 @@
     >
       <div
         class="timeline__content timeline__content--track"
-        style={`width: ${timelineWidth}px`}
+        style:width={`${timelineWidth}px`}
         on:pointerdown={onTrackBackgroundPointerDown}
       >
         {#each ticks as tick}
-          <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
+          <div class="timeline__tick" style:left={`${tick.left}px`}></div>
         {/each}
         {#if normalizedRange}
-          <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+          <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
         {/if}
         {#each segmentLayouts as layout, index (layout.segment.id)}
           <div
             class="timeline__segment-shell"
             class:timeline__segment--drag-target={segmentDrag?.active && segmentDragTargetIndex === index}
             class:timeline__segment-shell--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
-            style={segmentStyle(layout)}
+            style:left={`${layout.left}px`}
+            style:width={`${layout.width}px`}
           >
             <button
               aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
@@ -941,7 +934,7 @@
             {/if}
           </div>
         {/each}
-        <div class="timeline__playhead" style={`left: ${playheadLeft}px`}></div>
+        <div class="timeline__playhead" style:left={`${playheadLeft}px`}></div>
       </div>
     </div>
 
@@ -972,7 +965,7 @@
     >
       <div
         class="timeline__content timeline__content--track timeline__content--audio"
-        style={`width: ${timelineWidth}px`}
+        style:width={`${timelineWidth}px`}
         on:pointerdown={onTrackBackgroundPointerDown}
       >
         {#if waveformPeaks.length > 0 && audioCodec}
@@ -983,29 +976,30 @@
             {selectedSegmentId}
             pixelsPerSecond={pixelsPerSecond}
             width={timelineWidth}
-            height={Math.max(24, audioTrackHeight - 8)}
+            height={Math.max(24, audioLaneHeight - 8)}
             outputDuration={outputDuration}
           />
         {/if}
         {#each ticks as tick}
-          <div class="timeline__tick" style={`left: ${tick.left}px`}></div>
+          <div class="timeline__tick" style:left={`${tick.left}px`}></div>
         {/each}
         {#if normalizedRange}
-          <div class="timeline__track-range" style={`left: ${rangeLeft}px; width: ${rangeWidth}px`}></div>
+          <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
         {/if}
         {#each segmentLayouts as layout (layout.segment.id)}
           <button
             aria-label={`Audio segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
             class:selected={layout.segment.id === selectedSegmentId}
             class="timeline__segment timeline__segment--audio"
-            style={segmentStyle(layout)}
+            style:left={`${layout.left}px`}
+            style:width={`${layout.width}px`}
             type="button"
             on:pointerdown={(event) => selectSegment(layout.segment, event)}
           >
             <span>{audioLabel}</span>
           </button>
         {/each}
-        <div class="timeline__playhead" style={`left: ${playheadLeft}px`}></div>
+        <div class="timeline__playhead" style:left={`${playheadLeft}px`}></div>
       </div>
     </div>
   </div>
@@ -1015,7 +1009,8 @@
     <div
       class="timeline-menu"
       role="menu"
-      style={`left: ${bookmarkMenu.x}px; top: ${bookmarkMenu.y}px`}
+      style:left={`${bookmarkMenu.x}px`}
+      style:top={`${bookmarkMenu.y}px`}
       use:placeMenu={{ x: bookmarkMenu.x, y: bookmarkMenu.y }}
     >
       <button type="button" on:click={() => {
@@ -1033,7 +1028,8 @@
     <div
       class="timeline-menu"
       role="menu"
-      style={`left: ${contextMenu.x}px; top: ${contextMenu.y}px`}
+      style:left={`${contextMenu.x}px`}
+      style:top={`${contextMenu.y}px`}
       use:placeMenu={{ x: contextMenu.x, y: contextMenu.y }}
     >
       <button type="button" on:click={() => runContextAction('split')}>Split here</button>

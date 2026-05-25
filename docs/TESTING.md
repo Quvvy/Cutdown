@@ -89,12 +89,13 @@ npm run tauri -- build
 | Edit | `M` adds timeline bookmark; click bookmark seeks; right-click removes | |
 | Edit | `,` / `.` previous / next marker; double-click or menu edits label | |
 | Edit | `Del` deletes selected marker; `Shift + M` removes nearest at playhead | |
-| Edit | Bookmarks persist when reopening same source / `.cutdown` project | |
+| Edit | Bookmarks persist in saved `.cutdown` projects | |
 | Edit | Audio track shows waveform envelope when clip has audio | |
 | Edit | Timeline toolbar controls disabled without an open clip | |
 | Edit | Ctrl+D duplicates selected segment | |
 | Edit | Drag segment on timeline to reorder | |
-| Session | Reopen same source restores segments, I/O, crop, volume, bookmarks | |
+| Edit | Drag selected segment edge to trim or extend cut | |
+| Edit | Reopen raw video starts fresh; `.cutdown` project restores state | |
 | Export | Batch per-segment export writes one file per kept segment | |
 | Export | Queue upload after export runs uploads sequentially | |
 | Export | Audio fade in/out on I/O or sequence export | |

@@ -141,7 +141,10 @@
     aria-modal="true"
     aria-labelledby="floating-panel-title"
     tabindex="-1"
-    style={`left: ${posX}px; top: ${posY}px; width: ${width}px; max-height: ${maxHeight}`}
+    style:left={`${posX}px`}
+    style:top={`${posY}px`}
+    style:width={`${width}px`}
+    style:max-height={maxHeight}
     on:keydown={handleKeydown}
   >
     <header

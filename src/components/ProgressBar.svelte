@@ -27,7 +27,7 @@
     <div
       class="progress__bar"
       class:indeterminate={active && percent === null}
-      style={width ? `width: ${width}` : undefined}
+      style:width={width ?? undefined}
     ></div>
   {/if}
   <span class="progress__label">{label}</span>

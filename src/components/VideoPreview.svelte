@@ -464,7 +464,10 @@
           <!-- svelte-ignore a11y-no-static-element-interactions -->
           <div
             class="crop-overlay"
-            style={`left:${cropRect.x * 100}%;top:${cropRect.y * 100}%;width:${cropRect.width * 100}%;height:${cropRect.height * 100}%;`}
+            style:left={`${cropRect.x * 100}%`}
+            style:top={`${cropRect.y * 100}%`}
+            style:width={`${cropRect.width * 100}%`}
+            style:height={`${cropRect.height * 100}%`}
             on:pointerdown={(event) => onCropPointerDown(event, 'move')}
             on:pointermove={onCropPointerMove}
             on:pointerup={onCropPointerUp}

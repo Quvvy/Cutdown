@@ -22,7 +22,7 @@ The current milestone is a working local multi-cut editor with compression prese
 - Review recent exports in **History**, upload to **Catbox**, **File Garden**, or a **custom HTTP server**, and copy share links.
 - Crop the preview (16:9, 9:16, or free) before export.
 - Adjust clip volume for preview and export, or **strip audio** on export.
-- **Fit**, zoom, and pan the preview; editor restores your last cut when you reopen the same source file.
+- **Fit**, zoom, and pan the preview; save a **`.cutdown` project** to keep cuts, range, crop, and markers.
 
 ### Upload targets
 
@@ -49,6 +49,7 @@ Current shortcuts:
 - `J` / `K` / `L`: step back 1s, pause, step forward 1s.
 - `[` / `]`: snap playhead to range in / out.
 - `Ctrl+D`: duplicate selected segment.
+- Drag a selected segment's left or right edge to trim or extend the cut.
 - `Escape`: close open panels, modals, and confirmation dialogs.
 
 Range actions are also available from the transport bar, timeline context menu, and export modal (sequence vs I/O range).
@@ -58,7 +59,7 @@ Known limitations:
 - Stream-copy cuts are fast and lossless, but not always frame-perfect because keyframes matter.
 - Volume can be adjusted for preview and export; audio waveform on the timeline; fade in/out on export.
 - Preview uses WebView2/HTML video with seek-at-cut transitions. Brief A/V blips between reordered segments are possible; remux/proxy fallbacks apply when native decode fails.
-- Timeline editing and segment preview are considered complete for v0.2.x; report specific bugs rather than expecting preview architecture changes.
+- Reopening a raw video starts a fresh edit; use **Save project** (`.cutdown`) to restore your work.
 
 ## Requirements
 
@@ -157,7 +158,7 @@ Status: v1 complete (built-in presets, GPU detection, Discord size targeting).
 
 ### Milestone 5: Crop
 
-Status: session crop v1 complete (preview overlay + ffmpeg export).
+Status: complete (preview overlay + ffmpeg export).
 
 ### Milestone 6: Watch Folder Workflow
 
@@ -173,7 +174,7 @@ Catbox upload, clip history, performance baseline, volume control, and UI polish
 
 ### Milestone 11–18
 
-See [PROGRESS.md](PROGRESS.md) for backlog status. Timeline workflow (M13) and preview/input v2 (M16) are complete. **v0.3 focus:** release hardening (CI, integration tests, signed releases / auto-updater). OBS WebSocket (M17) is deferred.
+See [PROGRESS.md](PROGRESS.md) for backlog status. Timeline workflow (M13) and preview/input v2 (M16) are complete. **v0.3** shipped project-only persistence, timeline refactor, and in-app updates (from v0.2.4). OBS WebSocket (M17) is deferred.
 
 ## Project Structure
 
@@ -189,7 +190,6 @@ src-tauri/
     upload/
     upload_providers.rs
     clip_history.rs
-    source_session.rs
     project.rs
     obs.rs
     watch_folder.rs
@@ -201,6 +201,10 @@ src/
   components/
   stores/
   lib/
+    timelineEditing.ts
+    timelineTrackSizing.ts
+    projectFile.ts
+    segmentBounds.ts
 docs/
   TESTING.md
 public/

@@ -33,7 +33,7 @@
 
     {#if installing}
       <div class="update-modal__progress" aria-live="polite">
-        <div class="update-modal__progress-bar" style={`width: ${progressPercent ?? 0}%`}></div>
+        <div class="update-modal__progress-bar" style:width={`${progressPercent ?? 0}%`}></div>
       </div>
       <p class="modal__hint">
         {#if progressPercent != null}

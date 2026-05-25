@@ -29,9 +29,11 @@ Then complete the manual matrix in `docs/TESTING.md`, with special attention to:
 - Open With / file association launch.
 - Probe, native preview, remux preview, and proxy preview.
 - Split, I/O range export, per-segment batch export, crop, volume, fade, and audio strip.
+- Segment edge drag (trim/extend selected segment).
 - Upload to configured targets and copy share URL.
 - Save/load `.cutdown` project files and relink missing sources.
 - Watch-folder toast and tray restore/quit behavior.
+- In-app update check (Settings and startup) on an older installed build.
 
 ## Build
 
@@ -60,13 +62,13 @@ After a signed build, generate `latest.json` for the release:
 
 ```powershell
 .\scripts\generate-latest-json.ps1 `
-  -Version 0.2.4 `
-  -InstallerPath release\Cutdown_0.2.4_x64-setup.exe `
-  -SignaturePath release\Cutdown_0.2.4_x64-setup.exe.sig `
+  -Version 0.3.0 `
+  -InstallerPath release\Cutdown_0.3.0_x64-setup.exe `
+  -SignaturePath release\Cutdown_0.3.0_x64-setup.exe.sig `
   -Notes "Release notes here"
 ```
 
-Upload these assets to the GitHub release (same tag as the version, e.g. `v0.2.4`):
+Upload these assets to the GitHub release (same tag as the version, e.g. `v0.3.0`):
 
 - `Cutdown_*_x64-setup.exe` — NSIS installer (required for updates; do not use MSI)
 - `Cutdown_*_x64-setup.exe.sig` — signature from the signed build
@@ -81,7 +83,8 @@ On a clean Windows profile or VM:
 - Install from the NSIS installer with internet access and verify `%LOCALAPPDATA%\Cutdown\ffmpeg\ffmpeg.exe` exists afterward.
 - On a machine where installer download was skipped, start the app with no ffmpeg on PATH and verify the **Install ffmpeg** banner works.
 - Open a short MP4, split once, export with Lossless Trim, and reveal the output folder.
-- Reopen the app and verify recent source/session restore behavior.
+- Save a `.cutdown` project, reopen it, and verify segments, range, and markers restore.
+- Reopen the same raw video without a project and confirm it starts a fresh full-length segment.
 
 ## Publish
 

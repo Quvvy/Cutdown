@@ -11,7 +11,6 @@ mod presets;
 mod project;
 mod secret_store;
 mod settings;
-mod source_session;
 mod upload;
 mod upload_providers;
 mod watch_folder;
@@ -217,8 +216,6 @@ fn main() {
             upload::save_upload_providers,
             upload::get_upload_providers_for_editor,
             upload::copy_text_to_clipboard,
-            source_session::get_source_session,
-            source_session::save_source_session,
             project::save_project_file,
             project::load_project_file,
             obs::find_latest_replay_in_folder,
