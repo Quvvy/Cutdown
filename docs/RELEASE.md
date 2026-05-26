@@ -1,93 +1,76 @@
-# Release Checklist
+# Shipping a Windows build
 
-Use this checklist for Windows installer releases.
+## 1. Bump version
 
-## Version Updates
-
-Keep these versions in sync:
+Same number in all three:
 
 - `package.json`
 - `src-tauri/Cargo.toml`
 - `src-tauri/tauri.conf.json`
 
-Update `PROGRESS.md` and README feature notes when release behavior changes.
+Skim README / PROGRESS if behavior changed.
 
-## Validation
-
-Run:
+## 2. Automated checks
 
 ```powershell
 npm ci
 npm run validate:release
 ```
 
-The validation script runs frontend typecheck, frontend unit tests, frontend build, Rust check, Rust tests, and Clippy when installed.
+That’s typecheck, frontend tests, Vite build, `cargo check`, `cargo test`, Clippy if installed. Not a substitute for the manual pass in TESTING.md.
 
-Then complete the manual matrix in `docs/TESTING.md`, with special attention to:
+## 3. Build installer
 
-- Installer post-install step downloads ffmpeg (requires internet); fallback **Install ffmpeg** banner if download failed.
-- Open With / file association launch.
-- Probe, native preview, remux preview, and proxy preview.
-- Split, I/O range export, per-segment batch export, crop, volume, fade, and audio strip.
-- Segment edge drag (trim/extend selected segment).
-- Upload to configured targets and copy share URL.
-- Save/load `.cutdown` project files and relink missing sources.
-- Watch-folder toast and tray restore/quit behavior.
-- In-app update check (Settings and startup) on an older installed build.
-
-## Build
-
-Build the installer:
+Unsigned (local only):
 
 ```powershell
 npm run tauri -- build
 ```
 
-For in-app updates, sign release builds with the updater private key (stored locally in `.tauri/cutdown.key`, not committed):
+Signed + updater artifacts (private key in `.tauri/cutdown.key`, gitignored):
 
 ```powershell
 $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw .tauri\cutdown.key
 npm run tauri -- build
 ```
 
-The build emits the NSIS installer plus a `.sig` file when `createUpdaterArtifacts` is enabled in `src-tauri/tauri.conf.json`.
+Output under `src-tauri/target/release/bundle/nsis/` (or the cargo target dir your machine uses). Copy into `release/` if you keep installers there.
 
-Release installers do not bundle ffmpeg. The installer runs `Cutdown.exe --install-dependencies` after setup to download the latest essentials build from gyan.dev. Log: `%LOCALAPPDATA%\Cutdown\install-ffmpeg.log`.
+ffmpeg is **not** inside the installer package. Post-install runs `Cutdown.exe --install-dependencies` to fetch essentials. Log: `%LOCALAPPDATA%\Cutdown\install-ffmpeg.log`.
 
-## In-app updater
+## 4. Updater manifest
 
-The app checks GitHub for updates on startup (after a short delay) and via **Settings → Check for updates**.
-
-After a signed build, generate `latest.json` for the release:
+After a signed build:
 
 ```powershell
 .\scripts\generate-latest-json.ps1 `
   -Version 0.3.0 `
   -InstallerPath release\Cutdown_0.3.0_x64-setup.exe `
   -SignaturePath release\Cutdown_0.3.0_x64-setup.exe.sig `
-  -Notes "Release notes here"
+  -Notes "Short plain-text release note"
 ```
 
-Upload these assets to the GitHub release (same tag as the version, e.g. `v0.3.0`):
+Upload to the GitHub release tag (e.g. `v0.3.0`):
 
-- `Cutdown_*_x64-setup.exe` — NSIS installer (required for updates; do not use MSI)
-- `Cutdown_*_x64-setup.exe.sig` — signature from the signed build
-- `latest.json` — update manifest (must be named exactly `latest.json` for the `/releases/latest/download/` URL)
+| File | Why |
+|------|-----|
+| `Cutdown_*_x64-setup.exe` | NSIS only (not MSI) |
+| `Cutdown_*_x64-setup.exe.sig` | Updater signature |
+| `latest.json` | Exact name; app hits `/releases/latest/download/latest.json` |
 
-The updater endpoint in `tauri.conf.json` points at `https://github.com/Quvvy/Cutdown/releases/latest/download/latest.json`. The public signing key is embedded in the app; keep the private key secret and use it only when building release installers.
+Pubkey is in `tauri.conf.json`. Don’t commit the private key.
 
-## Smoke Test
+## 5. Quick install smoke
 
-On a clean Windows profile or VM:
+On a VM or spare profile if you can:
 
-- Install from the NSIS installer with internet access and verify `%LOCALAPPDATA%\Cutdown\ffmpeg\ffmpeg.exe` exists afterward.
-- On a machine where installer download was skipped, start the app with no ffmpeg on PATH and verify the **Install ffmpeg** banner works.
-- Open a short MP4, split once, export with Lossless Trim, and reveal the output folder.
-- Save a `.cutdown` project, reopen it, and verify segments, range, and markers restore.
-- Reopen the same raw video without a project and confirm it starts a fresh full-length segment.
+1. Install with internet → `%LOCALAPPDATA%\Cutdown\ffmpeg\ffmpeg.exe` exists.
+2. Open MP4 → split → Lossless export → reveal folder.
+3. Save `.cutdown`, reopen → segments/range/markers back.
+4. Reopen same MP4 without project → fresh single segment.
+5. Tray: close window, restore from icon, quit from menu.
+6. If you have an older build installed: Settings → check for updates.
 
-## Publish
+## 6. Publish
 
-- Create or update release notes with user-visible changes, fixes, and known limitations.
-- Attach the NSIS installer artifact, its `.sig` file, and `latest.json` (see **In-app updater** above).
-- Tag the release after the installer has passed the smoke test.
+Write release notes for humans. Attach the three updater files. Tag after smoke passes.

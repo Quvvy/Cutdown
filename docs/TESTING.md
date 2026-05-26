@@ -1,131 +1,90 @@
-# Cutdown Runtime Test Matrix
+# Testing
 
-Use this checklist when validating a build before release or after editor/export changes.
+Run this before tagging a release or after touching export, preview, timeline layout, or Windows integration.
 
-## Prerequisites
+## Setup
 
 - Windows 10/11 x64
-- `ffmpeg` and `ffprobe` on PATH, or run `npm run prepare:ffmpeg` for local dev, or use **Download ffmpeg** in the app banner after install
-- Sample clips covering common OBS/replay-buffer cases
+- ffmpeg: PATH, `public/ffmpeg/` (`npm run prepare:ffmpeg`), or post-install / in-app download
+- A few real clips—H.264 MP4 from OBS, something HEVC, one with no audio if you have it
 
-## Automated smoke (developer)
+## Machines
+
+`npm run validate:release` covers tooling. **Also** install the NSIS build and click through the app. WebView2 in the packaged app has behaved differently from Chrome in dev (timeline sizing especially).
 
 ```powershell
 npm run validate:release
+npm run tauri -- build   # or signed build per RELEASE.md
 ```
 
-This runs `npm run check`, `npm test`, `npm run build`, `cargo check`, `cargo test`, optional Clippy, and reports optional dev ffmpeg on PATH or in `public/ffmpeg/`. Run this before every release candidate; it satisfies the tooling portion of pre-release validation. Complete the manual matrix below on real OBS clips before tagging a release.
-
-### Pre-release checklist (automated)
-
-| Check | Command / tool | Pass |
-|-------|----------------|------|
-| TypeScript / Svelte | `npm run check` (via validate:release) | |
-| Frontend unit tests | `npm test` (via validate:release) | |
-| Rust compile + unit tests | `cargo check` / `cargo test` (via validate:release) | |
-| ffmpeg on PATH, dev copy, or in-app download | validate:release output / banner | |
-
-Release installer build:
-
-```powershell
-npm run prepare:ffmpeg
-npm run tauri -- build
-```
+| Automated | |
+|-----------|---|
+| `npm run check` | |
+| `npm test` | |
+| `npm run build` | |
+| `cargo check` / `cargo test` | |
+| ffmpeg found (script output) | |
 
 ## Manual matrix
 
-| Area | Case | Pass |
-|------|------|------|
-| Probe | MP4 H.264 + AAC | |
-| Probe | MKV H.265 + Opus | |
-| Probe | MOV | |
-| Probe | No audio track | |
-| Preview | Native WebView2 playback | |
-| Preview | Remux fallback (container-only issue) | |
-| Preview | Proxy fallback (codec issue) | |
-| Preview | Fit preview to panel shows full frame above timeline | |
-| Preview | Fit preview still correct after resizing workspace splitter | |
-| Edit | Split at playhead (`S`) | |
-| Edit | Multi-segment delete | |
-| Edit | I/O keep / trim outside / split I/O | |
-| Edit | Undo / redo | |
-| Export | Single segment stream-copy (Lossless Trim) | |
-| Export | Multi-segment concat (Lossless Trim) | |
-| Export | I/O range mode (Lossless Trim) | |
-| Export | Discord preset under ~9 MB on 30–60s clip | |
-| Export | Archive preset plays back correctly | |
-| Export | Twitter preset at 720p max | |
-| Export | Progress bar shows percent on re-encode | |
-| Export | GPU encoder used when enabled (check Settings) | |
-| Export | Default `*-cutdown.mp4` filename on Export open | |
-| Export | Custom filename + choose folder (no full save path required) | |
-| Export | Crop overlay 16:9 / 9:16 / free + cropped export matches preview | |
-| Audio | Preserved on stream-copy export | |
-| Watch | New file in watch folder → toast → opens in editor | |
-| Windows | Open With launches Cutdown with file loaded | |
-| Windows | Default export folder used in save dialog | |
-| Windows | Run at startup toggle (optional) | |
-| Tray | Close (X) hides window; app stays in tray | |
-| Tray | Left-click tray icon restores main window | |
-| Tray | Tray menu Open Editor / Quit works | |
-| History | Export adds row; Reveal / Open / Copy path work | |
-| History | Clear history removes all rows | |
-| Upload | Catbox upload copies HTTPS link to clipboard | |
-| Upload | File Garden sign-in + upload copies HTTPS link (account required) | |
-| Upload | Custom HTTP multipart upload returns share URL | |
-| Upload | Upload menu lists enabled providers; default provider used | |
-| Settings | Add/edit/remove upload targets; set default provider | |
-| UI | Escape closes Export / Settings / History | |
-| UI | Backdrop click closes modals | |
-| UI | `?` opens keyboard shortcuts modal | |
-| UI | Drop video file onto window opens clip | |
-| UI | Recent menu lists and opens prior sources | |
-| Export | Accurate trim re-encodes boundaries on Lossless preset | |
-| Export | Custom preset (bitrate / CRF / target size / lossless) from Settings | |
-| Export | Strip audio exports video-only file | |
-| Edit | J / K / L shuttle scrub (step back, pause, step forward) | |
-| Edit | `[` / `]` snap playhead to I/O range markers | |
-| Edit | Timeline toolbar: Split, In, Out, Clear range, Add marker, Snap In/Out, Split I/O, Keep range, Delete | |
-| Edit | `M` adds timeline bookmark; click bookmark seeks; right-click removes | |
-| Edit | `,` / `.` previous / next marker; double-click or menu edits label | |
-| Edit | `Del` deletes selected marker; `Shift + M` removes nearest at playhead | |
-| Edit | Bookmarks persist in saved `.cutdown` projects | |
-| Edit | Audio track shows waveform envelope when clip has audio | |
-| Edit | Timeline toolbar controls disabled without an open clip | |
-| Edit | Ctrl+D duplicates selected segment | |
-| Edit | Drag segment on timeline to reorder | |
-| Edit | Drag selected segment edge to trim or extend cut | |
-| Edit | Reopen raw video starts fresh; `.cutdown` project restores state | |
-| Export | Batch per-segment export writes one file per kept segment | |
-| Export | Queue upload after export runs uploads sequentially | |
-| Export | Audio fade in/out on I/O or sequence export | |
-| Project | Save / open `.cutdown` project restores editor state | |
-| OBS | Latest replay opens newest file in watch folder | |
-| OBS | Tray menu Open Watch Folder opens Explorer | |
-| Preview | Playback speed 0.5× / 1× / 2× | |
-| Preview | Proxy preview button builds proxy for heavy codecs | |
-| Export | Trim hint explains stream-copy vs re-encode blockers | |
-| Export | Export activity panel shows job N of M during batch export | |
-| Export | Footer success/error styling persists until dismissed | |
-| Export | Post-export row: Copy path, Upload, Export again | |
-| Export | Export modal shows validation when folder/name missing | |
-| Export | Upload-after-export hint links to Settings when no providers | |
-| Upload | Upload target modal lists providers; link copied toast | |
-| History | Copy link when share URL saved; Shared badge on row | |
-| History | Clear history asks for confirmation | |
-| UI | Toast notifications for undo, markers, upload, errors | |
-| UI | ffmpeg missing banner; Download ffmpeg installs to LocalAppData and enables export | |
-| UI | Tray minimize hint banner dismisses and persists | |
-| UI | Opening overlay while probing metadata | |
-| Project | Missing source opens relink modal and file picker | |
-| Edit | Split outside segment shows toast (no silent no-op) | |
-| Edit | Timeline empty state when no clip open | |
+Check Pass when done. Skip rows that don’t apply.
 
-## Known limitations (not failures)
+| Area | Case | ✓ |
+|------|------|---|
+| **Probe** | MP4 H.264 + AAC | |
+| | MKV HEVC | |
+| | MOV | |
+| | No audio | |
+| **Preview** | Native playback | |
+| | Remux fallback | |
+| | Proxy fallback | |
+| | Fit + resize workspace splitter | |
+| | Speed 0.5× / 2× | |
+| **Edit** | Split `S` | |
+| | Delete segment (keep ≥1) | |
+| | Undo / redo | |
+| | I/O in/out, keep range, trim outside, split I/O | |
+| | Duplicate `Ctrl+D`, reorder drag | |
+| | Edge drag trim/extend | |
+| | Bookmarks add/seek/edit/remove | |
+| | `J` `K` `L`, `[` `]` snap to I/O | |
+| | Waveform visible when audio present | |
+| | Toolbar disabled with no clip open | |
+| | Split outside segment → toast | |
+| | Raw reopen = fresh; `.cutdown` = restore | |
+| **Export** | Lossless single + multi-segment | |
+| | I/O range export | |
+| | Discord ~9 MB (30–60s) | |
+| | Archive, Twitter presets | |
+| | Progress % on re-encode | |
+| | GPU when enabled in Settings | |
+| | Crop matches preview | |
+| | Strip audio, fades | |
+| | Accurate trim | |
+| | Custom preset from Settings | |
+| | Batch per segment | |
+| | Queue upload after export | |
+| **Windows** | Open With | |
+| | Default export folder | |
+| | Run at startup (installed build) | |
+| **Tray** | X hides; icon restores; Quit exits | |
+| **Watch** | New file → toast → open | |
+| **History** | Row after export; reveal/copy/clear confirm | |
+| **Upload** | Catbox link | |
+| | File Garden (signed in) | |
+| | Custom HTTP | |
+| **UI** | `?` help, Esc closes panels | |
+| | Drop file to open | |
+| | Recent sources | |
+| | ffmpeg banner + in-app install | |
+| | Relink missing project source | |
+| **Updater** | Check for updates (older install) | |
 
-- Stream-copy trims may not be frame-perfect (keyframe boundaries).
-- Preview may require remux/proxy for some codecs; export still uses the source file.
-- Discord size targeting is single-pass with up to two bitrate retries, not a full two-pass encode.
-- Crop with Lossless Trim preset forces a high-quality H.264 re-encode.
+## Not bugs (usually)
 
-Log new failures in [PROGRESS.md](../PROGRESS.md) under **Known Issues**.
+- Lossless cut lands on keyframes.
+- Preview hiccup between non-adjacent source regions in a reordered timeline.
+- Discord preset misses size on edge-case durations.
+- Lossless + crop re-encodes.
+
+New real bugs → note in PROGRESS.md under known issues.
