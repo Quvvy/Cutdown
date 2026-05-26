@@ -1,8 +1,8 @@
 # Cutdown
 
-Windows desktop app for chopping up gameplay clips—mostly built around OBS replay-buffer folders. Open a file, mark what you want to keep, export, optionally upload a link. Stays in the tray when you close the window.
+Windows desktop app for chopping up and compressing videos. Open a file, mark what you want to keep, export, optionally upload a link.
 
-Stack: Tauri 2, Svelte, Rust, ffmpeg. No bundled ffmpeg in the installer; setup downloads essentials to `%LOCALAPPDATA%\Cutdown\ffmpeg` (needs internet once).
+Stack: Tauri 2, Svelte, Rust, ffmpeg. Setup downloads ffmpeg to `%LOCALAPPDATA%\Cutdown\ffmpeg` (needs internet once).
 
 ## What it does
 
