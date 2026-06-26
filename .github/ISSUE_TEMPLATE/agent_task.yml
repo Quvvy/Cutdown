@@ -1,0 +1,54 @@
+name: Agent task
+description: Scoped task for implement + review agent workflow
+title: "[Agent] "
+labels: []
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template when you want an agent to implement the change.
+        Add the **agent-ready** label when acceptance criteria are clear.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence — what should change?
+      placeholder: e.g. Show installed version on Settings General tab
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Checklist the implement and review agents can verify
+      placeholder: |
+        - [ ] ...
+        - [ ] npm run validate:release passes
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - edit
+        - export
+        - timeline
+        - preview
+        - windows
+        - upload
+        - docs
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes (optional)
+      description: Links, screenshots, files to touch or avoid
+    validations:
+      required: false

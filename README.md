@@ -37,7 +37,7 @@ npm run tauri -- build     # installer (unsigned unless you set signing env—se
 npm run icons              # after changing branding/app-icon.png
 ```
 
-Manual QA checklist: [docs/TESTING.md](docs/TESTING.md). Shipping a build: [docs/RELEASE.md](docs/RELEASE.md).
+Manual QA checklist: [docs/TESTING.md](docs/TESTING.md). Shipping a build: [docs/RELEASE.md](docs/RELEASE.md). Agent workflow (implement + review issues): [docs/AGENT-WORKFLOW.md](docs/AGENT-WORKFLOW.md).
 
 ## OBS watch folder
 
@@ -48,7 +48,9 @@ Settings → pick the replay output folder → enable notifications. New file �
 ```
 src-tauri/src/   Rust: ffmpeg, export, settings, upload, project I/O, watch folder, Windows hooks
 src/             Svelte UI; lib/ has timeline editing, mapping, project payload helpers
-docs/            TESTING.md, RELEASE.md
+docs/            TESTING.md, RELEASE.md, AGENT-WORKFLOW.md
+AGENTS.md        implement + review agent prompts
+.cursor/skills/  issue-implement, issue-review
 public/ffmpeg/   optional dev binaries (not in git)
 ```
 

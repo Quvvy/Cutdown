@@ -22,6 +22,8 @@ npm run validate:release
 
 Then walk [docs/TESTING.md](docs/TESTING.md) on real clips—especially installed NSIS, not just `tauri dev`. Timeline layout has bitten us on WebView2 before when we changed grid sizing; always click around the timeline after UI changes.
 
+Agent PRs should pass [CI](.github/workflows/ci.yml); see [docs/AGENT-WORKFLOW.md](docs/AGENT-WORKFLOW.md) for the implement/review loop.
+
 ## Rough performance (informal, Win10)
 
 | Thing | Ballpark |

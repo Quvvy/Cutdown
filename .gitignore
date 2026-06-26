@@ -3,6 +3,8 @@ dist
 dist-ssr
 *.local
 .tauri/
+.cursor/debug*.log
+.cursor/*.log
 
 src-tauri/target
 target
