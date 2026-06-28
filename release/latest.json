@@ -1,0 +1,11 @@
+{
+    "version":  "0.3.1",
+    "notes":  "Audio export presets, extension auto-fix, bottom bar compaction, watch-folder toasts.",
+    "pub_date":  "2026-06-28T11:37:18Z",
+    "platforms":  {
+                      "windows-x86_64":  {
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUNngxTkNGYnRydU1XUkh4RFcxQktuS0doekM1STRsVFhiNXZzWFlUc3oyalgya0swSmpoVzBsOWdiTmZoK2ZjWmFQb3d0WHlRSTlJYmlVeXRMR2JrejNHdHd2bXVCcEFBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyNjQ2Mzg2CWZpbGU6Q3V0ZG93bl8wLjMuMV94NjQtc2V0dXAuZXhlCjg2UzFWYm9ib2Naak11Rk5rS29ZMFpSSmRlSUhmdlFoV004THczOWdYdCt4L1ZqZU9QS1AySDl5RjVmaXVWN3dNZzZ4aHBKRW9MM3NuTWlyVTZvSEFBPT0K",
+                                             "url":  "https://github.com/Quvvy/Cutdown/releases/download/v0.3.1/Cutdown_0.3.1_x64-setup.exe"
+                                         }
+                  }
+}

@@ -8,6 +8,8 @@
     "core:window:allow-set-title",
     "dialog:default",
     "notification:default",
+    "notification:allow-register-action-types",
+    "notification:allow-register-listener",
     "updater:default",
     "process:default"
   ]

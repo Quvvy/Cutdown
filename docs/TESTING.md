@@ -64,6 +64,10 @@ Check Pass when done. Skip rows that don’t apply.
 | | Custom preset from Settings | |
 | | Batch per segment | |
 | | Queue upload after export | |
+| | Audio-only: MP3 192 default, WAV, OGG | |
+| | Audio preset tab; `.mp4` → `.mp3` on switch | |
+| | MP3 128 vs 192 bitrate | |
+| | Post-export footer icons (copy, folder, upload) | |
 | **Windows** | Open With | |
 | | Default export folder | |
 | | Run at startup (installed build) | |

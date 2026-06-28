@@ -69,6 +69,7 @@
       title: 'Export & share',
       items: [
         'Lossless Trim is fastest (stream-copy). Discord/Archive presets re-encode for size targets.',
+        'Export can write video (MP4) or audio only (WAV, MP3, OGG) from the Export window.',
         'Export can write each kept segment as its own file, or export the I/O range as one clip.',
         'After export, upload to Catbox, File Garden, or a custom server (Settings → Upload).',
         'Clip history stores past exports with copy-path and copy-link actions.',

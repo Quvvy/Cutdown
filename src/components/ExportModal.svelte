@@ -1,6 +1,12 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import { formatBytes, formatTime, sanitizeExportFileName } from '../lib/format';
+  import { formatBytes, formatTime } from '../lib/format';
+  import { AUDIO_PRESETS } from '../lib/audioPresets';
+  import {
+    ensureExportFileExtension,
+    extensionForExport,
+    type ExportType,
+  } from '../lib/exportFormats';
   import type { ExportPresetInfo } from '../lib/exportPresets';
   import DraggablePanel from './DraggablePanel.svelte';
   import IconButton from './IconButton.svelte';
@@ -8,6 +14,8 @@
   export let open = false;
   export let outputDirectory = '';
   export let outputFileName = 'cutdown.mp4';
+  export let exportType: ExportType = 'video';
+  export let audioPresetId = 'audio-mp3-192';
   export let segmentCount = 0;
   export let duration = 0;
   export let rangeDuration = 0;
@@ -28,6 +36,7 @@
   export let uploadTargetsConfigured = false;
 
   let activeTab: 'destination' | 'preset' | 'options' = 'destination';
+  let lastSyncedExtension = '';
 
   const tabs = [
     { id: 'destination' as const, label: 'Where to save' },
@@ -41,12 +50,19 @@
     chooseOutput: void;
     exportModeChange: { mode: 'sequence' | 'range' };
     presetChange: { presetId: string };
+    audioPresetChange: { audioPresetId: string };
     openUploadSettings: void;
   }>();
 
   $: selectedPreset = presets.find((preset) => preset.id === presetId) ?? null;
+  $: selectedAudioPreset = AUDIO_PRESETS.find((preset) => preset.id === audioPresetId) ?? AUDIO_PRESETS[1];
   $: exportDuration = exportMode === 'range' && canExportRange ? rangeDuration : duration;
-  $: canExport = Boolean(outputFileName.trim()) && Boolean(outputDirectory) && !exportBusy;
+  $: outputExtension = extensionForExport(exportType, audioPresetId);
+  $: canExport =
+    Boolean(outputFileName.trim()) &&
+    Boolean(outputDirectory) &&
+    !exportBusy &&
+    (exportType === 'video' || hasAudio);
   $: canBatchPerSegment = exportMode === 'sequence' && segmentCount > 1;
   $: batchCount = batchPerSegment && canBatchPerSegment ? segmentCount : 1;
   $: trimHint = usesStreamCopy
@@ -61,14 +77,56 @@
   $: validationErrors = [
     !outputDirectory.trim() ? 'Choose an export folder on the Where to save tab.' : null,
     !outputFileName.trim() ? 'Enter a file name.' : null,
+    exportType === 'audio' && !hasAudio ? 'This clip has no audio track to export.' : null,
   ].filter((value): value is string => Boolean(value));
+  $: accurateTrimLabel =
+    exportType === 'audio'
+      ? 'Sample-accurate cuts (slower)'
+      : 'Accurate trim (frame-perfect in/out, slower)';
+  $: exportButtonLabel = exportBusy ? 'Exporting…' : exportType === 'audio' ? 'Export audio' : 'Start export';
+
+  $: if (open && outputExtension !== lastSyncedExtension) {
+    syncFileExtension();
+    lastSyncedExtension = outputExtension;
+  }
+
+  $: if (!open) {
+    lastSyncedExtension = '';
+  }
 
   function selectPreset(id: string): void {
     dispatch('presetChange', { presetId: id });
   }
 
+  function selectAudioPreset(id: string): void {
+    if (id === audioPresetId) {
+      return;
+    }
+
+    audioPresetId = id;
+    dispatch('audioPresetChange', { audioPresetId: id });
+    syncFileExtension();
+  }
+
   function normalizeFileName(): void {
-    outputFileName = sanitizeExportFileName(outputFileName);
+    outputFileName = ensureExportFileExtension(outputFileName, outputExtension);
+  }
+
+  function setExportType(nextType: ExportType): void {
+    if (nextType === exportType) {
+      return;
+    }
+
+    exportType = nextType;
+    if (nextType === 'audio' && !hasAudio) {
+      return;
+    }
+
+    syncFileExtension();
+  }
+
+  function syncFileExtension(): void {
+    outputFileName = ensureExportFileExtension(outputFileName, outputExtension);
   }
 </script>
 
@@ -97,7 +155,38 @@
   {#if activeTab === 'destination'}
     <div class="panel-section">
       <h3 class="panel-section__title">Output location</h3>
-      <p class="panel-section__lead">Pick a folder and name for the exported file.</p>
+      <p class="panel-section__lead">Choose what to export, then pick a folder and file name.</p>
+
+      <div class="panel-field">
+        <span>Export type</span>
+        <div class="modal__mode">
+          <label>
+            <input
+              type="radio"
+              name="export-type"
+              value="video"
+              checked={exportType === 'video'}
+              on:change={() => setExportType('video')}
+            />
+            Video (MP4) — includes picture and sound
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="export-type"
+              value="audio"
+              checked={exportType === 'audio'}
+              disabled={!hasAudio}
+              on:change={() => setExportType('audio')}
+            />
+            Audio only — sound file, no video
+          </label>
+        </div>
+        {#if !hasAudio}
+          <p class="modal__hint">This clip has no audio track.</p>
+        {/if}
+      </div>
+
       <div class="panel-field">
         <span>File name</span>
         <input
@@ -156,53 +245,82 @@
     </div>
   {:else if activeTab === 'preset'}
     <div class="panel-section">
-      <h3 class="panel-section__title">Compression preset</h3>
-      <p class="panel-section__lead">Lossless is fastest for quick trims. Re-encode presets target upload size or quality.</p>
-      <ul class="preset-picker" role="listbox" aria-label="Export presets">
-        {#each presets as preset (preset.id)}
-          <li>
-            <button
-              type="button"
-              class="preset-picker__option"
-              class:preset-picker__option--selected={preset.id === presetId}
-              role="option"
-              aria-selected={preset.id === presetId}
-              on:click={() => selectPreset(preset.id)}
-            >
-              <span class="preset-picker__name">
-                {preset.name}
-                {#if preset.custom}
-                  <small>Custom</small>
-                {/if}
-              </span>
-              <span class="preset-picker__description">{preset.description}</span>
-            </button>
-          </li>
-        {/each}
-      </ul>
-      {#if sizeEstimate}
-        <p class="modal__hint">{sizeEstimate}</p>
+      {#if exportType === 'audio'}
+        <h3 class="panel-section__title">Audio preset</h3>
+        <p class="panel-section__lead">Choose a format and quality. The file name extension updates automatically.</p>
+        <ul class="preset-picker" role="listbox" aria-label="Audio export presets">
+          {#each AUDIO_PRESETS as preset (preset.id)}
+            <li>
+              <button
+                type="button"
+                class="preset-picker__option"
+                class:preset-picker__option--selected={preset.id === audioPresetId}
+                role="option"
+                aria-selected={preset.id === audioPresetId}
+                on:click={() => selectAudioPreset(preset.id)}
+              >
+                <span class="preset-picker__name">{preset.name}</span>
+                <span class="preset-picker__description">{preset.description}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+        <p class="modal__hint">Selected: {selectedAudioPreset.name}</p>
+      {:else}
+        <h3 class="panel-section__title">Compression preset</h3>
+        <p class="panel-section__lead">Lossless is fastest for quick trims. Re-encode presets target upload size or quality.</p>
+        <ul class="preset-picker" role="listbox" aria-label="Export presets">
+          {#each presets as preset (preset.id)}
+            <li>
+              <button
+                type="button"
+                class="preset-picker__option"
+                class:preset-picker__option--selected={preset.id === presetId}
+                role="option"
+                aria-selected={preset.id === presetId}
+                on:click={() => selectPreset(preset.id)}
+              >
+                <span class="preset-picker__name">
+                  {preset.name}
+                  {#if preset.custom}
+                    <small>Custom</small>
+                  {/if}
+                </span>
+                <span class="preset-picker__description">{preset.description}</span>
+              </button>
+            </li>
+          {/each}
+        </ul>
+        {#if sizeEstimate}
+          <p class="modal__hint">{sizeEstimate}</p>
+        {/if}
+        <div class="panel-info">{trimHint}</div>
       {/if}
-      <div class="panel-info">{trimHint}</div>
     </div>
   {:else}
     <div class="panel-section">
       <h3 class="panel-section__title">Export options</h3>
-      <p class="panel-section__lead">Fine-tune trim accuracy, audio, and post-export upload.</p>
+      <p class="panel-section__lead">
+        {exportType === 'audio'
+          ? 'Fine-tune cut accuracy, fades, and post-export upload.'
+          : 'Fine-tune trim accuracy, audio, and post-export upload.'}
+      </p>
       <label class="modal__mode">
         <input type="checkbox" bind:checked={accurateTrim} />
-        Accurate trim (frame-perfect in/out, slower)
+        {accurateTrimLabel}
       </label>
-      <div class="panel-field">
-        <span>Audio</span>
-        <label class="modal__mode">
-          <input type="checkbox" bind:checked={stripAudio} disabled={!hasAudio} />
-          Strip audio (video only)
-        </label>
-        {#if !hasAudio}
-          <p class="modal__hint">This clip has no audio track.</p>
-        {/if}
-      </div>
+      {#if exportType === 'video'}
+        <div class="panel-field">
+          <span>Audio</span>
+          <label class="modal__mode">
+            <input type="checkbox" bind:checked={stripAudio} disabled={!hasAudio} />
+            Strip audio (video only)
+          </label>
+          {#if !hasAudio}
+            <p class="modal__hint">This clip has no audio track.</p>
+          {/if}
+        </div>
+      {/if}
       <div class="panel-field">
         <span>Fades (seconds)</span>
         <div class="modal__mode modal__mode--fades">
@@ -215,7 +333,7 @@
               max="10"
               step="0.1"
               bind:value={fadeInSeconds}
-              disabled={stripAudio || !hasAudio}
+              disabled={(exportType === 'video' && stripAudio) || !hasAudio}
             />
           </label>
           <label>
@@ -227,7 +345,7 @@
               max="10"
               step="0.1"
               bind:value={fadeOutSeconds}
-              disabled={stripAudio || !hasAudio}
+              disabled={(exportType === 'video' && stripAudio) || !hasAudio}
             />
           </label>
         </div>
@@ -250,8 +368,15 @@
 
   <svelte:fragment slot="footer">
     <button type="button" class="secondary" on:click={() => dispatch('close')}>Cancel</button>
-    <IconButton icon="export" title="Start export" variant="primary" showLabel disabled={!canExport} on:click={() => dispatch('confirm')}>
-      {exportBusy ? 'Exporting…' : 'Start export'}
+    <IconButton
+      icon="export"
+      title={exportButtonLabel}
+      variant="primary"
+      showLabel
+      disabled={!canExport}
+      on:click={() => dispatch('confirm')}
+    >
+      {exportButtonLabel}
     </IconButton>
   </svelte:fragment>
 </DraggablePanel>

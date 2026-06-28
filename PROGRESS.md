@@ -2,11 +2,11 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.3.0)
+## Now (v0.3.1)
 
-Editor state lives in `.cutdown` project files. We dropped the old `%APPDATA%` auto-session per source path—reopen a video without a project and you get one full-length segment again.
+**0.3.1** — Audio-only export presets (WAV, MP3 128k/192k, OGG) on the Export Preset tab; filename extension auto-fix when switching video/audio. Bottom bar compaction: icon post-export actions, flexible footer height. Settings modal draft fix. Watch-folder Windows toasts with Open / Not now.
 
-Timeline code got pulled into `timelineEditing.ts`, `timelineTrackSizing.ts`, `projectFile.ts`, `segmentBounds.ts` with tests. Track rows use proportional grid sizing so the timeline fills the pane when you resize the window.
+**0.3.0** — Editor state lives in `.cutdown` project files (no more per-source auto-session). Timeline proportional grid sizing.
 
 Still on Windows only. Updater (signed NSIS + `latest.json`) landed in 0.2.4.
 
@@ -51,7 +51,7 @@ One export at a time is the happy path. Don’t run a big upload and export toge
 | 1–6 | Core editor, export, preview, presets, crop, watch folder | done |
 | 7–9 | Upload, history, Windows integration | done |
 | 10 | Perf notes | documented only |
-| 11–12 | Trim copy, fancier audio | partial |
+| 11–12 | Trim copy, fancier audio | partial (audio presets in 0.3.1) |
 | 13–14 | Timeline workflow, projects | done (projects replaced auto-session) |
 | 15 | Export queue polish | partial |
 | 16 | Preview UX | done |

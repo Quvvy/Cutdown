@@ -41,8 +41,8 @@ export function splitOutputPath(path: string): { directory: string; fileName: st
   return { directory, fileName };
 }
 
-export function joinOutputPath(directory: string, fileName: string): string {
-  const safeName = sanitizeExportFileName(fileName);
+export function joinOutputPath(directory: string, fileName: string, defaultExtension = 'mp4'): string {
+  const safeName = sanitizeExportFileName(fileName, defaultExtension);
 
   if (!directory) {
     return safeName;
@@ -52,15 +52,16 @@ export function joinOutputPath(directory: string, fileName: string): string {
   return `${trimmedDir}\\${safeName}`;
 }
 
-export function sanitizeExportFileName(fileName: string): string {
+export function sanitizeExportFileName(fileName: string, defaultExtension = 'mp4'): string {
+  const extension = defaultExtension.replace(/^\./, '').toLowerCase();
   let cleaned = fileName.replace(/[<>:"|?*\\/]/g, '_').trim();
 
   if (!cleaned) {
-    cleaned = 'cutdown.mp4';
+    cleaned = `cutdown.${extension}`;
   }
 
   if (!/\.[a-z0-9]{2,5}$/i.test(cleaned)) {
-    cleaned = `${cleaned}.mp4`;
+    cleaned = `${cleaned}.${extension}`;
   }
 
   return cleaned;

@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_notification::NotificationExt;
 
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "mov", "webm", "ts", "avi", "flv"];
 
@@ -199,23 +198,77 @@ fn announce_clip(app: AppHandle, path: PathBuf) {
         path: path_key.clone(),
     };
 
-    let _ = app.emit("watch_folder_clip", payload);
-
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
         .unwrap_or("New clip");
 
-    let _ = app
-        .notification()
-        .builder()
-        .title("Cutdown")
-        .body(format!("New clip ready: {file_name}"))
-        .show();
-
-    if let Err(err) = crate::show_editor_window(&app) {
-        eprintln!("failed to show editor for watch-folder clip: {err}");
+    #[cfg(windows)]
+    {
+        if show_windows_replay_toast(&app, path_key.clone(), file_name).is_err() {
+            eprintln!("watch-folder toast failed, falling back to event only");
+            let _ = app.emit("watch_folder_clip", payload);
+        }
     }
+
+    #[cfg(not(windows))]
+    {
+        let _ = app.emit("watch_folder_clip", payload);
+    }
+}
+
+#[cfg(windows)]
+fn show_windows_replay_toast(
+    app: &AppHandle,
+    path: String,
+    file_name: &str,
+) -> Result<(), String> {
+    use std::mem;
+    use winrt_toast_reborn::{Action, ActivatedAction, Toast, ToastManager};
+
+    let app_id = app.config().identifier.clone();
+    let app_handle = app.clone();
+
+    let manager = ToastManager::new(&app_id).on_activated(None, move |action: Option<ActivatedAction>| {
+        let Some(action) = action else {
+            return;
+        };
+
+        if action.arg != "open" {
+            return;
+        }
+
+        let Some(path) = action.tag else {
+            return;
+        };
+
+        if let Err(err) = crate::show_editor_window(&app_handle) {
+            eprintln!("failed to show editor for watch-folder clip: {err}");
+        }
+
+        let _ = app_handle.emit(
+            "watch_folder_clip",
+            WatchFolderClip {
+                path: path.clone(),
+            },
+        );
+    });
+
+    let mut toast = Toast::new();
+    toast
+        .tag(&path)
+        .text1("Cutdown")
+        .text2(format!("New replay ready: {file_name}"))
+        .action(Action::new("Open", "open", ""))
+        .action(Action::new("Not now", "dismiss", ""));
+
+    manager
+        .show(&toast)
+        .map_err(|err| format!("Failed to show replay notification: {err}"))?;
+    // Keep activation handlers alive until the user dismisses or acts on the toast.
+    mem::forget(manager);
+
+    Ok(())
 }
 
 fn is_candidate_video(path: &Path) -> bool {

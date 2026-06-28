@@ -48,6 +48,32 @@ pub struct ExportParams {
     fade_in_seconds: Option<f64>,
     /// Fade out duration in seconds at the end of the exported output.
     fade_out_seconds: Option<f64>,
+    export_kind: Option<ExportKind>,
+    audio_format: Option<AudioFormat>,
+    audio_preset_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExportKind {
+    Video,
+    Audio,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioFormat {
+    Wav,
+    Mp3,
+    Ogg,
+}
+
+#[derive(Debug, Clone)]
+struct AudioEncodeProfile {
+    codec: &'static str,
+    args: Vec<String>,
+    history_preset_id: String,
+    display_name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -135,7 +161,7 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
         .map_err(|err| format!("Failed to run ffprobe: {err}"))?;
 
     if !output.status.success() {
-        return Err(command_error("ffprobe", &output.stderr));
+        return Err(user_facing_probe_error(&output.stderr));
     }
 
     let json: Value = serde_json::from_slice(&output.stdout)
@@ -214,9 +240,6 @@ fn export_clip_blocking(
     EXPORT_CANCELLED.store(false, Ordering::SeqCst);
     let input = PathBuf::from(&params.input_path);
     let output = PathBuf::from(&params.output_path);
-    let audio_mode = params.audio_mode.unwrap_or(AudioMode::Preserve);
-    let preset_id = resolve_preset_id(params.preset_id);
-    let prefer_gpu = params.prefer_gpu.unwrap_or(true);
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
@@ -229,6 +252,38 @@ fn export_clip_blocking(
         .sum::<f64>();
 
     let metadata = probe_video(params.input_path.clone())?;
+    let export_kind = params.export_kind.unwrap_or(ExportKind::Video);
+    let volume = normalize_volume(params.volume);
+    let accurate_trim = params.accurate_trim.unwrap_or(false);
+    let fade_in = normalize_fade(params.fade_in_seconds);
+    let fade_out = normalize_fade(params.fade_out_seconds);
+
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("Failed to create output directory: {err}"))?;
+    }
+
+    if export_kind == ExportKind::Audio {
+        return export_audio_clip(
+            &app,
+            &input,
+            &output,
+            &segments,
+            &metadata,
+            params.audio_preset_id,
+            params.audio_format,
+            volume,
+            fade_in,
+            fade_out,
+            duration,
+            accurate_trim,
+            params.source_path,
+        );
+    }
+
+    let audio_mode = params.audio_mode.unwrap_or(AudioMode::Preserve);
+    let preset_id = resolve_preset_id(params.preset_id);
+    let prefer_gpu = params.prefer_gpu.unwrap_or(true);
     let gpu_encoders = crate::encoder_detect::detect_gpu_encoders();
     let mut profile = resolve_encode_profile(
         &preset_id,
@@ -238,11 +293,6 @@ fn export_clip_blocking(
         metadata.width,
         metadata.height,
     )?;
-
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("Failed to create output directory: {err}"))?;
-    }
 
     let preset_name = presets::all_preset_infos()
         .into_iter()
@@ -258,10 +308,6 @@ fn export_clip_blocking(
     );
 
     let crop = normalize_crop(params.crop.as_ref(), metadata.width, metadata.height);
-    let volume = normalize_volume(params.volume);
-    let accurate_trim = params.accurate_trim.unwrap_or(false);
-    let fade_in = normalize_fade(params.fade_in_seconds);
-    let fade_out = normalize_fade(params.fade_out_seconds);
     let export_duration = duration;
     let use_lossless = profile.lossless
         && crop.is_none()
@@ -310,7 +356,7 @@ fn export_clip_blocking(
             export_duration,
             accurate_trim,
         )
-        .map_err(|err| format!("Re-encode export failed: {err}"))?;
+        .map_err(|err| map_reencode_export_error(&output, err))?;
     }
 
     let mut file_size = fs::metadata(&output)
@@ -341,7 +387,8 @@ fn export_clip_blocking(
                 fade_out,
                 export_duration,
                 accurate_trim,
-            )?;
+            )
+            .map_err(|err| map_reencode_export_error(&output, err))?;
             file_size = fs::metadata(&output)
                 .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
                 .len();
@@ -366,6 +413,390 @@ fn export_clip_blocking(
         file_size,
         duration,
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_audio_clip(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+    metadata: &VideoMetadata,
+    audio_preset_id: Option<String>,
+    audio_format: Option<AudioFormat>,
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    duration: f64,
+    accurate_trim: bool,
+    source_path: Option<String>,
+) -> Result<ExportResult, String> {
+    if metadata.audio_codec.is_none() {
+        return Err("This clip has no audio to export.".to_string());
+    }
+
+    let (profile, output_path) = resolve_audio_encode_profile(audio_preset_id, audio_format, output)?;
+
+    emit_export_progress(
+        app,
+        "starting",
+        &format!("Preparing audio export as {}.", profile.display_name),
+        None,
+    );
+
+    if segments.len() == 1 {
+        let segment = &segments[0];
+        let segment_duration = segment.end - segment.start;
+        emit_export_progress(app, "segment", "Exporting audio segment.", Some(0.0));
+        export_audio_segment(
+            Some(app),
+            input,
+            &output_path,
+            segment.start,
+            segment_duration,
+            &profile,
+            volume,
+            fade_in,
+            fade_out,
+            duration,
+            accurate_trim,
+        )
+        .map_err(|err| format!("Audio export failed: {err}"))?;
+    } else {
+        export_multi_segment_audio(
+            app,
+            input,
+            &output_path,
+            segments,
+            &profile,
+            volume,
+            accurate_trim,
+        )
+        .map_err(|err| format!("Multi-segment audio export failed: {err}"))?;
+
+        if fade_in > 0.0 || fade_out > 0.0 || volume_is_adjusted(volume) {
+            apply_output_audio_fades_audio(
+                &output_path,
+                &profile,
+                volume,
+                fade_in,
+                fade_out,
+                duration,
+            )?;
+        }
+    }
+
+    let file_size = fs::metadata(&output_path)
+        .map_err(|err| format!("Failed to read exported file metadata: {err}"))?
+        .len();
+
+    emit_export_progress(app, "complete", "Audio export complete.", Some(100.0));
+
+    let output_path_string = output_path.to_string_lossy().to_string();
+    let _ = append_entry(ClipHistoryEntry {
+        output_path: output_path_string.clone(),
+        source_path: source_path.filter(|value| !value.trim().is_empty()),
+        preset_id: profile.history_preset_id.clone(),
+        exported_at: Utc::now().to_rfc3339(),
+        file_size,
+        duration,
+        share_url: None,
+    });
+
+    Ok(ExportResult {
+        output_path: output_path_string,
+        file_size,
+        duration,
+    })
+}
+
+fn resolve_audio_encode_profile(
+    audio_preset_id: Option<String>,
+    audio_format: Option<AudioFormat>,
+    output: &Path,
+) -> Result<(AudioEncodeProfile, PathBuf), String> {
+    let profile = if let Some(id) = audio_preset_id.filter(|value| !value.trim().is_empty()) {
+        resolve_audio_preset(&id)?
+    } else {
+        let format = audio_format
+            .or_else(|| {
+                output
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .and_then(audio_format_from_extension)
+            })
+            .ok_or_else(|| {
+                "Audio export requires a preset or a .wav, .mp3, or .ogg output file.".to_string()
+            })?;
+        build_audio_encode_profile(format)
+    };
+
+    let expected_extension = audio_preset_extension_for_profile(&profile.history_preset_id);
+    let normalized_output = normalize_audio_output_path(output, expected_extension);
+
+    Ok((profile, normalized_output))
+}
+
+fn audio_preset_extension_for_profile(preset_id: &str) -> &'static str {
+    if preset_id.contains("wav") {
+        "wav"
+    } else if preset_id.contains("ogg") {
+        "ogg"
+    } else {
+        "mp3"
+    }
+}
+
+fn normalize_audio_output_path(output: &Path, expected_extension: &str) -> PathBuf {
+    let matches = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case(expected_extension));
+
+    if matches {
+        output.to_path_buf()
+    } else {
+        output.with_extension(expected_extension)
+    }
+}
+
+fn resolve_audio_preset(id: &str) -> Result<AudioEncodeProfile, String> {
+    match id {
+        "audio-wav" => Ok(AudioEncodeProfile {
+            codec: "pcm_s16le",
+            args: Vec::new(),
+            history_preset_id: id.to_string(),
+            display_name: "WAV (lossless)".to_string(),
+        }),
+        "audio-mp3-192" => Ok(AudioEncodeProfile {
+            codec: "libmp3lame",
+            args: vec!["-b:a".to_string(), "192k".to_string()],
+            history_preset_id: id.to_string(),
+            display_name: "MP3 (192 kbps)".to_string(),
+        }),
+        "audio-mp3-128" => Ok(AudioEncodeProfile {
+            codec: "libmp3lame",
+            args: vec!["-b:a".to_string(), "128k".to_string()],
+            history_preset_id: id.to_string(),
+            display_name: "MP3 (128 kbps)".to_string(),
+        }),
+        "audio-ogg-192" => Ok(AudioEncodeProfile {
+            codec: "libvorbis",
+            args: vec!["-b:a".to_string(), "192k".to_string()],
+            history_preset_id: id.to_string(),
+            display_name: "OGG (192 kbps)".to_string(),
+        }),
+        _ => Err(format!("Unknown audio preset: {id}")),
+    }
+}
+
+fn build_audio_encode_profile(format: AudioFormat) -> AudioEncodeProfile {
+    match format {
+        AudioFormat::Wav => resolve_audio_preset("audio-wav").expect("wav preset exists"),
+        AudioFormat::Mp3 => resolve_audio_preset("audio-mp3-192").expect("mp3 preset exists"),
+        AudioFormat::Ogg => resolve_audio_preset("audio-ogg-192").expect("ogg preset exists"),
+    }
+}
+
+fn audio_format_from_extension(extension: &str) -> Option<AudioFormat> {
+    match extension.to_ascii_lowercase().as_str() {
+        "wav" => Some(AudioFormat::Wav),
+        "mp3" => Some(AudioFormat::Mp3),
+        "ogg" | "oga" => Some(AudioFormat::Ogg),
+        _ => None,
+    }
+}
+
+fn append_audio_encode_args(command: &mut Command, profile: &AudioEncodeProfile) {
+    command.arg("-c:a").arg(profile.codec);
+    for arg in &profile.args {
+        command.arg(arg);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_audio_segment(
+    app: Option<&tauri::AppHandle>,
+    input: &Path,
+    output: &Path,
+    start: f64,
+    duration: f64,
+    profile: &AudioEncodeProfile,
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
+    accurate_trim: bool,
+) -> Result<(), String> {
+    if duration <= 0.0 {
+        return Err("Segment end must be after segment start.".to_string());
+    }
+
+    let mut command = command(ffmpeg_path());
+    command.arg("-y");
+    if accurate_trim {
+        command
+            .arg("-i")
+            .arg(input)
+            .arg("-ss")
+            .arg(format_seconds(start))
+            .arg("-t")
+            .arg(format_seconds(duration));
+    } else {
+        command
+            .arg("-ss")
+            .arg(format_seconds(start))
+            .arg("-i")
+            .arg(input)
+            .arg("-t")
+            .arg(format_seconds(duration));
+    }
+
+    command.args(["-vn", "-map", "0:a:0"]);
+
+    if let Some(filter) = audio_filter_chain(volume, fade_in, fade_out, output_duration) {
+        command.args(["-af", &filter]);
+    }
+
+    append_audio_encode_args(&mut command, profile);
+    command.arg(output);
+
+    run_command_with_progress(
+        app,
+        command,
+        "encode",
+        Some(duration),
+        "Encoding audio segment.",
+    )
+    .map_err(map_audio_encoder_error)
+}
+
+fn export_multi_segment_audio(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+    segments: &[ExportSegment],
+    profile: &AudioEncodeProfile,
+    volume: f64,
+    accurate_trim: bool,
+) -> Result<(), String> {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "cutdown-audio-{}-{}",
+        std::process::id(),
+        current_timestamp_millis()
+    ));
+    fs::create_dir_all(&temp_dir)
+        .map_err(|err| format!("Failed to create temp directory: {err}"))?;
+
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("wav");
+
+    let result = (|| {
+        let mut segment_paths = Vec::with_capacity(segments.len());
+        let total_segments = segments.len() as f64;
+
+        for (index, segment) in segments.iter().enumerate() {
+            let segment_duration = segment.end - segment.start;
+            let base_percent = (index as f64 / total_segments) * 90.0;
+            emit_export_progress(
+                app,
+                "segment",
+                &format!("Encoding audio segment {} of {}.", index + 1, segments.len()),
+                Some(base_percent),
+            );
+            let segment_path = temp_dir.join(format!("segment-{index:03}.{extension}"));
+            export_audio_segment(
+                Some(app),
+                input,
+                &segment_path,
+                segment.start,
+                segment_duration,
+                profile,
+                volume,
+                0.0,
+                0.0,
+                segment_duration,
+                accurate_trim,
+            )?;
+            segment_paths.push(segment_path);
+        }
+
+        emit_export_progress(app, "concat", "Joining audio segments.", Some(92.0));
+        let concat_list = temp_dir.join("segments.txt");
+        fs::write(&concat_list, concat_file_contents(&segment_paths))
+            .map_err(|err| format!("Failed to write concat list: {err}"))?;
+
+        let mut command = command(ffmpeg_path());
+        command
+            .arg("-y")
+            .args(["-f", "concat", "-safe", "0"])
+            .arg("-i")
+            .arg(&concat_list)
+            .args(["-c", "copy"])
+            .arg(output);
+
+        run_command_with_progress(
+            Some(app),
+            command,
+            "concat",
+            None,
+            "Joining audio segments.",
+        )
+    })();
+
+    let _ = fs::remove_dir_all(&temp_dir);
+    result
+}
+
+fn apply_output_audio_fades_audio(
+    output: &Path,
+    profile: &AudioEncodeProfile,
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
+) -> Result<(), String> {
+    let Some(filter) = audio_filter_chain(volume, fade_in, fade_out, output_duration) else {
+        return Ok(());
+    };
+
+    let extension = output
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("wav");
+    let temp_output = output.with_extension(format!("fade-tmp.{extension}"));
+    let mut command = command(ffmpeg_path());
+    command
+        .arg("-y")
+        .arg("-i")
+        .arg(output)
+        .args(["-vn", "-map", "0:a:0"])
+        .args(["-af", &filter]);
+    append_audio_encode_args(&mut command, profile);
+    command.arg(&temp_output);
+
+    run_command_with_progress(None, command, "fade", None, "Applying audio fades.")
+        .map_err(map_audio_encoder_error)?;
+
+    fs::rename(&temp_output, output)
+        .map_err(|err| format!("Failed to replace output after audio fade: {err}"))
+}
+
+fn map_audio_encoder_error(err: String) -> String {
+    if err.contains("Unknown encoder 'libmp3lame'") || err.contains("Encoder (codec mp3) not found")
+    {
+        return "MP3 export requires ffmpeg with libmp3lame. Reinstall ffmpeg or choose WAV/OGG."
+            .to_string();
+    }
+
+    if err.contains("Unknown encoder 'libvorbis'") {
+        return "OGG export requires ffmpeg with libvorbis. Reinstall ffmpeg or choose WAV/MP3."
+            .to_string();
+    }
+
+    err
 }
 
 #[tauri::command]
@@ -538,6 +969,67 @@ fn export_reencoded_segment(
     output_duration: f64,
     accurate_trim: bool,
 ) -> Result<(), String> {
+    let first = export_reencoded_segment_attempt(
+        app,
+        input,
+        output,
+        start,
+        duration,
+        profile,
+        audio_mode,
+        crop,
+        volume,
+        fade_in,
+        fade_out,
+        output_duration,
+        accurate_trim,
+    );
+
+    let result = if first.is_err() && is_gpu_video_codec(&profile.video_codec) {
+        let _ = fs::remove_file(output);
+        let fallback = presets::libx264_fallback_profile(profile);
+        export_reencoded_segment_attempt(
+            app,
+            input,
+            output,
+            start,
+            duration,
+            &fallback,
+            audio_mode,
+            crop,
+            volume,
+            fade_in,
+            fade_out,
+            output_duration,
+            accurate_trim,
+        )
+    } else {
+        first
+    };
+
+    if result.is_err() {
+        let _ = fs::remove_file(output);
+    }
+
+    result
+}
+
+#[allow(clippy::too_many_arguments)]
+fn export_reencoded_segment_attempt(
+    app: Option<&tauri::AppHandle>,
+    input: &Path,
+    output: &Path,
+    start: f64,
+    duration: f64,
+    profile: &EncodeProfile,
+    audio_mode: AudioMode,
+    crop: Option<&CropRect>,
+    volume: f64,
+    fade_in: f64,
+    fade_out: f64,
+    output_duration: f64,
+    accurate_trim: bool,
+) -> Result<(), String> {
     if duration <= 0.0 {
         return Err("Segment end must be after segment start.".to_string());
     }
@@ -566,10 +1058,12 @@ fn export_reencoded_segment(
         command.args(["-vf", &filter]);
     }
 
+    command.args(["-map", "0:v:0", "-map", "0:a?"]);
     command.arg("-c:v").arg(&profile.video_codec);
     for arg in &profile.video_args {
         command.arg(arg);
     }
+    command.args(["-pix_fmt", "yuv420p"]);
 
     append_audio_output(
         &mut command,
@@ -891,6 +1385,8 @@ fn proxy_preview(
             "0:v:0",
             "-map",
             "0:a?",
+            "-vf",
+            "scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p",
             "-c:v",
             "libx264",
             "-preset",
@@ -1021,9 +1517,17 @@ fn run_command_with_progress(
     let reader = BufReader::new(stderr);
     let mut parsed_duration = total_duration;
     let mut last_percent = -1.0;
+    let mut stderr_tail: Vec<String> = Vec::new();
 
     for line in reader.lines() {
         let line = line.map_err(|err| format!("Failed to read ffmpeg output: {err}"))?;
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            stderr_tail.push(trimmed.to_string());
+            if stderr_tail.len() > 20 {
+                stderr_tail.remove(0);
+            }
+        }
 
         if EXPORT_CANCELLED.load(Ordering::SeqCst) {
             let _ = child.kill();
@@ -1054,7 +1558,8 @@ fn run_command_with_progress(
         .map_err(|err| format!("Failed to wait for ffmpeg: {err}"))?;
 
     if !status.success() {
-        return Err(format!("{message} ffmpeg exited with status {status}."));
+        let detail = stderr_detail(&stderr_tail);
+        return Err(format!("{message} ffmpeg failed ({status}): {detail}"));
     }
 
     if let Some(app) = app.as_ref() {
@@ -1138,17 +1643,23 @@ fn build_video_filter(profile: &EncodeProfile, crop: Option<&CropRect>) -> Optio
         ));
     }
 
+    let has_scale = profile
+        .scale_filter
+        .as_ref()
+        .is_some_and(|scale| !scale.is_empty());
+
     if let Some(scale) = &profile.scale_filter {
         if !scale.is_empty() {
             parts.push(scale.clone());
         }
     }
 
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(","))
+    if !has_scale {
+        parts.push("scale=trunc(iw/2)*2:trunc(ih/2)*2".to_string());
     }
+
+    parts.push("format=yuv420p".to_string());
+    Some(parts.join(","))
 }
 
 fn normalize_volume(volume: Option<f64>) -> f64 {
@@ -1380,6 +1891,11 @@ fn format_seconds(seconds: f64) -> String {
     format!("{:.3}", seconds.max(0.0))
 }
 
+fn map_reencode_export_error(output: &Path, err: String) -> String {
+    let _ = fs::remove_file(output);
+    format!("Re-encode export failed: {err}")
+}
+
 fn command_error(command: &str, stderr: &[u8]) -> String {
     let stderr = String::from_utf8_lossy(stderr);
     let detail = stderr.trim();
@@ -1389,6 +1905,38 @@ fn command_error(command: &str, stderr: &[u8]) -> String {
     } else {
         format!("{command} failed: {detail}")
     }
+}
+
+fn user_facing_probe_error(stderr: &[u8]) -> String {
+    let stderr = String::from_utf8_lossy(stderr);
+    if stderr.contains("moov atom not found") {
+        return "This file looks incomplete or corrupt — often a failed export. Re-open the original recording, not a *-cutdown.mp4 output.".to_string();
+    }
+
+    if stderr.contains("Invalid data found when processing input") {
+        return "This file could not be read. If it is a Cutdown export, try the original recording instead of a *-cutdown.mp4 file.".to_string();
+    }
+
+    command_error("ffprobe", stderr.as_bytes())
+}
+
+fn stderr_detail(stderr_tail: &[String]) -> String {
+    stderr_tail
+        .iter()
+        .rev()
+        .find(|line| {
+            line.contains("Error")
+                || line.contains("error")
+                || line.contains("failed")
+                || line.contains("Invalid")
+        })
+        .cloned()
+        .or_else(|| stderr_tail.last().cloned())
+        .unwrap_or_else(|| "unknown error".to_string())
+}
+
+fn is_gpu_video_codec(codec: &str) -> bool {
+    matches!(codec, "h264_nvenc" | "h264_amf" | "h264_qsv")
 }
 
 fn waveform_sample_rate(duration: f64, bucket_count: usize) -> u32 {
@@ -1556,6 +2104,44 @@ mod tests {
     }
 
     #[test]
+    fn reencode_video_filter_includes_yuv420p_without_scale() {
+        let profile = EncodeProfile {
+            lossless: false,
+            video_codec: "libx264".to_string(),
+            video_args: vec!["-crf".to_string(), "18".to_string()],
+            audio_codec: "aac".to_string(),
+            audio_args: vec![],
+            scale_filter: None,
+            target_bytes: None,
+        };
+
+        let filter = build_video_filter(&profile, None).expect("filter should exist");
+        assert!(filter.contains("format=yuv420p"));
+        assert!(filter.contains("trunc(iw/2)*2"));
+    }
+
+    #[test]
+    fn stderr_detail_prefers_error_lines() {
+        let lines = vec![
+            "ffmpeg version 7.0".to_string(),
+            "frame=12 fps=0.0".to_string(),
+            "Error reinitializing filters!".to_string(),
+        ];
+
+        assert_eq!(
+            stderr_detail(&lines),
+            "Error reinitializing filters!".to_string()
+        );
+    }
+
+    #[test]
+    fn probe_error_explains_missing_moov_atom() {
+        let message = user_facing_probe_error(b"moov atom not found");
+        assert!(message.contains("incomplete or corrupt"));
+        assert!(message.contains("cutdown"));
+    }
+
+    #[test]
     fn rejects_invalid_export_segments() {
         let segments = vec![
             ExportSegment {
@@ -1596,5 +2182,36 @@ mod tests {
         assert_eq!(waveform_sample_rate(0.0, 2000), 4000);
         assert_eq!(waveform_sample_rate(10_000.0, 2000), 50);
         assert_eq!(waveform_sample_rate(0.01, 8000), 4000);
+    }
+
+    #[test]
+    fn audio_format_from_extension_recognizes_common_extensions() {
+        assert_eq!(audio_format_from_extension("wav"), Some(AudioFormat::Wav));
+        assert_eq!(audio_format_from_extension("MP3"), Some(AudioFormat::Mp3));
+        assert_eq!(audio_format_from_extension("ogg"), Some(AudioFormat::Ogg));
+        assert_eq!(audio_format_from_extension("mp4"), None);
+    }
+
+    #[test]
+    fn build_audio_encode_profile_sets_expected_codecs() {
+        let wav = resolve_audio_preset("audio-wav").expect("wav preset");
+        assert_eq!(wav.codec, "pcm_s16le");
+
+        let mp3 = resolve_audio_preset("audio-mp3-192").expect("mp3 preset");
+        assert_eq!(mp3.codec, "libmp3lame");
+        assert!(mp3.args.iter().any(|arg| arg == "192k"));
+
+        let mp3_small = resolve_audio_preset("audio-mp3-128").expect("mp3 128 preset");
+        assert!(mp3_small.args.iter().any(|arg| arg == "128k"));
+
+        let ogg = resolve_audio_preset("audio-ogg-192").expect("ogg preset");
+        assert_eq!(ogg.codec, "libvorbis");
+    }
+
+    #[test]
+    fn normalize_audio_output_path_fixes_mismatched_extension() {
+        let output = PathBuf::from("C:\\clips\\clip-cutdown.mp4");
+        let fixed = normalize_audio_output_path(&output, "mp3");
+        assert_eq!(fixed.extension().and_then(|ext| ext.to_str()), Some("mp3"));
     }
 }

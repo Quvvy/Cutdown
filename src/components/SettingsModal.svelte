@@ -46,9 +46,68 @@
   export let initialTab: 'general' | 'folders' | 'presets' | 'upload' = 'general';
   let activeTab: 'general' | 'folders' | 'presets' | 'upload' = initialTab;
 
-  $: if (visible) {
-    activeTab = initialTab;
+  type SettingsDraft = {
+    watchFolder: string | null;
+    watchFolderEnabled: boolean;
+    defaultExportDir: string | null;
+    exportPresetId: string;
+    preferGpuEncoding: boolean;
+    runAtStartup: boolean;
+    startMinimizedToTray: boolean;
+    uploadProviders: UploadProvider[];
+    defaultUploadProviderId: string | null;
+    customExportPresets: CustomExportPreset[];
+  };
+
+  let draft: SettingsDraft = emptyDraft();
+  let savedSnapshot = '';
+
+  function emptyDraft(): SettingsDraft {
+    return {
+      watchFolder: null,
+      watchFolderEnabled: false,
+      defaultExportDir: null,
+      exportPresetId: 'lossless-trim',
+      preferGpuEncoding: true,
+      runAtStartup: false,
+      startMinimizedToTray: false,
+      uploadProviders: [],
+      defaultUploadProviderId: null,
+      customExportPresets: [],
+    };
   }
+
+  function draftFromProps(): SettingsDraft {
+    return structuredClone({
+      watchFolder,
+      watchFolderEnabled,
+      defaultExportDir,
+      exportPresetId,
+      preferGpuEncoding,
+      runAtStartup,
+      startMinimizedToTray,
+      uploadProviders,
+      defaultUploadProviderId,
+      customExportPresets,
+    });
+  }
+
+  function draftSignature(value: SettingsDraft): string {
+    return JSON.stringify(value);
+  }
+
+  let wasVisible = false;
+
+  $: if (visible && !wasVisible) {
+    activeTab = initialTab;
+    draft = draftFromProps();
+    savedSnapshot = draftSignature(draft);
+    editingId = null;
+    editingPresetId = null;
+  }
+  $: wasVisible = visible;
+
+  $: dirty = visible && draftSignature(draft) !== savedSnapshot;
 
   const tabs = [
     { id: 'general' as const, label: 'General' },
@@ -76,8 +135,8 @@
     };
   }>();
 
-  $: editingPreset = customExportPresets.find((preset) => preset.id === editingPresetId) ?? null;
-  $: editingProvider = uploadProviders.find((provider) => provider.id === editingId) ?? null;
+  $: editingPreset = draft.customExportPresets.find((preset) => preset.id === editingPresetId) ?? null;
+  $: editingProvider = draft.uploadProviders.find((provider) => provider.id === editingId) ?? null;
   $: editingCatbox =
     editingProvider?.kind === 'catbox' ? (editingProvider.config as CatboxConfig) : null;
   $: editingFilegarden =
@@ -92,43 +151,45 @@
         : kind === 'filegarden'
           ? { ...createFilegardenProvider(), id: newProviderId() }
           : createCustomProvider();
-    uploadProviders = [...uploadProviders, provider];
+    draft = {
+      ...draft,
+      uploadProviders: [...draft.uploadProviders, provider],
+      defaultUploadProviderId: draft.defaultUploadProviderId ?? provider.id,
+    };
     editingId = provider.id;
-    if (!defaultUploadProviderId) {
-      defaultUploadProviderId = provider.id;
-    }
   }
 
   function ensureDefaultUploadProvider(): void {
-    const enabled = uploadProviders.filter((provider) => provider.enabled);
+    const enabled = draft.uploadProviders.filter((provider) => provider.enabled);
     if (enabled.length === 0) {
-      defaultUploadProviderId = null;
+      draft = { ...draft, defaultUploadProviderId: null };
       return;
     }
 
     if (
-      defaultUploadProviderId &&
-      enabled.some((provider) => provider.id === defaultUploadProviderId)
+      draft.defaultUploadProviderId &&
+      enabled.some((provider) => provider.id === draft.defaultUploadProviderId)
     ) {
       return;
     }
 
-    defaultUploadProviderId = enabled[0].id;
+    draft = { ...draft, defaultUploadProviderId: enabled[0].id };
   }
 
   function addCustomPreset(): void {
     const preset = createCustomPreset();
-    customExportPresets = [...customExportPresets, preset];
+    draft = { ...draft, customExportPresets: [...draft.customExportPresets, preset] };
     editingPresetId = preset.id;
   }
 
   function removeCustomPreset(id: string): void {
-    customExportPresets = customExportPresets.filter((preset) => preset.id !== id);
+    draft = {
+      ...draft,
+      customExportPresets: draft.customExportPresets.filter((preset) => preset.id !== id),
+      exportPresetId: draft.exportPresetId === id ? 'lossless-trim' : draft.exportPresetId,
+    };
     if (editingPresetId === id) {
       editingPresetId = null;
-    }
-    if (exportPresetId === id) {
-      exportPresetId = 'lossless-trim';
     }
   }
 
@@ -137,9 +198,12 @@
       return;
     }
 
-    customExportPresets = customExportPresets.map((preset) =>
-      preset.id === editingPreset.id ? { ...preset, ...patch } : preset,
-    );
+    draft = {
+      ...draft,
+      customExportPresets: draft.customExportPresets.map((preset) =>
+        preset.id === editingPreset.id ? { ...preset, ...patch } : preset,
+      ),
+    };
   }
 
   function handlePresetModeChange(event: Event): void {
@@ -150,7 +214,10 @@
   }
 
   function removeProvider(id: string): void {
-    uploadProviders = uploadProviders.filter((provider) => provider.id !== id);
+    draft = {
+      ...draft,
+      uploadProviders: draft.uploadProviders.filter((provider) => provider.id !== id),
+    };
     if (editingId === id) {
       editingId = null;
     }
@@ -162,9 +229,12 @@
       return;
     }
 
-    uploadProviders = uploadProviders.map((provider) =>
-      provider.id === editingProvider.id ? { ...provider, [field]: value } : provider,
-    );
+    draft = {
+      ...draft,
+      uploadProviders: draft.uploadProviders.map((provider) =>
+        provider.id === editingProvider.id ? { ...provider, [field]: value } : provider,
+      ),
+    };
   }
 
   function updateCatboxConfig(patch: Partial<CatboxConfig>): void {
@@ -188,9 +258,20 @@
       return;
     }
 
-    uploadProviders = uploadProviders.map((provider) =>
-      provider.id === editingProvider.id ? { ...provider, config: updater(provider.config) } : provider,
-    );
+    draft = {
+      ...draft,
+      uploadProviders: draft.uploadProviders.map((provider) =>
+        provider.id === editingProvider.id ? { ...provider, config: updater(provider.config) } : provider,
+      ),
+    };
+  }
+
+  function requestClose(): void {
+    if (dirty && !confirm('Discard unsaved settings changes?')) {
+      return;
+    }
+
+    dispatch('close');
   }
 
   async function browseWatchFolder(): Promise<void> {
@@ -201,8 +282,7 @@
     });
 
     if (typeof selected === 'string') {
-      watchFolder = selected;
-      watchFolderEnabled = true;
+      draft = { ...draft, watchFolder: selected, watchFolderEnabled: true };
     }
   }
 
@@ -214,14 +294,14 @@
     });
 
     if (typeof selected === 'string') {
-      defaultExportDir = selected;
+      draft = { ...draft, defaultExportDir: selected };
     }
   }
 
   async function saveSettings(): Promise<void> {
     ensureDefaultUploadProvider();
-    const providers = serializeProviders(uploadProviders);
-    const presets = serializeCustomPresets(customExportPresets);
+    const providers = serializeProviders(draft.uploadProviders);
+    const presets = serializeCustomPresets(draft.customExportPresets);
 
     try {
       const saved = await invoke<{
@@ -237,15 +317,15 @@
         customExportPresets: CustomExportPreset[];
       }>('save_editor_settings', {
         params: {
-          watchFolder,
-          watchFolderEnabled,
-          defaultExportDir,
-          lastPresetId: exportPresetId,
-          preferGpuEncoding,
-          runAtStartup,
-          startMinimizedToTray,
+          watchFolder: draft.watchFolder,
+          watchFolderEnabled: draft.watchFolderEnabled,
+          defaultExportDir: draft.defaultExportDir,
+          lastPresetId: draft.exportPresetId,
+          preferGpuEncoding: draft.preferGpuEncoding,
+          runAtStartup: draft.runAtStartup,
+          startMinimizedToTray: draft.startMinimizedToTray,
           providers,
-          defaultUploadProviderId,
+          defaultUploadProviderId: draft.defaultUploadProviderId,
           customExportPresets: presets,
           obsWebsocketHost: null,
           obsWebsocketPort: null,
@@ -258,13 +338,27 @@
         'get_upload_providers_for_editor',
       );
       const editorProviders = parseProvidersFromSettings(editor.providers);
-      uploadProviders =
+      const nextUploadProviders =
         editorProviders.length > 0 ? editorProviders : readUploadProvidersFromAppSettings(savedRecord);
-      defaultUploadProviderId =
+      const nextDefaultUploadProviderId =
         editor.defaultUploadProviderId ?? readDefaultUploadProviderId(savedRecord);
-      customExportPresets = parseCustomPresetsFromSettings(saved.customExportPresets);
-      exportPresetId = saved.lastPresetId;
+      const nextCustomExportPresets = parseCustomPresetsFromSettings(saved.customExportPresets);
+
+      draft = {
+        ...draft,
+        watchFolder: saved.watchFolder,
+        watchFolderEnabled: saved.watchFolderEnabled,
+        defaultExportDir: saved.defaultExportDir,
+        exportPresetId: saved.lastPresetId,
+        preferGpuEncoding: saved.preferGpuEncoding,
+        runAtStartup: saved.runAtStartup,
+        startMinimizedToTray: saved.startMinimizedToTray,
+        uploadProviders: nextUploadProviders,
+        defaultUploadProviderId: nextDefaultUploadProviderId,
+        customExportPresets: nextCustomExportPresets,
+      };
       ensureDefaultUploadProvider();
+      savedSnapshot = draftSignature(draft);
 
       dispatch('saved', {
         watchFolder: saved.watchFolder,
@@ -274,9 +368,9 @@
         preferGpuEncoding: saved.preferGpuEncoding,
         runAtStartup: saved.runAtStartup,
         startMinimizedToTray: saved.startMinimizedToTray,
-        uploadProviders,
-        defaultUploadProviderId,
-        customExportPresets,
+        uploadProviders: draft.uploadProviders,
+        defaultUploadProviderId: draft.defaultUploadProviderId,
+        customExportPresets: draft.customExportPresets,
       });
       dispatch('close');
     } catch (error) {
@@ -287,7 +381,7 @@
   }
 </script>
 
-<DraggablePanel open={visible} title="Settings" width={580} on:close={() => dispatch('close')}>
+<DraggablePanel open={visible} title="Settings" width={580} on:close={requestClose}>
   <nav class="panel-nav" aria-label="Settings sections">
     {#each tabs as tab (tab.id)}
       <button
@@ -304,7 +398,7 @@
   {#if activeTab === 'general'}
     <div class="panel-section">
       <h3 class="panel-section__title">System & encoding</h3>
-      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips.</p>
+      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips. Changes apply after Save settings.</p>
       <div class="panel-info">{ffmpegStatus || 'Checking ffmpeg availability...'}</div>
       <div class="panel-field">
         <span>GPU encoders</span>
@@ -315,18 +409,36 @@
       <label class="panel-field">
         <span>Encoding</span>
         <label class="modal__mode">
-          <input type="checkbox" bind:checked={preferGpuEncoding} />
+          <input
+            type="checkbox"
+            checked={draft.preferGpuEncoding}
+            on:change={(event) => {
+              draft = { ...draft, preferGpuEncoding: event.currentTarget.checked };
+            }}
+          />
           Prefer GPU encoding when available
         </label>
       </label>
       <div class="panel-field">
         <span>Windows</span>
         <label class="modal__mode">
-          <input type="checkbox" bind:checked={runAtStartup} />
+          <input
+            type="checkbox"
+            checked={draft.runAtStartup}
+            on:change={(event) => {
+              draft = { ...draft, runAtStartup: event.currentTarget.checked };
+            }}
+          />
           Start Cutdown when Windows starts
         </label>
         <label class="modal__mode">
-          <input type="checkbox" bind:checked={startMinimizedToTray} />
+          <input
+            type="checkbox"
+            checked={draft.startMinimizedToTray}
+            on:change={(event) => {
+              draft = { ...draft, startMinimizedToTray: event.currentTarget.checked };
+            }}
+          />
           Start minimized to system tray
         </label>
         <p class="modal__hint">
@@ -355,21 +467,32 @@
       <div class="panel-field">
         <span>Default export folder</span>
         <div class="panel-field__row">
-          <span class="panel-field__path">{defaultExportDir || 'Same folder as the source clip'}</span>
+          <span class="panel-field__path">{draft.defaultExportDir || 'Same folder as the source clip'}</span>
           <button type="button" class="secondary" on:click={browseExportFolder}>Browse</button>
         </div>
       </div>
       <div class="panel-field">
         <span>Watch folder (OBS replay)</span>
         <label class="modal__mode">
-          <input type="checkbox" bind:checked={watchFolderEnabled} disabled={!watchFolder} />
-          Notify when a new clip appears in the watch folder
+          <input
+            type="checkbox"
+            checked={draft.watchFolderEnabled}
+            disabled={!draft.watchFolder}
+            on:change={(event) => {
+              draft = { ...draft, watchFolderEnabled: event.currentTarget.checked };
+            }}
+          />
+          Notify when a new replay is saved (Windows toast with Open / Not now)
         </label>
         <div class="panel-field__row">
-          <span class="panel-field__path">{watchFolder || 'No folder selected'}</span>
+          <span class="panel-field__path">{draft.watchFolder || 'No folder selected'}</span>
           <button type="button" class="secondary" on:click={browseWatchFolder}>Browse</button>
         </div>
-        <p class="modal__hint">Latest replay opens the newest video here. Use the same folder OBS uses for replay buffer saves.</p>
+        <p class="modal__hint">
+          Shows a Windows notification with <strong>Open</strong> and <strong>Not now</strong>. Cutdown
+          stays in the tray until you choose Open. Uncheck to disable notifications and folder watching.
+          Latest replay still uses this folder when set.
+        </p>
       </div>
     </div>
   {:else if activeTab === 'presets'}
@@ -381,7 +504,7 @@
               <button type="button" class="secondary" on:click={addCustomPreset}>Add preset</button>
             </div>
             <ul class="preset-settings__list">
-              {#each customExportPresets as preset (preset.id)}
+              {#each draft.customExportPresets as preset (preset.id)}
                 <li class:selected={preset.id === editingPresetId}>
                   <div class="preset-settings__meta">
                     <span>{preset.name}</span>
@@ -565,7 +688,7 @@
               <button type="button" class="secondary" on:click={() => addProvider('http_multipart')}>Add custom server</button>
             </div>
             <ul class="upload-settings__list">
-              {#each uploadProviders as provider (provider.id)}
+              {#each draft.uploadProviders as provider (provider.id)}
                 <li class:selected={provider.id === editingId}>
                   <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
                   <div
@@ -582,13 +705,16 @@
                   >
                     <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
                     <div class="upload-settings__default" on:click|stopPropagation>
-                      {#if uploadProviders.filter((entry) => entry.enabled).length > 1}
+                      {#if draft.uploadProviders.filter((entry) => entry.enabled).length > 1}
                         <input
                           type="radio"
                           name="default-upload-provider"
                           value={provider.id}
                           disabled={!provider.enabled}
-                          bind:group={defaultUploadProviderId}
+                          checked={draft.defaultUploadProviderId === provider.id}
+                          on:change={() => {
+                            draft = { ...draft, defaultUploadProviderId: provider.id };
+                          }}
                           aria-label={`Default upload target: ${provider.name}`}
                         />
                       {:else if provider.enabled}
@@ -776,13 +902,17 @@
       <button
         type="button"
         class="secondary"
-        disabled={!watchFolder}
+        disabled={!draft.watchFolder}
         title="Clear watch folder selection"
-        on:click={() => ((watchFolder = null), (watchFolderEnabled = false))}
+        on:click={() => {
+          draft = { ...draft, watchFolder: null, watchFolderEnabled: false };
+        }}
       >
         Clear watch folder
       </button>
     {/if}
-    <button type="button" class="primary" title="Save settings" on:click={saveSettings}>Save settings</button>
+    <button type="button" class="primary" title="Save settings" on:click={saveSettings}>
+      Save settings{#if dirty} *{/if}
+    </button>
   </svelte:fragment>
 </DraggablePanel>

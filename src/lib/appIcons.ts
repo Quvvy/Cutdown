@@ -1,6 +1,9 @@
 import type { IconifyIcon } from '@iconify/svelte';
 import arrowExport from '@iconify-icons/fluent/arrow-export-20-filled';
+import clipboard from '@iconify-icons/fluent/clipboard-20-regular';
+import cloudArrowUp from '@iconify-icons/fluent/cloud-arrow-up-20-filled';
 import crop from '@iconify-icons/fluent/crop-20-filled';
+import link from '@iconify-icons/fluent/link-20-filled';
 import { iconFromSvg } from './svgIcon';
 
 import autofitWidthSvg from '../assets/icons/arrow-autofit-width-20-filled.svg?raw';
@@ -23,8 +26,11 @@ import scaleFitSvg from '../assets/icons/fluent--scale-fit-20-filled.svg?raw';
 import settingsSvg from '../assets/icons/fluent--settings-20-filled.svg?raw';
 
 export const appIcons = {
+  copy: clipboard,
   crop,
   export: arrowExport,
+  link,
+  upload: cloudArrowUp,
   open: iconFromSvg(openSvg),
   save: iconFromSvg(saveSvg),
   undo: iconFromSvg(undoSvg),

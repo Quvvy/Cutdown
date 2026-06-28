@@ -1,4 +1,5 @@
 import type { TimelineSegment } from '../stores/editor';
+import type { ExportType } from './exportFormats';
 import type { NormalizedCropRect, TimelineBookmark } from './types';
 
 export const CUTDOWN_PROJECT_VERSION = 1;
@@ -19,6 +20,10 @@ export type CutdownProject = {
   exportPresetId: string | null;
   accurateTrim: boolean;
   stripAudio: boolean;
+  exportType?: ExportType | null;
+  audioPresetId?: string | null;
+  /** @deprecated Use audioPresetId */
+  audioFormat?: string | null;
 };
 
 export type CutdownProjectDraft = Omit<CutdownProject, 'version'>;

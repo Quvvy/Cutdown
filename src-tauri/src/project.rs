@@ -49,6 +49,12 @@ pub struct CutdownProject {
     pub export_preset_id: Option<String>,
     pub accurate_trim: bool,
     pub strip_audio: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub export_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_preset_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_format: Option<String>,
 }
 
 #[tauri::command]
@@ -137,6 +143,9 @@ mod tests {
             export_preset_id: Some("lossless-trim".to_string()),
             accurate_trim: false,
             strip_audio: false,
+            export_type: None,
+            audio_preset_id: None,
+            audio_format: None,
         }
     }
 

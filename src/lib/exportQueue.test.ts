@@ -28,4 +28,15 @@ describe('exportQueue', () => {
       },
     ]);
   });
+
+  it('uses the requested extension for batched audio exports', () => {
+    const jobs = buildPerSegmentJobs(
+      'C:\\Clips',
+      'match-cutdown.mp3',
+      [{ start: 0, end: 10 }],
+      'mp3',
+    );
+
+    expect(jobs[0]?.outputPath).toBe('C:\\Clips\\match-cutdown-seg01.mp3');
+  });
 });

@@ -312,6 +312,27 @@ fn is_builtin_preset_id(id: &str) -> bool {
     )
 }
 
+pub fn libx264_fallback_profile(profile: &EncodeProfile) -> EncodeProfile {
+    let mut fallback = profile.clone();
+    if fallback.video_codec == "libx264" {
+        return fallback;
+    }
+
+    fallback.video_codec = "libx264".to_string();
+    if profile.video_args.iter().any(|arg| arg == "-crf") {
+        return fallback;
+    }
+
+    let kbps = profile
+        .video_args
+        .windows(2)
+        .find(|pair| pair[0] == "-b:v")
+        .and_then(|pair| pair[1].trim_end_matches('k').parse::<u64>().ok())
+        .unwrap_or(2500);
+    fallback.video_args = encoder_args("libx264", kbps, "fast");
+    fallback
+}
+
 fn pick_video_encoder(prefer_gpu: bool, gpu_encoders: &[String]) -> String {
     if !prefer_gpu {
         return "libx264".to_string();
@@ -363,7 +384,7 @@ pub fn scale_filter_for_max(max_w: u32, max_h: u32, width: u32, height: u32) -> 
         return String::new();
     }
 
-    format!("scale='min({max_w},iw)':'min({max_h},ih)':force_original_aspect_ratio=decrease")
+    format!("scale='min({max_w},iw)':'min({max_h},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p")
 }
 
 fn optional_scale_filter(max_w: u32, max_h: u32, width: u32, height: u32) -> Option<String> {
@@ -484,5 +505,40 @@ fn custom_preset_summary(preset: &CustomExportPreset) -> String {
             format!("Custom H.264/AAC targeting about {megabytes:.0} MB.")
         }
         _ => "Custom export preset.".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discord_scale_filter_uses_yuv420p_and_even_dimensions() {
+        let filter = scale_filter_for_max(1280, 720, 1920, 1080);
+        assert!(filter.contains("format=yuv420p"));
+        assert!(filter.contains("force_divisible_by=2"));
+    }
+
+    #[test]
+    fn libx264_fallback_replaces_gpu_codec() {
+        let profile = EncodeProfile {
+            lossless: false,
+            video_codec: "h264_nvenc".to_string(),
+            video_args: vec![
+                "-b:v".to_string(),
+                "2000k".to_string(),
+                "-preset".to_string(),
+                "p4".to_string(),
+            ],
+            audio_codec: "aac".to_string(),
+            audio_args: vec![],
+            scale_filter: None,
+            target_bytes: None,
+        };
+
+        let fallback = libx264_fallback_profile(&profile);
+        assert_eq!(fallback.video_codec, "libx264");
+        assert!(fallback.video_args.contains(&"-b:v".to_string()));
+        assert!(fallback.video_args.contains(&"2000k".to_string()));
     }
 }

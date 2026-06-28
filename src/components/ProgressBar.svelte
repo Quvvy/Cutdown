@@ -30,7 +30,7 @@
       style:width={width ?? undefined}
     ></div>
   {/if}
-  <span class="progress__label">{label}</span>
+  <span class="progress__label" title={label}>{label}</span>
   {#if dismissible && (state === 'success' || state === 'error')}
     <button type="button" class="progress__dismiss" title="Dismiss" on:click={() => dispatch('dismiss')}>×</button>
   {/if}

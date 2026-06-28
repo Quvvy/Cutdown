@@ -38,6 +38,19 @@
   } from './lib/exportPresets';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
+    audioPresetFormat,
+    audioPresetLabel,
+    DEFAULT_AUDIO_PRESET_ID,
+    migrateLegacyAudioFormat,
+    resolveAudioPresetId,
+  } from './lib/audioPresets';
+  import {
+    ensureExportFileExtension,
+    extensionForExport,
+    parseExportType,
+    type ExportType,
+  } from './lib/exportFormats';
+  import {
     createCutdownProjectPayload,
     CUTDOWN_PROJECT_EXTENSION,
     type CutdownProject,
@@ -193,6 +206,8 @@
   let exportPresets: PresetInfo[] = [];
   let customExportPresets: CustomExportPreset[] = [];
   let exportPresetId = 'lossless-trim';
+  let exportType: ExportType = 'video';
+  let audioPresetId = DEFAULT_AUDIO_PRESET_ID;
   let gpuEncoders: string[] = [];
   let preferGpuEncoding = true;
   let defaultExportDir: string | null = null;
@@ -803,7 +818,8 @@
     return blockers;
   })();
   $: usesStreamCopy = Boolean(selectedExportPreset?.lossless && streamCopyBlockers.length === 0);
-  $: outputPath = joinOutputPath(outputDirectory, outputFileName);
+  $: outputExtension = extensionForExport(exportType, audioPresetId);
+  $: outputPath = joinOutputPath(outputDirectory, outputFileName, outputExtension);
   $: updateWindowTitle(fileName);
 
   function applyOutputPath(path: string): void {
@@ -1574,6 +1590,16 @@
     syncUploadProviderSelection();
   }
 
+  async function closeSettingsModal(): Promise<void> {
+    settingsModalOpen = false;
+    try {
+      const settings = await invoke<AppSettings>('get_settings');
+      applySettingsFromDisk(settings);
+    } catch {
+      // Parent state was not mutated by the modal draft; ignore reload errors on close.
+    }
+  }
+
   async function refreshExportPresets(): Promise<void> {
     exportPresets = await invoke<PresetInfo[]>('list_presets');
   }
@@ -2002,12 +2028,14 @@
   }
 
   function defaultExportFileName(): string {
+    const extension = extensionForExport(exportType, audioPresetId);
     if (!$editor.currentFile) {
-      return 'cutdown.mp4';
+      return `cutdown.${extension}`;
     }
 
     const leaf = $editor.currentFile.split(/[\\/]/).pop() ?? 'clip.mp4';
-    return leaf.replace(/(\.[^.]+)?$/i, '-cutdown.mp4');
+    const stem = leaf.replace(/(\.[^.]+)?$/i, '-cutdown');
+    return `${stem}.${extension}`;
   }
 
   function defaultExportDirectory(settings?: AppSettings | null): string {
@@ -2021,7 +2049,11 @@
   }
 
   function defaultOutputPath(): string {
-    return joinOutputPath(defaultExportDirectory(), defaultExportFileName());
+    return joinOutputPath(
+      defaultExportDirectory(),
+      defaultExportFileName(),
+      extensionForExport(exportType, audioPresetId),
+    );
   }
 
   function syncExportDefaultsForClip(settings?: AppSettings | null): void {
@@ -2033,20 +2065,40 @@
     const settings = await invoke<AppSettings>('get_settings');
     const defaultName = defaultExportFileName();
     const defaultDir = defaultExportDirectory(settings) || undefined;
+    const extension = extensionForExport(exportType, audioPresetId);
+    const saveFilters =
+      exportType === 'audio'
+        ? [
+            { name: 'WAV audio', extensions: ['wav'] },
+            { name: 'MP3 audio', extensions: ['mp3'] },
+            { name: 'OGG audio', extensions: ['ogg'] },
+          ]
+        : [{ name: 'MP4 Video', extensions: ['mp4'] }];
 
     const selected = await save({
       defaultPath:
         outputPath ||
         (outputDirectory
-          ? joinOutputPath(outputDirectory, outputFileName)
+          ? joinOutputPath(outputDirectory, outputFileName, extension)
           : defaultDir
             ? `${defaultDir}\\${defaultName}`
             : defaultOutputPath()),
-      filters: [{ name: 'MP4 Video', extensions: ['mp4'] }],
+      filters: saveFilters,
     });
 
     if (selected) {
       applyOutputPath(selected);
+      if (exportType === 'audio') {
+        const { fileName } = splitOutputPath(selected);
+        const parsed = fileName.match(/\.([^.]+)$/i)?.[1]?.toLowerCase();
+        if (parsed === 'wav') {
+          audioPresetId = 'audio-wav';
+        } else if (parsed === 'ogg') {
+          audioPresetId = 'audio-ogg-192';
+        } else if (parsed === 'mp3') {
+          audioPresetId = DEFAULT_AUDIO_PRESET_ID;
+        }
+      }
       if (outputDirectory) {
         await invoke('set_last_export_dir', { path: outputDirectory });
       }
@@ -2055,7 +2107,10 @@
 
   async function openExportModal(): Promise<void> {
     const settings = await invoke<AppSettings>('get_settings').catch(() => null);
-    outputFileName = defaultExportFileName();
+    outputFileName = ensureExportFileExtension(
+      defaultExportFileName(),
+      extensionForExport(exportType, audioPresetId),
+    );
 
     if (!outputDirectory) {
       outputDirectory = defaultExportDirectory(settings);
@@ -2081,8 +2136,10 @@
       return [];
     }
 
+    const extension = extensionForExport(exportType, audioPresetId);
+
     if (exportBatchPerSegment && exportMode === 'sequence' && exportSegments.length > 1) {
-      return buildPerSegmentJobs(outputDirectory, outputFileName, exportSegments);
+      return buildPerSegmentJobs(outputDirectory, outputFileName, exportSegments, extension);
     }
 
     return [
@@ -2128,7 +2185,9 @@
 
   async function runExportJob(job: ExportJob): Promise<ExportResult> {
     const preset = exportPresets.find((item) => item.id === exportPresetId);
-    const presetLabel = preset?.name ?? exportPresetId;
+    const presetLabel =
+      exportType === 'audio' ? audioPresetLabel(audioPresetId) : (preset?.name ?? exportPresetId);
+    const exportKindLabel = exportType === 'audio' ? 'audio' : job.label;
 
     exportProgressPercent = 0;
     statusDismissed = false;
@@ -2137,12 +2196,15 @@
       ...state,
       exportStatus: {
         state: 'running',
-        message: `Exporting ${job.label} with ${presetLabel}...`,
+        message:
+          exportType === 'audio'
+            ? `Exporting ${exportKindLabel} as ${presetLabel}...`
+            : `Exporting ${job.label} with ${presetLabel}...`,
         outputPath: job.outputPath,
       },
     }));
 
-    const crop = exportCropPixels();
+    const crop = exportType === 'audio' ? null : exportCropPixels();
     const result = await invoke<ExportResult>('export_clip', {
       params: {
         inputPath: $editor.currentFile,
@@ -2157,6 +2219,9 @@
         accurateTrim: accurateTrimExport,
         fadeInSeconds: fadeInSeconds > 0 ? fadeInSeconds : null,
         fadeOutSeconds: fadeOutSeconds > 0 ? fadeOutSeconds : null,
+        exportKind: exportType,
+        audioPresetId: exportType === 'audio' ? audioPresetId : null,
+        audioFormat: exportType === 'audio' ? audioPresetFormat(audioPresetId) : null,
       },
     });
 
@@ -2198,7 +2263,9 @@
       }
 
       await refreshClipHistory();
-      await invoke('set_last_preset_id', { presetId: exportPresetId });
+      if (exportType === 'video') {
+        await invoke('set_last_preset_id', { presetId: exportPresetId });
+      }
       const parent = jobs[jobs.length - 1]?.outputPath.replace(/[\\/][^\\/]+$/, '');
       if (parent) {
         await invoke('set_last_export_dir', { path: parent });
@@ -2225,7 +2292,8 @@
   }
 
   async function exportClip(): Promise<void> {
-    outputFileName = sanitizeExportFileName(outputFileName);
+    const extension = extensionForExport(exportType, audioPresetId);
+    outputFileName = ensureExportFileExtension(outputFileName, extension);
 
     if (!$editor.currentFile || !outputDirectory) {
       return;
@@ -2376,6 +2444,8 @@
       exportPresetId,
       accurateTrim: accurateTrimExport,
       stripAudio: stripAudioExport,
+      exportType,
+      audioPresetId,
     });
   }
 
@@ -2444,6 +2514,10 @@
     if (project.exportPresetId) {
       exportPresetId = project.exportPresetId;
     }
+    exportType = parseExportType(project.exportType) ?? 'video';
+    audioPresetId = project.audioPresetId
+      ? resolveAudioPresetId(project.audioPresetId)
+      : migrateLegacyAudioFormat(project.audioFormat);
 
     editor.update((state) => ({
       ...state,
@@ -3049,7 +3123,13 @@
         disabled={!canUseRange}
         on:click={toggleRangeLoop}
       />
-      <button type="button" class="secondary" title="Delete selected segment (Del)" disabled={!selectedSegment || segments.length <= 1} on:click={deleteSelectedSegment}>Delete</button>
+      <IconButton
+        icon="delete"
+        variant="secondary"
+        title="Delete selected segment (Del)"
+        disabled={!selectedSegment || segments.length <= 1}
+        on:click={deleteSelectedSegment}
+      />
     </div>
   </section>
 
@@ -3080,28 +3160,32 @@
           <span class="bottom-bar__result-name" title={$editor.exportStatus.outputPath}>
             {$editor.exportStatus.outputPath.split(/[\\/]/).pop()}
           </span>
-          <button
-            type="button"
-            class="secondary"
+          <IconButton
+            icon="copy"
+            variant="secondary"
             title="Copy output file path"
             on:click={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
-          >
-            Copy path
-          </button>
+          />
           {#if lastShareUrl}
-            <button type="button" class="secondary" title="Copy share link" on:click={() => void copyShareLink(lastShareUrl ?? '')}>
-              Copy link
-            </button>
+            <IconButton
+              icon="link"
+              variant="secondary"
+              title="Copy share link"
+              on:click={() => void copyShareLink(lastShareUrl ?? '')}
+            />
           {/if}
-          <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open folder</button>
-          <button type="button" class="secondary" title="Upload and copy share link" on:click={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}>
-            Upload
-          </button>
-          <button type="button" class="secondary" title="Open export settings" on:click={openExportModal}>Export again</button>
+          <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={revealExport} />
+          <IconButton
+            icon="upload"
+            variant="secondary"
+            title="Upload and copy share link"
+            on:click={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}
+          />
+          <IconButton icon="export" variant="secondary" title="Open export settings" on:click={openExportModal} />
         </div>
       {:else if $editor.exportStatus.outputPath && $editor.exportStatus.state === 'running'}
         <button type="button" class="secondary" title="Cancel export" on:click={() => void cancelExport()}>Cancel</button>
-        <button type="button" class="secondary" title="Show exported file in Explorer" on:click={revealExport}>Open folder</button>
+        <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={revealExport} />
       {/if}
     </div>
   </footer>
@@ -3111,6 +3195,8 @@
   open={exportModalOpen}
   {outputDirectory}
   bind:outputFileName
+  bind:exportType
+  bind:audioPresetId
   segmentCount={segments.length}
   duration={outputDuration}
   {rangeDuration}
@@ -3198,12 +3284,12 @@
   {runAtStartup}
   {startMinimizedToTray}
   {appVersion}
-  bind:uploadProviders
-  bind:defaultUploadProviderId
-  bind:customExportPresets
+  {uploadProviders}
+  {defaultUploadProviderId}
+  {customExportPresets}
   {ffmpegStatus}
   {gpuEncoders}
-  on:close={() => (settingsModalOpen = false)}
+  on:close={() => void closeSettingsModal()}
   on:restoreTrayHint={restoreTrayHint}
   on:checkForUpdates={() => void checkForUpdates({ manual: true })}
   on:error={(event) => {
@@ -3217,7 +3303,10 @@
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
     startMinimizedToTray = event.detail.startMinimizedToTray;
+    uploadProviders = event.detail.uploadProviders;
+    defaultUploadProviderId = event.detail.defaultUploadProviderId;
     customExportPresets = event.detail.customExportPresets;
+    syncUploadProviderSelection();
     try {
       await reloadUploadProvidersFromDisk();
     } catch (error) {
