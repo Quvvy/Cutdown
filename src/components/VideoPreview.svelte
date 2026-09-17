@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { clamp, formatTime } from '../lib/format';
+  import { computeFitScale, shouldAutoFitOnViewportResize } from '../lib/previewView';
   import type { NormalizedCropRect } from '../lib/types';
 
   export let src: string | null = null;
@@ -68,10 +69,7 @@
     video.playbackRate = clamp(playbackRate, 0.25, 2);
   }
 
-  $: fitScale =
-    videoWidth > 0 && videoHeight > 0 && viewportWidth > 0 && viewportHeight > 0
-      ? Math.min(viewportWidth / videoWidth, viewportHeight / videoHeight)
-      : 1;
+  $: fitScale = computeFitScale(videoWidth, videoHeight, viewportWidth, viewportHeight);
   $: displayScale = fitScale * zoomFactor;
   $: stageWidth = videoWidth > 0 ? videoWidth * displayScale : 0;
   $: stageHeight = videoHeight > 0 ? videoHeight * displayScale : 0;
@@ -98,27 +96,40 @@
   }
 
   export function remeasureViewport(): void {
+    void tick().then(() => {
+      measureViewport();
+      if (shouldAutoFitOnViewportResize(userAdjustedView, videoWidth)) {
+        void fitToView();
+      }
+    });
+  }
+
+  function observeViewportSize(node: HTMLElement) {
+    const observer = new ResizeObserver(() => {
+      measureViewport();
+      if (shouldAutoFitOnViewportResize(userAdjustedView, videoWidth)) {
+        void fitToView();
+      }
+    });
+    observer.observe(node);
     measureViewport();
-    if (!userAdjustedView) {
-      void fitToView();
-    }
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
   }
 
   onMount(() => {
     measureViewport();
-    const observer = new ResizeObserver(() => {
-      measureViewport();
-      if (!userAdjustedView && videoWidth > 0) {
-        void fitToView();
-      }
-    });
-    if (viewport) {
-      observer.observe(viewport);
-    }
+    const onWindowResize = () => {
+      remeasureViewport();
+    };
+    window.addEventListener('resize', onWindowResize);
 
     return () => {
       clearLoadWatchdog();
-      observer.disconnect();
+      window.removeEventListener('resize', onWindowResize);
     };
   });
 
@@ -477,6 +488,7 @@
       class:video-preview__viewport--panning={isPanning}
       class:video-preview__viewport--pannable={canPan()}
       bind:this={viewport}
+      use:observeViewportSize
       on:pointerdown={onViewportPointerDown}
       on:pointermove={onViewportPointerMove}
       on:pointerup={onViewportPointerUp}

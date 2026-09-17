@@ -357,6 +357,7 @@
       available - MIN_TIMELINE_PANE_PX,
     );
     workspaceSplitRatio = nextPreviewPx / available;
+    preview?.remeasureViewport();
   }
 
   function stopWorkspaceResize(event: PointerEvent): void {
@@ -424,6 +425,10 @@
     });
 
     const appWindow = getCurrentWindow();
+    const unlistenWindowResized = appWindow.onResized(() => {
+      preview?.remeasureViewport();
+    });
+
     const unlistenDragDrop = appWindow.onDragDropEvent((event) => {
       if (event.payload.type === 'over') {
         dragOver = true;
@@ -447,6 +452,7 @@
       if (unlistenSecondInstance) {
         void unlistenSecondInstance.then((stop) => stop());
       }
+      void unlistenWindowResized.then((stop) => stop());
       void unlistenDragDrop.then((stop) => stop());
       const previewTempPath = get(editor).previewTempPath;
       if (previewTempPath) {
