@@ -218,6 +218,8 @@
   let runAtStartup = false;
   let startMinimizedToTray = false;
   let closeToTray = true;
+  let launchHandoffReady = false;
+  let drainLaunchInFlight: Promise<void> | null = null;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
   const sequencePlayback = createSequencePlaybackDriver(
@@ -381,7 +383,9 @@
     let unlistenSecondInstance: Promise<() => void> | null = null;
     void (async () => {
       unlistenSecondInstance = listen('second-instance', () => {
-        void drainLaunchPaths();
+        if (launchHandoffReady) {
+          void drainLaunchPaths();
+        }
       });
       await unlistenSecondInstance;
       await bootstrapApp();
@@ -602,6 +606,8 @@
       }
 
       await drainLaunchPaths();
+      launchHandoffReady = true;
+      await drainLaunchPaths();
     } catch (error) {
       ffmpegStatus = error instanceof Error ? error.message : String(error);
     }
@@ -764,12 +770,24 @@
   }
 
   async function drainLaunchPaths(): Promise<void> {
-    while (true) {
-      const path = await invoke<string | null>('get_launch_path');
-      if (!path) {
-        return;
+    if (drainLaunchInFlight) {
+      await drainLaunchInFlight;
+    }
+
+    drainLaunchInFlight = (async () => {
+      while (true) {
+        const path = await invoke<string | null>('get_launch_path');
+        if (!path) {
+          return;
+        }
+        await openIncomingPath(path);
       }
-      await openIncomingPath(path);
+    })();
+
+    try {
+      await drainLaunchInFlight;
+    } finally {
+      drainLaunchInFlight = null;
     }
   }
 
