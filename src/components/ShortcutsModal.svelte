@@ -39,7 +39,7 @@
     {
       title: 'Open clips',
       items: [
-        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources.',
+        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources. Opening a file while Cutdown is already running sends it to that window.',
         'Reopening a raw video starts a fresh edit — use Save project when you want to keep your work.',
         'Latest replay opens the newest file in your OBS watch folder (set in Settings → Folders).',
         'Save and reopen .cutdown project files to restore cuts, range, crop, and markers.',
@@ -62,7 +62,7 @@
       items: [
         'Fit keeps the preview scaled to the panel when you resize the window.',
         'Crop overlay supports locked aspect ratios including custom width:height.',
-        'Proxy helps preview heavy codecs (HEVC, large files) before export.',
+        'Proxy is built automatically for HEVC, AV1, 10-bit, and awkward containers so preview is not a black frame. Export still uses the original file.',
       ],
     },
     {
@@ -78,7 +78,8 @@
     {
       title: 'Windows & tray',
       items: [
-        'Closing the window minimizes to the system tray — use the tray icon to restore.',
+        'Closing the window can send Cutdown to the tray (Settings → General) — use the tray icon to restore.',
+        'Only one Cutdown window runs. Opening a video or clicking the app focuses the existing instance.',
         'Restore the blue tray tip from Settings → General if you dismissed it.',
       ],
     },

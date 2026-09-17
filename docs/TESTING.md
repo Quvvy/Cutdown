@@ -37,7 +37,8 @@ Check Pass when done. Skip rows that don’t apply.
 | | No audio | |
 | **Preview** | Native playback | |
 | | Remux fallback | |
-| | Proxy fallback | |
+| | Auto proxy for HEVC/AV1/10-bit (no black frame) | |
+| | Clear error if proxy also fails | |
 | | Fit + resize workspace splitter | |
 | | Speed 0.5× / 2× | |
 | **Edit** | Split `S` | |
@@ -68,9 +69,11 @@ Check Pass when done. Skip rows that don’t apply.
 | | Audio preset tab; `.mp4` → `.mp3` on switch | |
 | | MP3 128 vs 192 bitrate | |
 | | Post-export footer icons (copy, folder, upload) | |
-| **Windows** | Open With | |
+| **Windows** | Open With reuses the running instance (including the login/tray instance) | |
 | | Default export folder | |
-| | Run at startup (installed build) | |
+| | Run at startup honors Settings (installed build); leftover Run key is cleared when off | |
+| | Start minimized only applies to sign-in launches; clicking Cutdown shows the window | |
+| | Close-to-tray vs quit matches Settings | |
 | **Tray** | X hides; icon restores; Quit exits | |
 | **Watch** | New file → toast → open | |
 | **History** | Row after export; reveal/copy/clear confirm | |

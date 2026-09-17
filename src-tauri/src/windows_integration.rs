@@ -1,4 +1,5 @@
 use crate::command_util::command;
+use crate::launch::FROM_STARTUP_FLAG;
 use std::path::{Path, PathBuf};
 
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
@@ -20,30 +21,26 @@ pub fn set_run_at_startup(enabled: bool) -> Result<(), String> {
     }
 }
 
-/// Keeps the Run registry entry aligned with the installed app when startup is enabled.
-pub fn ensure_run_at_startup_on_launch(enabled: bool) {
-    if !enabled {
-        return;
-    }
-
-    let current_exe = std::env::current_exe().ok();
-    let registry_exe = read_startup_registry_exe();
-
-    if let Ok(target) = startup_registry_exe() {
-        if registry_exe.as_ref() != Some(&target) {
-            if let Err(err) = write_startup_entry(&target) {
-                eprintln!("failed to sync run-at-startup registry entry: {err}");
+/// Keeps the HKCU Run key aligned with the saved preference on every launch.
+/// Disabled settings delete leftover installer/dev entries so the app cannot keep
+/// starting with Windows after the user turned the option off.
+pub fn sync_run_at_startup(enabled: bool) {
+    if enabled {
+        if let Err(err) = set_run_at_startup(true) {
+            eprintln!("failed to enable run-at-startup: {err}");
+            if std::env::current_exe()
+                .ok()
+                .as_deref()
+                .is_some_and(is_build_tree_exe)
+            {
+                let _ = delete_startup_entry();
             }
         }
         return;
     }
 
-    if let (Some(current), Some(reg)) = (current_exe.as_deref(), registry_exe.as_deref()) {
-        if is_build_tree_exe(current) && paths_refer_to_same_file(current, reg) {
-            if let Err(err) = delete_startup_entry() {
-                eprintln!("failed to remove dev run-at-startup entry: {err}");
-            }
-        }
+    if let Err(err) = set_run_at_startup(false) {
+        eprintln!("failed to disable run-at-startup: {err}");
     }
 }
 
@@ -143,7 +140,33 @@ fn read_startup_registry_exe() -> Option<PathBuf> {
     }
 
     let text = String::from_utf8_lossy(&output.stdout);
-    parse_reg_value(&text).map(PathBuf::from)
+    parse_startup_exe(&parse_reg_value(&text)?).map(PathBuf::from)
+}
+
+/// Extracts the executable from a Run-key command that may include quotes and `--from-startup`.
+pub fn parse_startup_exe(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if trimmed.starts_with('"') {
+        let rest = &trimmed[1..];
+        let end = rest.find('"')?;
+        let exe = rest[..end].replace("\"\"", "\"");
+        return if exe.is_empty() { None } else { Some(exe) };
+    }
+
+    let exe = trimmed
+        .split_once(" --")
+        .map(|(head, _)| head)
+        .unwrap_or(trimmed)
+        .trim();
+    if exe.is_empty() {
+        None
+    } else {
+        Some(exe.to_string())
+    }
 }
 
 fn parse_reg_value(text: &str) -> Option<String> {
@@ -177,7 +200,7 @@ fn unquote_reg_value(value: &str) -> String {
 }
 
 fn write_startup_entry(exe: &Path) -> Result<(), String> {
-    let quoted = format!("\"{}\"", exe.to_string_lossy());
+    let command = format!("\"{}\" {FROM_STARTUP_FLAG}", exe.to_string_lossy());
     run_reg(&[
         "add",
         RUN_KEY,
@@ -186,7 +209,7 @@ fn write_startup_entry(exe: &Path) -> Result<(), String> {
         "/t",
         "REG_SZ",
         "/d",
-        &quoted,
+        &command,
         "/f",
     ])
 }
@@ -197,7 +220,7 @@ fn delete_startup_entry() -> Result<(), String> {
         .output()
         .map_err(|err| format!("Failed to run reg.exe: {err}"))?;
 
-    if output.status.success() {
+    if output.status.success() || read_startup_registry_exe().is_none() {
         return Ok(());
     }
 
@@ -251,17 +274,6 @@ fn is_build_tree_exe(path: &Path) -> bool {
         || (normalized.contains("\\src-tauri\\") && normalized.ends_with("\\cutdown.exe"))
 }
 
-fn paths_refer_to_same_file(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +308,31 @@ HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
         assert_eq!(
             unquote_reg_value(r#""C:\Apps\Cutdown\Cutdown.exe""#),
             r"C:\Apps\Cutdown\Cutdown.exe"
+        );
+    }
+
+    #[test]
+    fn parses_startup_commands_with_and_without_flags() {
+        assert_eq!(
+            parse_startup_exe(r#""C:\Users\me\AppData\Local\Cutdown\Cutdown.exe" --from-startup"#),
+            Some(r"C:\Users\me\AppData\Local\Cutdown\Cutdown.exe".to_string())
+        );
+        assert_eq!(
+            parse_startup_exe(r"C:\Apps\Cutdown\Cutdown.exe"),
+            Some(r"C:\Apps\Cutdown\Cutdown.exe".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_reg_value_then_startup_exe_handles_command_args() {
+        let sample = r#"
+HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run
+    Cutdown    REG_SZ    "C:\Users\me\AppData\Local\Cutdown\Cutdown.exe" --from-startup
+"#;
+        let value = parse_reg_value(sample).expect("reg value");
+        assert_eq!(
+            parse_startup_exe(&value),
+            Some(r"C:\Users\me\AppData\Local\Cutdown\Cutdown.exe".to_string())
         );
     }
 }

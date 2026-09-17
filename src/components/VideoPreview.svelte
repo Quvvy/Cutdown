@@ -20,6 +20,7 @@
   let stage: HTMLDivElement;
   let loadError = '';
   let previousSrc: string | null = null;
+  let loadWatchdog: ReturnType<typeof setTimeout> | null = null;
   let dragMode: 'move' | 'resize' | null = null;
   let dragStartX = 0;
   let dragStartY = 0;
@@ -58,6 +59,7 @@
     loadError = '';
     userAdjustedView = false;
     resetView();
+    armLoadWatchdog();
   }
 
   $: if (video) {
@@ -113,7 +115,10 @@
       observer.observe(viewport);
     }
 
-    return () => observer.disconnect();
+    return () => {
+      clearLoadWatchdog();
+      observer.disconnect();
+    };
   });
 
   export function resetView(): void {
@@ -197,6 +202,9 @@
     loadError = '';
     videoWidth = video.videoWidth || 0;
     videoHeight = video.videoHeight || 0;
+    if (videoWidth === 0 || videoHeight === 0) {
+      return;
+    }
     resetView();
     await tick();
     measureViewport();
@@ -208,8 +216,47 @@
       return;
     }
 
+    if (video && (video.videoWidth === 0 || video.videoHeight === 0)) {
+      failLoad(
+        'This file loaded without a visible video frame. Cutdown will try a fallback preview.',
+      );
+      return;
+    }
+
+    clearLoadWatchdog();
     previewReadyForSrc = src;
     dispatch('previewready');
+  }
+
+  function clearLoadWatchdog(): void {
+    if (loadWatchdog) {
+      clearTimeout(loadWatchdog);
+      loadWatchdog = null;
+    }
+  }
+
+  function armLoadWatchdog(): void {
+    clearLoadWatchdog();
+    if (!src) {
+      return;
+    }
+
+    loadWatchdog = setTimeout(() => {
+      if (src && previewReadyForSrc !== src && !loadError) {
+        failLoad(
+          'Preview did not start. The codec may be unsupported in the built-in player — trying a fallback.',
+        );
+      }
+    }, 4000);
+  }
+
+  function failLoad(message: string): void {
+    if (loadError) {
+      return;
+    }
+    clearLoadWatchdog();
+    loadError = message;
+    dispatch('error', { message });
   }
 
   function handleTimeUpdate(): void {
@@ -244,9 +291,9 @@
   }
 
   function handleError(): void {
-    loadError =
-      'The preview could not decode this file. Try an H.264/AAC MP4, or export/remux the source first.';
-    dispatch('error', { message: loadError });
+    failLoad(
+      'The preview could not decode this file. Cutdown will try a remux or proxy preview. If that fails, export still uses the original.',
+    );
   }
 
   function clampRect(rect: NormalizedCropRect): NormalizedCropRect {
@@ -447,7 +494,8 @@
         <video
           bind:this={video}
           src={src}
-          preload="metadata"
+          preload="auto"
+          playsinline
           style:clip-path={cropEnabled ? cropStyle : undefined}
           on:click={togglePlayback}
           on:error={handleError}
@@ -488,12 +536,13 @@
       {/if}
     </div>
     {#if loadError}
-      <div class="video-preview__error">{loadError}</div>
+      <div class="video-preview__error" role="alert">{loadError}</div>
     {/if}
   {:else}
     <div class="video-preview__empty">
       <strong>No clip loaded</strong>
-      <span>Choose a video file to start trimming.</span>
+      <span>Open a video, drop a file on this window, or pick a recent source to start cutting.</span>
+      <span class="video-preview__empty-hint">H.264 MP4 plays immediately. HEVC, AV1, and MKV files get a playable preview automatically.</span>
     </div>
   {/if}
 </section>

@@ -797,7 +797,7 @@
     style:grid-template-rows={trackGridTemplateRows}
   >
     {#if disabled}
-      <div class="timeline__empty">Open a video or drop a file to start cutting.</div>
+      <div class="timeline__empty">Open a video, drop a file, or load a .cutdown project to start cutting.</div>
     {/if}
     <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
     <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>

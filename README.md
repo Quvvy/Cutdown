@@ -8,11 +8,11 @@ Stack: Tauri 2, Svelte, Rust, ffmpeg. Setup downloads ffmpeg to `%LOCALAPPDATA%\
 
 **Editing.** Split at the playhead (`S`), delete segments, drag segments to reorder, drag the edges of a selected segment to trim or extend. Set In/Out (`I` / `O`) for a working range—keep only that span, trim everything else to it, or export the range as one file. Undo/redo. Bookmarks on the timeline (`M`). Save your work as a `.cutdown` project file; opening the same MP4 again without a project starts clean.
 
-**Preview.** WebView2 video with remux/proxy fallbacks when the codec is awkward. Fit, zoom, pan. Playback speed and optional proxy for heavy files. Reordered segments play in sequence order; you might hear a tiny blip at joins—that’s the tradeoff for a simple preview path.
+**Preview.** WebView2 video with remux/proxy fallbacks when the codec is awkward. HEVC, AV1, and 10-bit files get a playable H.264 proxy automatically instead of a black frame. Fit, zoom, pan. Playback speed and optional proxy for heavy files. Reordered segments play in sequence order; you might hear a tiny blip at joins—that’s the tradeoff for a simple preview path.
 
 **Export.** Lossless Trim (stream copy, fast) or re-encode presets (Discord ~9 MB, Archive, Twitter/X). **Audio-only** export with built-in presets (WAV, MP3 128k/192k, OGG). Custom presets in Settings. Per-segment batch export, I/O range export, crop, volume, fade in/out, strip audio, “accurate trim” when you care about frame boundaries more than speed. GPU encoding when available. Output filename extension updates automatically when switching video vs audio.
 
-**Around the editor.** Watch folder + toast when OBS drops a new file. Recent sources list. Clip history with reveal/copy path and upload. Tray: X minimizes, tray icon brings the window back. Run at startup (points at the installed exe, not a dev build). In-app updates from GitHub on 0.2.4+.
+**Around the editor.** Watch folder + toast when OBS drops a new file. Recent sources list. Clip history with reveal/copy path and upload. Tray: closing the window can hide to tray (Settings); the tray icon brings the window back. Only one instance runs — opening a clip or the app shortcut focuses it. Run at startup (points at the installed exe, not a dev build) follows Settings and is applied as soon as you toggle it. In-app updates from GitHub on 0.2.4+.
 
 **Uploads** (Settings → Upload targets): Catbox, File Garden (`api.filegarden.com`), or your own multipart HTTP endpoint. Secrets in Windows Credential Manager; other settings in `%APPDATA%\Cutdown\settings.json`.
 

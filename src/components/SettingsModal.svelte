@@ -35,6 +35,7 @@
   export let preferGpuEncoding = true;
   export let runAtStartup = false;
   export let startMinimizedToTray = false;
+  export let closeToTray = true;
   export let appVersion = '0.0.0';
   export let uploadProviders: UploadProvider[] = [];
   export let defaultUploadProviderId: string | null = null;
@@ -54,6 +55,7 @@
     preferGpuEncoding: boolean;
     runAtStartup: boolean;
     startMinimizedToTray: boolean;
+    closeToTray: boolean;
     uploadProviders: UploadProvider[];
     defaultUploadProviderId: string | null;
     customExportPresets: CustomExportPreset[];
@@ -71,6 +73,7 @@
       preferGpuEncoding: true,
       runAtStartup: false,
       startMinimizedToTray: false,
+      closeToTray: true,
       uploadProviders: [],
       defaultUploadProviderId: null,
       customExportPresets: [],
@@ -86,6 +89,7 @@
       preferGpuEncoding,
       runAtStartup,
       startMinimizedToTray,
+      closeToTray,
       uploadProviders,
       defaultUploadProviderId,
       customExportPresets,
@@ -129,9 +133,15 @@
       preferGpuEncoding: boolean;
       runAtStartup: boolean;
       startMinimizedToTray: boolean;
+      closeToTray: boolean;
       uploadProviders: UploadProvider[];
       defaultUploadProviderId: string | null;
       customExportPresets: CustomExportPreset[];
+    };
+    windowsSaved: {
+      runAtStartup: boolean;
+      startMinimizedToTray: boolean;
+      closeToTray: boolean;
     };
   }>();
 
@@ -312,6 +322,7 @@
         preferGpuEncoding: boolean;
         runAtStartup: boolean;
         startMinimizedToTray: boolean;
+        closeToTray: boolean;
         uploadProviders: UploadProvider[];
         defaultUploadProviderId: string | null;
         customExportPresets: CustomExportPreset[];
@@ -324,6 +335,7 @@
           preferGpuEncoding: draft.preferGpuEncoding,
           runAtStartup: draft.runAtStartup,
           startMinimizedToTray: draft.startMinimizedToTray,
+          closeToTray: draft.closeToTray,
           providers,
           defaultUploadProviderId: draft.defaultUploadProviderId,
           customExportPresets: presets,
@@ -353,6 +365,7 @@
         preferGpuEncoding: saved.preferGpuEncoding,
         runAtStartup: saved.runAtStartup,
         startMinimizedToTray: saved.startMinimizedToTray,
+        closeToTray: saved.closeToTray ?? true,
         uploadProviders: nextUploadProviders,
         defaultUploadProviderId: nextDefaultUploadProviderId,
         customExportPresets: nextCustomExportPresets,
@@ -368,12 +381,76 @@
         preferGpuEncoding: saved.preferGpuEncoding,
         runAtStartup: saved.runAtStartup,
         startMinimizedToTray: saved.startMinimizedToTray,
+        closeToTray: saved.closeToTray ?? true,
         uploadProviders: draft.uploadProviders,
         defaultUploadProviderId: draft.defaultUploadProviderId,
         customExportPresets: draft.customExportPresets,
       });
       dispatch('close');
     } catch (error) {
+      dispatch('error', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  async function persistWindowsBehavior(): Promise<void> {
+    try {
+      const saved = await invoke<{
+        runAtStartup: boolean;
+        startMinimizedToTray: boolean;
+        closeToTray: boolean;
+      }>('set_windows_behavior', {
+        params: {
+          runAtStartup: draft.runAtStartup,
+          startMinimizedToTray: draft.startMinimizedToTray,
+          closeToTray: draft.closeToTray,
+        },
+      });
+      draft = {
+        ...draft,
+        runAtStartup: saved.runAtStartup,
+        startMinimizedToTray: saved.startMinimizedToTray,
+        closeToTray: saved.closeToTray ?? true,
+      };
+      const snapshot = ((): SettingsDraft => {
+        if (!savedSnapshot) {
+          return draftFromProps();
+        }
+        try {
+          return JSON.parse(savedSnapshot) as SettingsDraft;
+        } catch {
+          return draftFromProps();
+        }
+      })();
+      savedSnapshot = draftSignature({
+        ...snapshot,
+        runAtStartup: draft.runAtStartup,
+        startMinimizedToTray: draft.startMinimizedToTray,
+        closeToTray: draft.closeToTray,
+      });
+      dispatch('windowsSaved', {
+        runAtStartup: draft.runAtStartup,
+        startMinimizedToTray: draft.startMinimizedToTray,
+        closeToTray: draft.closeToTray,
+      });
+    } catch (error) {
+      const snapshot = ((): SettingsDraft => {
+        if (!savedSnapshot) {
+          return draftFromProps();
+        }
+        try {
+          return JSON.parse(savedSnapshot) as SettingsDraft;
+        } catch {
+          return draftFromProps();
+        }
+      })();
+      draft = {
+        ...draft,
+        runAtStartup: snapshot.runAtStartup,
+        startMinimizedToTray: snapshot.startMinimizedToTray,
+        closeToTray: snapshot.closeToTray,
+      };
       dispatch('error', {
         message: error instanceof Error ? error.message : String(error),
       });
@@ -397,8 +474,54 @@
 
   {#if activeTab === 'general'}
     <div class="panel-section">
-      <h3 class="panel-section__title">System & encoding</h3>
-      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips. Changes apply after Save settings.</p>
+      <h3 class="panel-section__title">Windows</h3>
+      <p class="panel-section__lead">
+        These options apply as soon as you toggle them. Only one Cutdown window runs; opening a clip reuses it.
+      </p>
+      <div class="panel-field">
+        <span>Startup and tray</span>
+        <label class="modal__mode">
+          <input
+            type="checkbox"
+            checked={draft.runAtStartup}
+            on:change={(event) => {
+              draft = { ...draft, runAtStartup: event.currentTarget.checked };
+              void persistWindowsBehavior();
+            }}
+          />
+          Open Cutdown when I sign in to Windows
+        </label>
+        <label class="modal__mode">
+          <input
+            type="checkbox"
+            checked={draft.startMinimizedToTray}
+            on:change={(event) => {
+              draft = { ...draft, startMinimizedToTray: event.currentTarget.checked };
+              void persistWindowsBehavior();
+            }}
+          />
+          At sign-in, keep Cutdown in the tray until I click the icon
+        </label>
+        <label class="modal__mode">
+          <input
+            type="checkbox"
+            checked={draft.closeToTray}
+            on:change={(event) => {
+              draft = { ...draft, closeToTray: event.currentTarget.checked };
+              void persistWindowsBehavior();
+            }}
+          />
+          Close the window to the tray instead of quitting
+        </label>
+        <p class="modal__hint">
+          Left-click the tray icon or choose Open Editor to restore. Quit from the tray menu exits completely.
+        </p>
+        <button type="button" class="secondary" on:click={() => dispatch('restoreTrayHint')}>
+          Show tray tip again
+        </button>
+      </div>
+      <h3 class="panel-section__title">Encoding</h3>
+      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips. Click Save settings for encoding changes.</p>
       <div class="panel-info">{ffmpegStatus || 'Checking ffmpeg availability...'}</div>
       <div class="panel-field">
         <span>GPU encoders</span>
@@ -419,36 +542,6 @@
           Prefer GPU encoding when available
         </label>
       </label>
-      <div class="panel-field">
-        <span>Windows</span>
-        <label class="modal__mode">
-          <input
-            type="checkbox"
-            checked={draft.runAtStartup}
-            on:change={(event) => {
-              draft = { ...draft, runAtStartup: event.currentTarget.checked };
-            }}
-          />
-          Start Cutdown when Windows starts
-        </label>
-        <label class="modal__mode">
-          <input
-            type="checkbox"
-            checked={draft.startMinimizedToTray}
-            on:change={(event) => {
-              draft = { ...draft, startMinimizedToTray: event.currentTarget.checked };
-            }}
-          />
-          Start minimized to system tray
-        </label>
-        <p class="modal__hint">
-          Closing the window minimizes Cutdown to the system tray. Left-click the tray icon or choose Open Editor to
-          restore.
-        </p>
-        <button type="button" class="secondary" on:click={() => dispatch('restoreTrayHint')}>
-          Show tray minimize tip again
-        </button>
-      </div>
       <div class="panel-field">
         <span>Updates</span>
         <div class="panel-info">Installed version {appVersion}</div>
@@ -912,7 +1005,7 @@
       </button>
     {/if}
     <button type="button" class="primary" title="Save settings" on:click={saveSettings}>
-      Save settings{#if dirty} *{/if}
+      {dirty ? 'Save settings*' : 'Save settings'}
     </button>
   </svelte:fragment>
 </DraggablePanel>
