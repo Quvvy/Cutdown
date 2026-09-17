@@ -14,6 +14,9 @@
   ];
 
   const shortcuts = [
+    { keys: 'Ctrl + O', action: 'Open a video or Cutdown project' },
+    { keys: 'Ctrl + S', action: 'Save Cutdown project' },
+    { keys: 'Ctrl + E', action: 'Open the Export window' },
     { keys: 'S', action: 'Split at playhead' },
     { keys: 'M', action: 'Add timeline marker at playhead' },
     { keys: ', / .', action: 'Previous / next marker' },
@@ -48,7 +51,7 @@
     {
       title: 'Edit on the timeline',
       items: [
-        'Split with S to cut the clip into kept segments. Delete removes the selected segment.',
+        'Split with S to cut the clip into kept segments. Delete removes the selected segment. Export (Ctrl+E) writes the kept timeline.',
         'Click a segment to select it; drag its left or right edge to trim or extend the cut. Press Esc or click empty track space to deselect.',
         'Set In (I) and Out (O), then use Keep range on the timeline toolbar to delete everything outside that span (one kept segment).',
         'Trim outside range (right-click menu) clips existing segments to the I/O span instead of replacing them.',

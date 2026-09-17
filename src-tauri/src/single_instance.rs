@@ -107,7 +107,7 @@ fn port_file_path() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("TMPDIR"))
         .or_else(|| std::env::var_os("TEMP"))
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir());
+        .unwrap_or_else(std::env::temp_dir);
     Some(base.join("Cutdown").join("instance.port"))
 }
 

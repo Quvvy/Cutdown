@@ -1282,7 +1282,7 @@ fn prepare_preview_blocking(
     app: tauri::AppHandle,
     params: PreviewParams,
 ) -> Result<PreviewResult, String> {
-    let input = PathBuf::from(params.input_path);
+    let input = PathBuf::from(&params.input_path);
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());

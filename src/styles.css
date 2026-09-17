@@ -731,6 +731,10 @@ kbd {
   max-width: 36em;
 }
 
+.video-preview__empty .primary {
+  margin-top: 6px;
+}
+
 .timecode {
   background: rgba(0, 0, 0, 0.64);
   border: 1px solid #48525e;
@@ -1802,7 +1806,13 @@ label.modal__mode {
 
 label.modal__mode input[type='checkbox'],
 label.modal__mode input[type='radio'] {
+  accent-color: var(--accent);
   flex-shrink: 0;
+}
+
+label.modal__mode:has(input:disabled) {
+  color: var(--faint);
+  cursor: not-allowed;
 }
 
 .modal__mode label {

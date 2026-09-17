@@ -49,6 +49,7 @@
     ended: void;
     error: { message: string };
     cropChange: { rect: NormalizedCropRect };
+    open: void;
   }>();
 
   let previewReadyForSrc: string | null = null;
@@ -542,6 +543,7 @@
     <div class="video-preview__empty">
       <strong>No clip loaded</strong>
       <span>Open a video, drop a file on this window, or pick a recent source to start cutting.</span>
+      <button type="button" class="primary" on:click={() => dispatch('open')}>Open a video</button>
       <span class="video-preview__empty-hint">H.264 MP4 plays immediately. HEVC, AV1, and MKV files get a playable preview automatically.</span>
     </div>
   {/if}

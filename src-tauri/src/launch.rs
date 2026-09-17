@@ -2,8 +2,9 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::project::PROJECT_EXTENSION;
+
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "mkv", "mov", "webm", "ts", "avi", "flv", "m4v"];
-const PROJECT_EXTENSION: &str = "cutdown";
 pub const FROM_STARTUP_FLAG: &str = "--from-startup";
 
 pub struct LaunchState {
@@ -67,7 +68,7 @@ fn normalize_open_candidate(arg: &str) -> Option<String> {
         return None;
     }
 
-    let without_url = decode_file_url(&trimmed).unwrap_or_else(|| trimmed.to_string());
+    let without_url = decode_file_url(trimmed).unwrap_or_else(|| trimmed.to_string());
     let path = strip_extended_path_prefix(&without_url);
 
     if looks_like_app_binary(&path) {
@@ -157,9 +158,7 @@ fn looks_like_app_binary(path: &str) -> bool {
 }
 
 pub fn is_supported_user_path(path: &str) -> bool {
-    extension_of(path)
-        .map(|ext| is_video_extension(&ext) || ext == PROJECT_EXTENSION)
-        .unwrap_or(false)
+    is_project_path(path) || extension_of(path).is_some_and(|ext| is_video_extension(&ext))
 }
 
 pub fn is_project_path(path: &str) -> bool {
@@ -167,7 +166,7 @@ pub fn is_project_path(path: &str) -> bool {
 }
 
 fn is_video_extension(ext: &str) -> bool {
-    VIDEO_EXTENSIONS.iter().any(|candidate| *candidate == ext)
+    VIDEO_EXTENSIONS.contains(&ext)
 }
 
 fn extension_of(path: &str) -> Option<String> {

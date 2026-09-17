@@ -150,8 +150,7 @@ pub fn parse_startup_exe(value: &str) -> Option<String> {
         return None;
     }
 
-    if trimmed.starts_with('"') {
-        let rest = &trimmed[1..];
+    if let Some(rest) = trimmed.strip_prefix('"') {
         let end = rest.find('"')?;
         let exe = rest[..end].replace("\"\"", "\"");
         return if exe.is_empty() { None } else { Some(exe) };

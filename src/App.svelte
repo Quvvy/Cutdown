@@ -973,7 +973,7 @@
       return;
     }
 
-    await openIncomingPath(selected, { confirmIfDirty: false });
+    await openIncomingPath(selected);
   }
 
   async function openClipPath(selected: string): Promise<void> {
@@ -1013,6 +1013,7 @@
     exportMode = 'sequence';
     openingClip = true;
     openingMessage = 'Reading clip…';
+    exportProgressPercent = null;
     statusDismissed = false;
     editor.update((state) => ({
       ...state,
@@ -2008,6 +2009,49 @@
       return;
     }
 
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 'o' &&
+      !exportModalOpen &&
+      !settingsModalOpen &&
+      !shortcutsModalOpen
+    ) {
+      event.preventDefault();
+      void chooseClip();
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 's' &&
+      !exportModalOpen &&
+      !settingsModalOpen
+    ) {
+      event.preventDefault();
+      if ($editor.currentFile) {
+        void saveProject();
+      } else {
+        pushToast('Open a clip before saving a project.', 'info');
+      }
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 'e' &&
+      !exportModalOpen &&
+      !settingsModalOpen &&
+      !shortcutsModalOpen
+    ) {
+      event.preventDefault();
+      if (canExport && !openingClip) {
+        void openExportModal();
+      } else {
+        pushToast('Open a clip before exporting.', 'info');
+      }
+      return;
+    }
+
     if (!canExport) {
       return;
     }
@@ -2427,6 +2471,8 @@
     }
 
     previewFallbackRunning = true;
+    exportProgressPercent = null;
+    openingMessage = 'Building a playable preview…';
     editor.update((state) => ({
       ...state,
       exportStatus: { state: 'running', message: 'Building proxy preview...' },
@@ -2448,13 +2494,15 @@
         },
       }));
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
     } finally {
       previewFallbackRunning = false;
     }
@@ -2469,13 +2517,7 @@
         title: 'Choose replay folder',
       });
       if (typeof selected !== 'string') {
-        editor.update((state) => ({
-          ...state,
-          exportStatus: {
-            state: 'error',
-            message: 'Set a watch folder in Settings, or choose one when prompted.',
-          },
-        }));
+        pushToast('Set a watch folder in Settings → Folders to use Latest replay.', 'info');
         return;
       }
 
@@ -2505,6 +2547,7 @@
           message: latest.message,
         },
       }));
+      pushToast(latest.message, 'error');
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -2571,7 +2614,7 @@
       return;
     }
 
-    await openProjectPath(selected);
+    await openIncomingPath(selected);
   }
 
   async function openProjectPath(selected: string): Promise<void> {
@@ -2654,21 +2697,25 @@
           message,
         },
       }));
+      pushToast(message, 'error');
       return;
     }
 
     if ($editor.previewStrategy === 'Preview proxy') {
+      const detail = `${message} Export still uses the original file.`;
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: 'The generated preview proxy could not be played.',
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
       return;
     }
 
     previewFallbackRunning = true;
+    exportProgressPercent = null;
     const skipRemux =
       $editor.previewStrategy === 'Preview remux' ||
       !$editor.metadata ||
@@ -2678,6 +2725,9 @@
         container: $editor.metadata.container,
         fileSize: $editor.metadata.fileSize,
       }) !== 'remux';
+    openingMessage = skipRemux
+      ? 'Building a playable preview. Export still uses the original file…'
+      : 'Preparing a WebView-friendly preview…';
     editor.update((state) => ({
       ...state,
       exportStatus: {
@@ -2709,13 +2759,15 @@
       }));
       preview?.seekTo(0);
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
     } finally {
       previewFallbackRunning = false;
     }
@@ -2754,7 +2806,7 @@
 <ToastHost />
 
 <main class="shell" class:shell--dragover={dragOver}>
-  {#if !ffmpegAvailable || !trayHintDismissed}
+  {#if !ffmpegAvailable || (closeToTray && !trayHintDismissed)}
     <div class="shell__alerts">
       {#if !ffmpegAvailable}
         <div class="ffmpeg-banner" role="alert">
@@ -2778,7 +2830,7 @@
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>
       {/if}
-      {#if !trayHintDismissed}
+      {#if closeToTray && !trayHintDismissed}
         <div class="tray-hint-banner">
           <span>Closing the window sends Cutdown to the tray (change this in Settings → General). Use the tray icon or Open Editor to restore.</span>
           <button type="button" class="secondary" on:click={dismissTrayHint}>Dismiss</button>
@@ -2788,7 +2840,7 @@
   {/if}
 
   <section class="toolbar" aria-label="Editor toolbar">
-    <IconButton icon="open" title="Open video file" on:click={chooseClip} />
+    <IconButton icon="open" title="Open video file (Ctrl+O)" on:click={chooseClip} />
     <div class="toolbar-recent">
       <button
         type="button"
@@ -2819,7 +2871,7 @@
         </div>
       {/if}
     </div>
-    <IconButton icon="save" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
+    <IconButton icon="save" title="Save Cutdown project (Ctrl+S)" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
     <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
     <button type="button" class="secondary" title="Open newest video in watch folder" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
@@ -2832,7 +2884,7 @@
     <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
     <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
     <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
-    <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal} />
+    <IconButton icon="export" title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'} variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal}>Export</IconButton>
   </section>
 
   <ExportActivity
@@ -2849,8 +2901,15 @@
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style:flex={`${workspaceSplitRatio} 1 0`}>
-    {#if openingClip}
-      <div class="opening-overlay" aria-busy="true"><span>{openingMessage}</span></div>
+    {#if openingClip || previewFallbackRunning}
+      <div class="opening-overlay" aria-busy="true">
+        <span>
+          {openingClip ? openingMessage : $editor.exportStatus.message || 'Building a playable preview…'}
+          {#if exportProgressPercent !== null}
+            {' '}({Math.round(exportProgressPercent)}%)
+          {/if}
+        </span>
+      </div>
     {/if}
     <div class="preview-panel__tools">
       <IconButton
@@ -2999,6 +3058,7 @@
       on:metadata={() => {}}
       on:previewready={handlePreviewReady}
       on:error={(event) => void handlePreviewError(event.detail.message)}
+      on:open={() => void chooseClip()}
       on:playstate={(event) => handlePreviewPlayState(event.detail.playing)}
       on:ended={handlePreviewEnded}
       on:timeupdate={(event) => handlePreviewTimeUpdate(event.detail.currentTime)}
@@ -3015,7 +3075,7 @@
 
   <div class="timeline-pane" style:flex={`${1 - workspaceSplitRatio} 1 0`}>
     <div class="timeline-pane__tools">
-      <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
+      <IconButton icon="split" title={canExport ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canExport} on:click={splitAtCurrentTime} />
       <span class="timeline-pane__divider" aria-hidden="true"></span>
       <IconButton
         icon="markIn"

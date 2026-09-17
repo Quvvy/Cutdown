@@ -495,6 +495,7 @@
           <input
             type="checkbox"
             checked={draft.startMinimizedToTray}
+            disabled={!draft.runAtStartup}
             on:change={(event) => {
               draft = { ...draft, startMinimizedToTray: event.currentTarget.checked };
               void persistWindowsBehavior();
@@ -502,6 +503,9 @@
           />
           At sign-in, keep Cutdown in the tray until I click the icon
         </label>
+        <p class="modal__hint">
+          Only applies when Cutdown starts with Windows. Opening the app or a clip still shows the editor.
+        </p>
         <label class="modal__mode">
           <input
             type="checkbox"
@@ -516,7 +520,13 @@
         <p class="modal__hint">
           Left-click the tray icon or choose Open Editor to restore. Quit from the tray menu exits completely.
         </p>
-        <button type="button" class="secondary" on:click={() => dispatch('restoreTrayHint')}>
+        <button
+          type="button"
+          class="secondary"
+          disabled={!draft.closeToTray}
+          title={draft.closeToTray ? 'Show tray tip again' : 'Turn on close-to-tray to show this tip'}
+          on:click={() => dispatch('restoreTrayHint')}
+        >
           Show tray tip again
         </button>
       </div>
