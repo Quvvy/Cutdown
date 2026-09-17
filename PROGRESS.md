@@ -2,7 +2,9 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.3.1)
+## Now (v0.3.2)
+
+**0.3.2** — Single instance / Open With handoff; Start with Windows, start-minimized, and close-to-tray honor Settings; HEVC/AV1/10-bit preview uses an H.264 proxy instead of a black frame; preview auto-fits when the app window resizes (unless you zoomed or panned); first-run Open/Export copy, unsaved confirm, and settings persistence fixes.
 
 **0.3.1** — Audio-only export presets (WAV, MP3 128k/192k, OGG) on the Export Preset tab; filename extension auto-fix when switching video/audio. Bottom bar compaction: icon post-export actions, flexible footer height. Settings modal draft fix. Watch-folder Windows toasts with Open / Not now.
 
@@ -54,7 +56,7 @@ One export at a time is the happy path. Don’t run a big upload and export toge
 | 11–12 | Trim copy, fancier audio | partial (audio presets in 0.3.1) |
 | 13–14 | Timeline workflow, projects | done (projects replaced auto-session) |
 | 15 | Export queue polish | partial |
-| 16 | Preview UX | done |
+| 16 | Preview UX | done (window resize auto-fit in 0.3.2) |
 | 17 | OBS WebSocket | deferred |
 | 18 | Signed releases / updater | done for Windows; other OSes not started |
 

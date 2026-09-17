@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import { clamp, formatTime } from '../lib/format';
+  import { computeFitScale, shouldAutoFitOnViewportResize } from '../lib/previewView';
   import type { NormalizedCropRect } from '../lib/types';
 
   export let src: string | null = null;
@@ -20,6 +21,7 @@
   let stage: HTMLDivElement;
   let loadError = '';
   let previousSrc: string | null = null;
+  let loadWatchdog: ReturnType<typeof setTimeout> | null = null;
   let dragMode: 'move' | 'resize' | null = null;
   let dragStartX = 0;
   let dragStartY = 0;
@@ -48,6 +50,7 @@
     ended: void;
     error: { message: string };
     cropChange: { rect: NormalizedCropRect };
+    open: void;
   }>();
 
   let previewReadyForSrc: string | null = null;
@@ -58,6 +61,7 @@
     loadError = '';
     userAdjustedView = false;
     resetView();
+    armLoadWatchdog();
   }
 
   $: if (video) {
@@ -65,10 +69,7 @@
     video.playbackRate = clamp(playbackRate, 0.25, 2);
   }
 
-  $: fitScale =
-    videoWidth > 0 && videoHeight > 0 && viewportWidth > 0 && viewportHeight > 0
-      ? Math.min(viewportWidth / videoWidth, viewportHeight / videoHeight)
-      : 1;
+  $: fitScale = computeFitScale(videoWidth, videoHeight, viewportWidth, viewportHeight);
   $: displayScale = fitScale * zoomFactor;
   $: stageWidth = videoWidth > 0 ? videoWidth * displayScale : 0;
   $: stageHeight = videoHeight > 0 ? videoHeight * displayScale : 0;
@@ -95,25 +96,41 @@
   }
 
   export function remeasureViewport(): void {
+    void tick().then(() => {
+      measureViewport();
+      if (shouldAutoFitOnViewportResize(userAdjustedView, videoWidth)) {
+        void fitToView();
+      }
+    });
+  }
+
+  function observeViewportSize(node: HTMLElement) {
+    const observer = new ResizeObserver(() => {
+      measureViewport();
+      if (shouldAutoFitOnViewportResize(userAdjustedView, videoWidth)) {
+        void fitToView();
+      }
+    });
+    observer.observe(node);
     measureViewport();
-    if (!userAdjustedView) {
-      void fitToView();
-    }
+    return {
+      destroy() {
+        observer.disconnect();
+      },
+    };
   }
 
   onMount(() => {
     measureViewport();
-    const observer = new ResizeObserver(() => {
-      measureViewport();
-      if (!userAdjustedView && videoWidth > 0) {
-        void fitToView();
-      }
-    });
-    if (viewport) {
-      observer.observe(viewport);
-    }
+    const onWindowResize = () => {
+      remeasureViewport();
+    };
+    window.addEventListener('resize', onWindowResize);
 
-    return () => observer.disconnect();
+    return () => {
+      clearLoadWatchdog();
+      window.removeEventListener('resize', onWindowResize);
+    };
   });
 
   export function resetView(): void {
@@ -197,6 +214,9 @@
     loadError = '';
     videoWidth = video.videoWidth || 0;
     videoHeight = video.videoHeight || 0;
+    if (videoWidth === 0 || videoHeight === 0) {
+      return;
+    }
     resetView();
     await tick();
     measureViewport();
@@ -208,8 +228,47 @@
       return;
     }
 
+    if (video && (video.videoWidth === 0 || video.videoHeight === 0)) {
+      failLoad(
+        'This file loaded without a visible video frame. Cutdown will try a fallback preview.',
+      );
+      return;
+    }
+
+    clearLoadWatchdog();
     previewReadyForSrc = src;
     dispatch('previewready');
+  }
+
+  function clearLoadWatchdog(): void {
+    if (loadWatchdog) {
+      clearTimeout(loadWatchdog);
+      loadWatchdog = null;
+    }
+  }
+
+  function armLoadWatchdog(): void {
+    clearLoadWatchdog();
+    if (!src) {
+      return;
+    }
+
+    loadWatchdog = setTimeout(() => {
+      if (src && previewReadyForSrc !== src && !loadError) {
+        failLoad(
+          'Preview did not start. The codec may be unsupported in the built-in player — trying a fallback.',
+        );
+      }
+    }, 4000);
+  }
+
+  function failLoad(message: string): void {
+    if (loadError) {
+      return;
+    }
+    clearLoadWatchdog();
+    loadError = message;
+    dispatch('error', { message });
   }
 
   function handleTimeUpdate(): void {
@@ -244,9 +303,9 @@
   }
 
   function handleError(): void {
-    loadError =
-      'The preview could not decode this file. Try an H.264/AAC MP4, or export/remux the source first.';
-    dispatch('error', { message: loadError });
+    failLoad(
+      'The preview could not decode this file. Cutdown will try a remux or proxy preview. If that fails, export still uses the original.',
+    );
   }
 
   function clampRect(rect: NormalizedCropRect): NormalizedCropRect {
@@ -429,6 +488,7 @@
       class:video-preview__viewport--panning={isPanning}
       class:video-preview__viewport--pannable={canPan()}
       bind:this={viewport}
+      use:observeViewportSize
       on:pointerdown={onViewportPointerDown}
       on:pointermove={onViewportPointerMove}
       on:pointerup={onViewportPointerUp}
@@ -447,7 +507,8 @@
         <video
           bind:this={video}
           src={src}
-          preload="metadata"
+          preload="auto"
+          playsinline
           style:clip-path={cropEnabled ? cropStyle : undefined}
           on:click={togglePlayback}
           on:error={handleError}
@@ -488,12 +549,14 @@
       {/if}
     </div>
     {#if loadError}
-      <div class="video-preview__error">{loadError}</div>
+      <div class="video-preview__error" role="alert">{loadError}</div>
     {/if}
   {:else}
     <div class="video-preview__empty">
       <strong>No clip loaded</strong>
-      <span>Choose a video file to start trimming.</span>
+      <span>Open a video, drop a file on this window, or pick a recent source to start cutting.</span>
+      <button type="button" class="primary" on:click={() => dispatch('open')}>Open a video</button>
+      <span class="video-preview__empty-hint">H.264 MP4 plays immediately. HEVC, AV1, and MKV files get a playable preview automatically.</span>
     </div>
   {/if}
 </section>

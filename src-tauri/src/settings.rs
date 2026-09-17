@@ -31,8 +31,12 @@ fn default_custom_mode() -> String {
     "bitrate".to_string()
 }
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct AppSettings {
     pub watch_folder: Option<String>,
     pub watch_folder_enabled: bool,
@@ -41,8 +45,9 @@ pub struct AppSettings {
     pub last_preset_id: String,
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
-    #[serde(default)]
     pub start_minimized_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
     #[serde(default)]
     pub catbox_user_hash: Option<String>,
     #[serde(default)]
@@ -76,6 +81,7 @@ impl Default for AppSettings {
             prefer_gpu_encoding: true,
             run_at_startup: false,
             start_minimized_to_tray: false,
+            close_to_tray: true,
             catbox_user_hash: None,
             catbox_api_url: None,
             recent_sources: Vec::new(),
@@ -112,6 +118,8 @@ pub struct SaveEditorSettingsParams {
     pub prefer_gpu_encoding: bool,
     pub run_at_startup: bool,
     pub start_minimized_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub close_to_tray: bool,
     pub providers: Vec<UploadProvider>,
     pub default_upload_provider_id: Option<String>,
     pub custom_export_presets: Vec<CustomExportPreset>,
@@ -130,18 +138,24 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
     settings.prefer_gpu_encoding = params.prefer_gpu_encoding;
     settings.run_at_startup = params.run_at_startup;
     settings.start_minimized_to_tray = params.start_minimized_to_tray;
+    settings.close_to_tray = params.close_to_tray;
     settings.upload_providers = params.providers;
     settings.default_upload_provider_id = params
         .default_upload_provider_id
         .filter(|value| !value.trim().is_empty());
     settings.custom_export_presets = params.custom_export_presets;
-    settings.obs_websocket_host = params
-        .obs_websocket_host
-        .filter(|value| !value.trim().is_empty());
-    settings.obs_websocket_port = params.obs_websocket_port;
-    settings.obs_websocket_password = params
-        .obs_websocket_password
-        .filter(|value| !value.trim().is_empty());
+    if params.obs_websocket_host.is_some()
+        || params.obs_websocket_port.is_some()
+        || params.obs_websocket_password.is_some()
+    {
+        settings.obs_websocket_host = params
+            .obs_websocket_host
+            .filter(|value| !value.trim().is_empty());
+        settings.obs_websocket_port = params.obs_websocket_port;
+        settings.obs_websocket_password = params
+            .obs_websocket_password
+            .filter(|value| !value.trim().is_empty());
+    }
 
     if let Some(preset_id) = params
         .last_preset_id
@@ -164,8 +178,8 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
         &mut settings.default_upload_provider_id,
     )?;
 
-    crate::windows_integration::set_run_at_startup(params.run_at_startup)?;
     save_settings(&settings)?;
+    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
     Ok(settings)
 }
 
@@ -455,7 +469,61 @@ pub fn update_settings(params: UpdateSettingsParams) -> Result<AppSettings, Stri
         settings.last_preset_id = preset_id;
     }
 
-    crate::windows_integration::set_run_at_startup(params.run_at_startup)?;
     save_settings(&settings)?;
+    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
     Ok(settings)
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowsBehaviorParams {
+    pub run_at_startup: bool,
+    pub start_minimized_to_tray: bool,
+    pub close_to_tray: bool,
+}
+
+#[tauri::command]
+pub fn set_windows_behavior(params: WindowsBehaviorParams) -> Result<AppSettings, String> {
+    let mut settings = load_settings();
+    settings.run_at_startup = params.run_at_startup;
+    settings.start_minimized_to_tray = params.start_minimized_to_tray;
+    settings.close_to_tray = params.close_to_tray;
+    save_settings(&settings)?;
+    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
+    Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_settings_fields_use_defaults() {
+        let settings: AppSettings =
+            serde_json::from_str(r#"{"watchFolderEnabled":true,"runAtStartup":false}"#)
+                .expect("partial settings should deserialize");
+        assert!(settings.watch_folder_enabled);
+        assert!(!settings.run_at_startup);
+        assert!(!settings.start_minimized_to_tray);
+        assert!(settings.close_to_tray);
+        assert!(settings.prefer_gpu_encoding);
+    }
+
+    #[test]
+    fn close_to_tray_defaults_true_for_legacy_files() {
+        let settings: AppSettings = serde_json::from_str(
+            r#"{
+                "watchFolder":null,
+                "watchFolderEnabled":false,
+                "lastExportDir":null,
+                "defaultExportDir":null,
+                "lastPresetId":"lossless-trim",
+                "preferGpuEncoding":true,
+                "runAtStartup":false
+            }"#,
+        )
+        .expect("legacy settings should deserialize");
+        assert!(settings.close_to_tray);
+        assert!(!settings.start_minimized_to_tray);
+    }
 }

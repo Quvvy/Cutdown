@@ -9,6 +9,8 @@ export type VideoMetadata = {
   fileSize: number;
   audioCodec: string | null;
   audioChannels: number | null;
+  pixelFormat?: string | null;
+  container?: string | null;
 };
 
 export type ExportStatus = {
