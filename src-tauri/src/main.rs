@@ -8,9 +8,11 @@ mod ffmpeg_install;
 mod launch;
 mod obs;
 mod presets;
+mod preview_plan;
 mod project;
 mod secret_store;
 mod settings;
+mod single_instance;
 mod upload;
 mod upload_providers;
 mod watch_folder;
@@ -27,6 +29,7 @@ pub fn show_editor_window<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> 
         .get_webview_window("main")
         .ok_or_else(|| "Main window was not found".to_string())?;
 
+    let _ = window.unminimize();
     window.show().map_err(|err| err.to_string())?;
     window.set_focus().map_err(|err| err.to_string())?;
     Ok(())
@@ -47,14 +50,7 @@ fn path_exists(path: String) -> bool {
 }
 
 fn is_supported_user_file(path: &std::path::Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref(),
-        Some("mp4" | "mkv" | "mov" | "webm" | "ts" | "avi" | "flv")
-            | Some(project::PROJECT_EXTENSION)
-    )
+    launch::is_supported_user_path(&path.to_string_lossy())
 }
 
 #[tauri::command]
@@ -152,21 +148,33 @@ fn main() {
         std::process::exit(code);
     }
 
+    let single_instance_listener = match single_instance::handshake() {
+        single_instance::Handshake::Forwarded => return,
+        single_instance::Handshake::Primary(listener) => listener,
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(LaunchState::new())
-        .setup(|app| {
+        .setup(move |app| {
             setup_tray(app)?;
+            single_instance::spawn_listener(app.handle().clone(), single_instance_listener);
 
             if let Some(window) = app.get_webview_window("main") {
                 let window_for_close = window.clone();
+                let app_for_close = app.handle().clone();
                 window.on_window_event(move |event| {
                     if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = window_for_close.hide();
+                        if settings::load_settings().close_to_tray {
+                            api.prevent_close();
+                            let _ = window_for_close.hide();
+                        } else {
+                            api.prevent_close();
+                            app_for_close.exit(0);
+                        }
                     }
                 });
             }
@@ -174,11 +182,14 @@ fn main() {
             watch_folder::manage_state(app)?;
 
             let settings = settings::load_settings();
-            windows_integration::ensure_run_at_startup_on_launch(settings.run_at_startup);
+            windows_integration::sync_run_at_startup(settings.run_at_startup);
 
-            if settings.start_minimized_to_tray {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.hide();
+            let hide_to_tray = settings.start_minimized_to_tray
+                && launch::launched_from_startup()
+                && !app.state::<LaunchState>().has_pending();
+            if !hide_to_tray {
+                if let Err(err) = show_editor_window(app.handle()) {
+                    eprintln!("failed to show editor window: {err}");
                 }
             }
 
@@ -204,6 +215,7 @@ fn main() {
             settings::push_recent_source,
             settings::set_last_export_dir,
             settings::set_last_preset_id,
+            settings::set_windows_behavior,
             presets::list_presets,
             encoder_detect::detect_gpu_encoders,
             windows_integration::set_run_at_startup,

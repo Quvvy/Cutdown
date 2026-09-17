@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+  import { invoke } from '@tauri-apps/api/core';
   import { getVersion } from '@tauri-apps/api/app';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -50,6 +50,9 @@
     parseExportType,
     type ExportType,
   } from './lib/exportFormats';
+  import { mediaSrcFromPath } from './lib/mediaSrc';
+  import { isOpenablePath, isProjectPath, VIDEO_EXTENSIONS } from './lib/openPath';
+  import { planPreview } from './lib/previewPlayback';
   import {
     createCutdownProjectPayload,
     CUTDOWN_PROJECT_EXTENSION,
@@ -131,6 +134,7 @@
     preferGpuEncoding: boolean;
     runAtStartup: boolean;
     startMinimizedToTray: boolean;
+    closeToTray?: boolean;
     catboxUserHash: string | null;
     catboxApiUrl: string | null;
     recentSources: string[];
@@ -213,6 +217,9 @@
   let defaultExportDir: string | null = null;
   let runAtStartup = false;
   let startMinimizedToTray = false;
+  let closeToTray = true;
+  let launchHandoffReady = false;
+  let drainLaunchInFlight: Promise<void> | null = null;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
   const sequencePlayback = createSequencePlaybackDriver(
@@ -279,6 +286,7 @@
   let editingBookmarkId: string | null = null;
   let currentWindowTitle = '';
   let openingClip = false;
+  let openingMessage = 'Opening clip…';
   let lastShareUrl: string | null = null;
   let statusDismissed = false;
   let exportJobLabel = '';
@@ -349,6 +357,7 @@
       available - MIN_TIMELINE_PANE_PX,
     );
     workspaceSplitRatio = nextPreviewPx / available;
+    preview?.remeasureViewport();
   }
 
   function stopWorkspaceResize(event: PointerEvent): void {
@@ -372,7 +381,16 @@
     } catch {
       trayHintDismissed = false;
     }
-    void bootstrapApp();
+    let unlistenSecondInstance: Promise<() => void> | null = null;
+    void (async () => {
+      unlistenSecondInstance = listen('second-instance', () => {
+        if (launchHandoffReady) {
+          void drainLaunchPaths();
+        }
+      });
+      await unlistenSecondInstance;
+      await bootstrapApp();
+    })();
 
     const updateCheckTimer = window.setTimeout(() => {
       void checkForUpdates();
@@ -406,19 +424,19 @@
       void handleWatchFolderClip(event.payload.path);
     });
 
-    const videoExtensions = new Set(['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'flv']);
     const appWindow = getCurrentWindow();
+    const unlistenWindowResized = appWindow.onResized(() => {
+      preview?.remeasureViewport();
+    });
+
     const unlistenDragDrop = appWindow.onDragDropEvent((event) => {
       if (event.payload.type === 'over') {
         dragOver = true;
       } else if (event.payload.type === 'drop') {
         dragOver = false;
-        const path = event.payload.paths.find((candidate) => {
-          const ext = candidate.split(/[\\/]/).pop()?.split('.').pop()?.toLowerCase() ?? '';
-          return videoExtensions.has(ext);
-        });
+        const path = event.payload.paths.find((candidate) => isOpenablePath(candidate));
         if (path) {
-          void openClipPath(path);
+          void openIncomingPath(path);
         }
       } else {
         dragOver = false;
@@ -431,6 +449,10 @@
       void unlistenFfmpegInstall.then((stop) => stop());
       void unlistenExport.then((stop) => stop());
       void unlistenWatch.then((stop) => stop());
+      if (unlistenSecondInstance) {
+        void unlistenSecondInstance.then((stop) => stop());
+      }
+      void unlistenWindowResized.then((stop) => stop());
       void unlistenDragDrop.then((stop) => stop());
       const previewTempPath = get(editor).previewTempPath;
       if (previewTempPath) {
@@ -545,12 +567,11 @@
   async function bootstrapApp(): Promise<void> {
     try {
       await refreshAppVersion();
-      const [settings, ffmpeg, presets, encoders, launchPath] = await Promise.all([
+      const [settings, ffmpeg, presets, encoders] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<FfmpegCheckResult>('check_ffmpeg'),
         invoke<PresetInfo[]>('list_presets'),
         invoke<string[]>('detect_gpu_encoders'),
-        invoke<string | null>('get_launch_path'),
       ]);
 
       watchFolder = settings.watchFolder;
@@ -560,6 +581,7 @@
       preferGpuEncoding = settings.preferGpuEncoding;
       runAtStartup = settings.runAtStartup;
       startMinimizedToTray = settings.startMinimizedToTray;
+      closeToTray = settings.closeToTray ?? true;
       uploadProviders = resolveUploadProvidersFromSettings(settings);
       const bootstrapSettingsRecord = settings as AppSettings & Record<string, unknown>;
       defaultUploadProviderId =
@@ -589,9 +611,9 @@
         }));
       }
 
-      if (launchPath) {
-        await openClipPath(launchPath);
-      }
+      await drainLaunchPaths();
+      launchHandoffReady = true;
+      await drainLaunchPaths();
     } catch (error) {
       ffmpegStatus = error instanceof Error ? error.message : String(error);
     }
@@ -637,7 +659,7 @@
 
   function openRecentSource(path: string): void {
     recentMenuOpen = false;
-    void openClipPath(path);
+    void openIncomingPath(path);
   }
 
   $: cropLockedAspectRatio = (() => {
@@ -741,13 +763,7 @@
   }
 
   async function handleWatchFolderClip(path: string): Promise<void> {
-    if (hasUnsavedEdits()) {
-      watchFolderPendingPath = path;
-      watchFolderConfirmOpen = true;
-      return;
-    }
-
-    await openClipPath(path);
+    await openIncomingPath(path);
   }
 
   function confirmWatchFolderReplace(): void {
@@ -755,8 +771,48 @@
     const path = watchFolderPendingPath;
     watchFolderPendingPath = '';
     if (path) {
-      void openClipPath(path);
+      void openIncomingPath(path, { confirmIfDirty: false });
     }
+  }
+
+  async function drainLaunchPaths(): Promise<void> {
+    if (drainLaunchInFlight) {
+      await drainLaunchInFlight;
+    }
+
+    drainLaunchInFlight = (async () => {
+      while (true) {
+        const path = await invoke<string | null>('get_launch_path');
+        if (!path) {
+          return;
+        }
+        await openIncomingPath(path);
+      }
+    })();
+
+    try {
+      await drainLaunchInFlight;
+    } finally {
+      drainLaunchInFlight = null;
+    }
+  }
+
+  async function openIncomingPath(
+    path: string,
+    options: { confirmIfDirty?: boolean } = {},
+  ): Promise<void> {
+    if (options.confirmIfDirty !== false && hasUnsavedEdits() && $editor.currentFile) {
+      watchFolderPendingPath = path;
+      watchFolderConfirmOpen = true;
+      return;
+    }
+
+    if (isProjectPath(path)) {
+      await openProjectPath(path);
+      return;
+    }
+
+    await openClipPath(path);
   }
 
   async function cleanupPreview(path: string | null): Promise<void> {
@@ -905,8 +961,16 @@
       multiple: false,
       filters: [
         {
+          name: 'Video and Cutdown projects',
+          extensions: [...VIDEO_EXTENSIONS, 'cutdown'],
+        },
+        {
           name: 'Video',
-          extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'flv'],
+          extensions: [...VIDEO_EXTENSIONS],
+        },
+        {
+          name: 'Cutdown project',
+          extensions: ['cutdown'],
         },
       ],
     });
@@ -915,7 +979,7 @@
       return;
     }
 
-    await openClipPath(selected);
+    await openIncomingPath(selected);
   }
 
   async function openClipPath(selected: string): Promise<void> {
@@ -954,11 +1018,13 @@
     cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
     exportMode = 'sequence';
     openingClip = true;
+    openingMessage = 'Reading clip…';
+    exportProgressPercent = null;
     statusDismissed = false;
     editor.update((state) => ({
       ...state,
       currentFile: selected,
-      videoSrc: convertFileSrc(selected),
+      videoSrc: null,
       previewTempPath: null,
       previewStrategy: 'Native preview',
       metadata: null,
@@ -975,6 +1041,12 @@
       const probed = await invoke<VideoMetadata>('probe_video', { path: selected });
       rangeStart = 0;
       rangeEnd = probed.duration;
+      const plan = planPreview({
+        codec: probed.codec,
+        pixelFormat: probed.pixelFormat,
+        container: probed.container,
+        fileSize: probed.fileSize,
+      });
       editor.update((state) => ({
         ...state,
         metadata: probed,
@@ -982,21 +1054,53 @@
         selectedSegmentId: null,
         exportStatus: {
           state: 'idle',
-          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip with native preview.`,
+          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
         },
       }));
 
-      queueWaveformAfterPreview(selected, probed.audioCodec != null, probed.duration);
-      syncExportDefaultsForClip();
-      if (needsProxyPreview(probed)) {
+      if (plan === 'native') {
+        editor.update((state) => ({
+          ...state,
+          videoSrc: mediaSrcFromPath(selected),
+          previewStrategy: 'Native preview',
+          exportStatus: {
+            state: 'idle',
+            message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} with native preview.`,
+          },
+        }));
+      } else {
+        openingMessage =
+          plan === 'proxy'
+            ? 'Building a playable preview. Export still uses the original file…'
+            : 'Preparing a WebView-friendly preview…';
         editor.update((state) => ({
           ...state,
           exportStatus: {
+            state: 'running',
+            message:
+              plan === 'proxy'
+                ? 'This codec needs a proxy preview (HEVC/AV1/10-bit often shows a black frame otherwise).'
+                : 'Remuxing preview so the built-in player can decode it.',
+          },
+        }));
+        const result = await invoke<PreviewResult>('prepare_preview', {
+          params: { inputPath: selected, forceProxy: plan === 'proxy' },
+        });
+        await cleanupPreview($editor.previewTempPath);
+        editor.update((state) => ({
+          ...state,
+          videoSrc: mediaSrcFromPath(result.previewPath),
+          previewTempPath: result.previewPath,
+          previewStrategy: result.strategy as EditorState['previewStrategy'],
+          exportStatus: {
             state: 'idle',
-            message: `${state.exportStatus.message} Heavy codec or large file — use Proxy preview if playback stutters.`,
+            message: `${result.strategy} ready. Export still uses the original file.`,
           },
         }));
       }
+
+      queueWaveformAfterPreview(selected, probed.audioCodec != null, probed.duration);
+      syncExportDefaultsForClip();
       void invoke<string[]>('push_recent_source', { path: selected }).then((sources) => {
         recentSources = sources;
       });
@@ -1581,6 +1685,7 @@
     preferGpuEncoding = settings.preferGpuEncoding;
     runAtStartup = settings.runAtStartup;
     startMinimizedToTray = settings.startMinimizedToTray;
+    closeToTray = settings.closeToTray ?? true;
     uploadProviders = resolveUploadProvidersFromSettings(settings);
     defaultUploadProviderId =
       readDefaultUploadProviderId(settingsRecord) ??
@@ -1907,6 +2012,49 @@
     if (event.ctrlKey && event.key.toLowerCase() === 'd') {
       event.preventDefault();
       duplicateSelectedSegment();
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 'o' &&
+      !exportModalOpen &&
+      !settingsModalOpen &&
+      !shortcutsModalOpen
+    ) {
+      event.preventDefault();
+      void chooseClip();
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 's' &&
+      !exportModalOpen &&
+      !settingsModalOpen
+    ) {
+      event.preventDefault();
+      if ($editor.currentFile) {
+        void saveProject();
+      } else {
+        pushToast('Open a clip before saving a project.', 'info');
+      }
+      return;
+    }
+
+    if (
+      event.ctrlKey &&
+      event.key.toLowerCase() === 'e' &&
+      !exportModalOpen &&
+      !settingsModalOpen &&
+      !shortcutsModalOpen
+    ) {
+      event.preventDefault();
+      if (canExport && !openingClip) {
+        void openExportModal();
+      } else {
+        pushToast('Open a clip before exporting.', 'info');
+      }
       return;
     }
 
@@ -2323,23 +2471,14 @@
     await processExportQueue(jobs);
   }
 
-  function needsProxyPreview(meta: VideoMetadata): boolean {
-    const codec = meta.codec.toLowerCase();
-    return (
-      meta.fileSize > 500_000_000 ||
-      codec.includes('hevc') ||
-      codec.includes('h265') ||
-      codec.includes('vp9') ||
-      codec.includes('av1')
-    );
-  }
-
   async function prepareProxyPreview(): Promise<void> {
     if (!$editor.currentFile || previewFallbackRunning) {
       return;
     }
 
     previewFallbackRunning = true;
+    exportProgressPercent = null;
+    openingMessage = 'Building a playable preview…';
     editor.update((state) => ({
       ...state,
       exportStatus: { state: 'running', message: 'Building proxy preview...' },
@@ -2352,7 +2491,7 @@
       await cleanupPreview($editor.previewTempPath);
       editor.update((state) => ({
         ...state,
-        videoSrc: convertFileSrc(result.previewPath),
+        videoSrc: mediaSrcFromPath(result.previewPath),
         previewTempPath: result.previewPath,
         previewStrategy: result.strategy as EditorState['previewStrategy'],
         exportStatus: {
@@ -2361,13 +2500,15 @@
         },
       }));
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
     } finally {
       previewFallbackRunning = false;
     }
@@ -2382,13 +2523,7 @@
         title: 'Choose replay folder',
       });
       if (typeof selected !== 'string') {
-        editor.update((state) => ({
-          ...state,
-          exportStatus: {
-            state: 'error',
-            message: 'Set a watch folder in Settings, or choose one when prompted.',
-          },
-        }));
+        pushToast('Set a watch folder in Settings → Folders to use Latest replay.', 'info');
         return;
       }
 
@@ -2418,6 +2553,7 @@
           message: latest.message,
         },
       }));
+      pushToast(latest.message, 'error');
     } catch (error) {
       editor.update((state) => ({
         ...state,
@@ -2484,6 +2620,10 @@
       return;
     }
 
+    await openIncomingPath(selected);
+  }
+
+  async function openProjectPath(selected: string): Promise<void> {
     const project = await invoke<CutdownProject>('load_project_file', { path: selected });
 
     if (!(await invoke<boolean>('path_exists', { path: project.sourcePath }))) {
@@ -2537,7 +2677,7 @@
       filters: [
         {
           name: 'Video',
-          extensions: ['mp4', 'mkv', 'mov', 'avi', 'webm', 'ts', 'flv'],
+          extensions: [...VIDEO_EXTENSIONS],
         },
       ],
     });
@@ -2563,26 +2703,42 @@
           message,
         },
       }));
+      pushToast(message, 'error');
       return;
     }
 
     if ($editor.previewStrategy === 'Preview proxy') {
+      const detail = `${message} Export still uses the original file.`;
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: 'The generated preview proxy could not be played.',
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
       return;
     }
 
     previewFallbackRunning = true;
+    exportProgressPercent = null;
+    const skipRemux =
+      $editor.previewStrategy === 'Preview remux' ||
+      !$editor.metadata ||
+      planPreview({
+        codec: $editor.metadata.codec,
+        pixelFormat: $editor.metadata.pixelFormat,
+        container: $editor.metadata.container,
+        fileSize: $editor.metadata.fileSize,
+      }) !== 'remux';
+    openingMessage = skipRemux
+      ? 'Building a playable preview. Export still uses the original file…'
+      : 'Preparing a WebView-friendly preview…';
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
-        message: $editor.previewStrategy === 'Preview remux' ? 'Generating preview proxy...' : 'Trying preview remux...',
+        message: skipRemux ? 'Generating a playable preview proxy...' : 'Trying preview remux...',
       },
     }));
 
@@ -2591,14 +2747,14 @@
       const result = await invoke<PreviewResult>('prepare_preview', {
         params: {
           inputPath: $editor.currentFile,
-          forceProxy: $editor.previewStrategy === 'Preview remux',
+          forceProxy: skipRemux,
         },
       });
 
       await cleanupPreview(previousPreview);
       editor.update((state) => ({
         ...state,
-        videoSrc: convertFileSrc(result.previewPath),
+        videoSrc: mediaSrcFromPath(result.previewPath),
         previewTempPath: result.previewPath,
         previewStrategy: result.strategy,
         currentTime: 0,
@@ -2609,13 +2765,15 @@
       }));
       preview?.seekTo(0);
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
       editor.update((state) => ({
         ...state,
         exportStatus: {
           state: 'error',
-          message: error instanceof Error ? error.message : String(error),
+          message: detail,
         },
       }));
+      pushToast(detail, 'error');
     } finally {
       previewFallbackRunning = false;
     }
@@ -2654,7 +2812,7 @@
 <ToastHost />
 
 <main class="shell" class:shell--dragover={dragOver}>
-  {#if !ffmpegAvailable || !trayHintDismissed}
+  {#if !ffmpegAvailable || (closeToTray && !trayHintDismissed)}
     <div class="shell__alerts">
       {#if !ffmpegAvailable}
         <div class="ffmpeg-banner" role="alert">
@@ -2678,9 +2836,9 @@
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>
       {/if}
-      {#if !trayHintDismissed}
+      {#if closeToTray && !trayHintDismissed}
         <div class="tray-hint-banner">
-          <span>Closing the window minimizes Cutdown to the system tray. Use the tray icon or Open Editor to restore.</span>
+          <span>Closing the window sends Cutdown to the tray (change this in Settings → General). Use the tray icon or Open Editor to restore.</span>
           <button type="button" class="secondary" on:click={dismissTrayHint}>Dismiss</button>
         </div>
       {/if}
@@ -2688,7 +2846,7 @@
   {/if}
 
   <section class="toolbar" aria-label="Editor toolbar">
-    <IconButton icon="open" title="Open video file" on:click={chooseClip} />
+    <IconButton icon="open" title="Open video file (Ctrl+O)" on:click={chooseClip} />
     <div class="toolbar-recent">
       <button
         type="button"
@@ -2719,7 +2877,7 @@
         </div>
       {/if}
     </div>
-    <IconButton icon="save" title="Save Cutdown project" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
+    <IconButton icon="save" title="Save Cutdown project (Ctrl+S)" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
     <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
     <button type="button" class="secondary" title="Open newest video in watch folder" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
@@ -2728,11 +2886,11 @@
     {#if $editor.currentFile}
       <span class="toolbar__clip-name" title={$editor.currentFile}>{fileName}</span>
     {/if}
-    <span class="toolbar__status">{ffmpegAvailable ? 'Ready' : 'ffmpeg missing'}</span>
+    <span class="toolbar__status">{ffmpegAvailable ? ($editor.currentFile ? $editor.previewStrategy : 'No clip') : 'ffmpeg missing'}</span>
     <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
     <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
     <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
-    <IconButton icon="export" title="Export clip" variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal} />
+    <IconButton icon="export" title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'} variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal}>Export</IconButton>
   </section>
 
   <ExportActivity
@@ -2749,8 +2907,15 @@
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style:flex={`${workspaceSplitRatio} 1 0`}>
-    {#if openingClip}
-      <div class="opening-overlay" aria-busy="true"><span>Opening clip…</span></div>
+    {#if openingClip || previewFallbackRunning}
+      <div class="opening-overlay" aria-busy="true">
+        <span>
+          {openingClip ? openingMessage : $editor.exportStatus.message || 'Building a playable preview…'}
+          {#if exportProgressPercent !== null}
+            {' '}({Math.round(exportProgressPercent)}%)
+          {/if}
+        </span>
+      </div>
     {/if}
     <div class="preview-panel__tools">
       <IconButton
@@ -2878,7 +3043,7 @@
       <button type="button" class="secondary" class:active={previewPlaybackRate === 0.5} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 0.5)}>0.5×</button>
       <button type="button" class="secondary" class:active={previewPlaybackRate === 1} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 1)}>1×</button>
       <button type="button" class="secondary" class:active={previewPlaybackRate === 2} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 2)}>2×</button>
-      <button type="button" class="secondary" title="Build proxy preview for heavy codecs" disabled={!$editor.currentFile || previewFallbackRunning} on:click={() => void prepareProxyPreview()}>Proxy</button>
+      <button type="button" class="secondary" title="Rebuild a playable H.264 preview for heavy codecs" disabled={!$editor.currentFile || previewFallbackRunning} on:click={() => void prepareProxyPreview()}>Proxy</button>
     </div>
     <VideoPreview
       bind:this={preview}
@@ -2899,6 +3064,7 @@
       on:metadata={() => {}}
       on:previewready={handlePreviewReady}
       on:error={(event) => void handlePreviewError(event.detail.message)}
+      on:open={() => void chooseClip()}
       on:playstate={(event) => handlePreviewPlayState(event.detail.playing)}
       on:ended={handlePreviewEnded}
       on:timeupdate={(event) => handlePreviewTimeUpdate(event.detail.currentTime)}
@@ -2915,7 +3081,7 @@
 
   <div class="timeline-pane" style:flex={`${1 - workspaceSplitRatio} 1 0`}>
     <div class="timeline-pane__tools">
-      <IconButton icon="split" title="Split at playhead (S)" disabled={!canExport} on:click={splitAtCurrentTime} />
+      <IconButton icon="split" title={canExport ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canExport} on:click={splitAtCurrentTime} />
       <span class="timeline-pane__divider" aria-hidden="true"></span>
       <IconButton
         icon="markIn"
@@ -3243,7 +3409,7 @@
 <ConfirmModal
   open={watchFolderConfirmOpen}
   title="Open new clip"
-  message="Replace the current clip with the new watch-folder file? Unsaved segment edits will be lost."
+  message="Replace the current clip? Unsaved segment edits will be lost."
   confirmLabel="Replace clip"
   on:close={() => {
     watchFolderConfirmOpen = false;
@@ -3283,6 +3449,7 @@
   {preferGpuEncoding}
   {runAtStartup}
   {startMinimizedToTray}
+  {closeToTray}
   {appVersion}
   {uploadProviders}
   {defaultUploadProviderId}
@@ -3303,6 +3470,7 @@
     preferGpuEncoding = event.detail.preferGpuEncoding;
     runAtStartup = event.detail.runAtStartup;
     startMinimizedToTray = event.detail.startMinimizedToTray;
+    closeToTray = event.detail.closeToTray;
     uploadProviders = event.detail.uploadProviders;
     defaultUploadProviderId = event.detail.defaultUploadProviderId;
     customExportPresets = event.detail.customExportPresets;
@@ -3313,6 +3481,11 @@
       pushToast(error instanceof Error ? error.message : String(error), 'error');
     }
     void refreshExportPresets();
+  }}
+  on:windowsSaved={(event) => {
+    runAtStartup = event.detail.runAtStartup;
+    startMinimizedToTray = event.detail.startMinimizedToTray;
+    closeToTray = event.detail.closeToTray;
   }}
 />
 
@@ -3356,7 +3529,7 @@
   uploadConfigured={uploadTargetsConfigured}
   on:close={() => (historyDrawerOpen = false)}
   on:reveal={(event) => void invoke('reveal_in_explorer', { path: event.detail.path })}
-  on:openClip={(event) => void openClipPath(event.detail.path)}
+  on:openClip={(event) => void openIncomingPath(event.detail.path)}
   on:copyPath={(event) => void invoke('copy_text_to_clipboard', { text: event.detail.path })}
   on:copyLink={(event) => void copyShareLink(event.detail.url)}
   on:upload={(event) => openUploadPicker(event.detail.path)}

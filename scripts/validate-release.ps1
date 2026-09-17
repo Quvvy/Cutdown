@@ -1,26 +1,33 @@
 $ErrorActionPreference = "Stop"
+$PSNativeCommandUseErrorActionPreference = $true
 $projectRoot = Split-Path -Parent $PSScriptRoot
 
 Set-Location $projectRoot
 
-Write-Host "Running npm run check..."
-npm run check
+function Invoke-Checked {
+  param(
+    [Parameter(Mandatory = $true)]
+    [scriptblock]$Command,
+    [string]$Label
+  )
 
-Write-Host "Running npm test..."
-npm test
+  Write-Host $Label
+  & $Command
+  if ($LASTEXITCODE -ne 0) {
+    throw "$Label failed with exit code $LASTEXITCODE"
+  }
+}
 
-Write-Host "Running npm run build..."
-npm run build
-
-Write-Host "Running cargo check..."
-cargo check --manifest-path src-tauri/Cargo.toml
-
-Write-Host "Running cargo test..."
-cargo test --manifest-path src-tauri/Cargo.toml
+Invoke-Checked { npm run check } "Running npm run check..."
+Invoke-Checked { npm test } "Running npm test..."
+Invoke-Checked { npm run build } "Running npm run build..."
+Invoke-Checked { cargo check --manifest-path src-tauri/Cargo.toml } "Running cargo check..."
+Invoke-Checked { cargo test --manifest-path src-tauri/Cargo.toml } "Running cargo test..."
 
 if (Get-Command cargo-clippy -ErrorAction SilentlyContinue) {
-  Write-Host "Running cargo clippy..."
-  cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+  Invoke-Checked {
+    cargo clippy --manifest-path src-tauri/Cargo.toml -- -D warnings
+  } "Running cargo clippy..."
 } else {
   Write-Host "cargo-clippy is not installed; skipping clippy."
 }

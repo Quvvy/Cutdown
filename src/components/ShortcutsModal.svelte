@@ -14,6 +14,9 @@
   ];
 
   const shortcuts = [
+    { keys: 'Ctrl + O', action: 'Open a video or Cutdown project' },
+    { keys: 'Ctrl + S', action: 'Save Cutdown project' },
+    { keys: 'Ctrl + E', action: 'Open the Export window' },
     { keys: 'S', action: 'Split at playhead' },
     { keys: 'M', action: 'Add timeline marker at playhead' },
     { keys: ', / .', action: 'Previous / next marker' },
@@ -39,7 +42,7 @@
     {
       title: 'Open clips',
       items: [
-        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources.',
+        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources. Opening a file while Cutdown is already running sends it to that window.',
         'Reopening a raw video starts a fresh edit — use Save project when you want to keep your work.',
         'Latest replay opens the newest file in your OBS watch folder (set in Settings → Folders).',
         'Save and reopen .cutdown project files to restore cuts, range, crop, and markers.',
@@ -48,7 +51,7 @@
     {
       title: 'Edit on the timeline',
       items: [
-        'Split with S to cut the clip into kept segments. Delete removes the selected segment.',
+        'Split with S to cut the clip into kept segments. Delete removes the selected segment. Export (Ctrl+E) writes the kept timeline.',
         'Click a segment to select it; drag its left or right edge to trim or extend the cut. Press Esc or click empty track space to deselect.',
         'Set In (I) and Out (O), then use Keep range on the timeline toolbar to delete everything outside that span (one kept segment).',
         'Trim outside range (right-click menu) clips existing segments to the I/O span instead of replacing them.',
@@ -62,7 +65,7 @@
       items: [
         'Fit keeps the preview scaled to the panel when you resize the window.',
         'Crop overlay supports locked aspect ratios including custom width:height.',
-        'Proxy helps preview heavy codecs (HEVC, large files) before export.',
+        'Proxy is built automatically for HEVC, AV1, 10-bit, and awkward containers so preview is not a black frame. Export still uses the original file.',
       ],
     },
     {
@@ -78,7 +81,8 @@
     {
       title: 'Windows & tray',
       items: [
-        'Closing the window minimizes to the system tray — use the tray icon to restore.',
+        'Closing the window can send Cutdown to the tray (Settings → General) — use the tray icon to restore.',
+        'Only one Cutdown window runs. Opening a video or clicking the app focuses the existing instance.',
         'Restore the blue tray tip from Settings → General if you dismissed it.',
       ],
     },

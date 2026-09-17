@@ -6,8 +6,8 @@
   --line: #2c3239;
   --line-strong: #46515e;
   --text: #e2e6ea;
-  --muted: #939ba5;
-  --faint: #58616d;
+  --muted: #b4bcc6;
+  --faint: #8b95a1;
   --accent: #149cff;
   --accent-soft: rgba(20, 156, 255, 0.16);
   --range-in: #34c172;
@@ -285,7 +285,7 @@ kbd {
 
 .shell--dragover::after {
   border: 2px dashed var(--accent);
-  content: 'Drop video to open';
+  content: 'Drop a video or .cutdown project';
   inset: 0;
   pointer-events: none;
   position: fixed;
@@ -344,9 +344,9 @@ kbd {
 }
 
 .toolbar__status {
-  color: var(--faint);
+  color: var(--muted);
   font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   margin-right: 4px;
 }
 
@@ -722,6 +722,17 @@ kbd {
 .video-preview__empty strong {
   color: var(--text);
   font-size: 22px;
+}
+
+.video-preview__empty-hint {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+  max-width: 36em;
+}
+
+.video-preview__empty .primary {
+  margin-top: 6px;
 }
 
 .timecode {
@@ -1795,7 +1806,13 @@ label.modal__mode {
 
 label.modal__mode input[type='checkbox'],
 label.modal__mode input[type='radio'] {
+  accent-color: var(--accent);
   flex-shrink: 0;
+}
+
+label.modal__mode:has(input:disabled) {
+  color: var(--faint);
+  cursor: not-allowed;
 }
 
 .modal__mode label {

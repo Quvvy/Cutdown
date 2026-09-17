@@ -4,6 +4,7 @@ use crate::ffmpeg_install;
 use crate::presets::{
     self, apply_bitrate_scale, resolve_encode_profile, resolve_preset_id, EncodeProfile,
 };
+use crate::preview_plan::{self, PreviewPlan};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -27,6 +28,8 @@ pub struct VideoMetadata {
     pub file_size: u64,
     pub audio_codec: Option<String>,
     pub audio_channels: Option<u64>,
+    pub pixel_format: String,
+    pub container: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +223,16 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
         file_size,
         audio_codec,
         audio_channels,
+        pixel_format: video_stream
+            .get("pix_fmt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        container: input
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase(),
     })
 }
 
@@ -1269,7 +1282,7 @@ fn prepare_preview_blocking(
     app: tauri::AppHandle,
     params: PreviewParams,
 ) -> Result<PreviewResult, String> {
-    let input = PathBuf::from(params.input_path);
+    let input = PathBuf::from(&params.input_path);
 
     if !input.exists() {
         return Err("Input video does not exist.".to_string());
@@ -1279,7 +1292,17 @@ fn prepare_preview_blocking(
     fs::create_dir_all(&temp_dir)
         .map_err(|err| format!("Failed to create preview temp directory: {err}"))?;
 
-    if !params.force_proxy {
+    let force_proxy = params.force_proxy;
+    let plan = if force_proxy {
+        PreviewPlan::Proxy
+    } else {
+        match probe_video(params.input_path.clone()) {
+            Ok(meta) => preview_plan::plan_for(&meta.codec, &meta.pixel_format, &meta.container),
+            Err(_) => PreviewPlan::Remux,
+        }
+    };
+
+    if plan == PreviewPlan::Remux {
         let remux_path = temp_dir.join(format!(
             "preview-remux-{}-{}.mp4",
             std::process::id(),
