@@ -39,7 +39,7 @@ Check Pass when done. Skip rows that don’t apply.
 | | Remux fallback | |
 | | Auto proxy for HEVC/AV1/10-bit (no black frame) | |
 | | Clear error if proxy also fails | |
-| | Fit + resize workspace splitter | |
+| | Fit + resize workspace splitter / app window (unless zoomed) | |
 | | Speed 0.5× / 2× | |
 | **Edit** | Split `S` | |
 | | Delete segment (keep ≥1) | |
