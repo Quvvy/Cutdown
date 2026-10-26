@@ -322,6 +322,7 @@
   let trayHintDismissed = false;
 
   const TRAY_HINT_KEY = 'cutdown-tray-hint-dismissed';
+  const READY_HINT = 'Ready. Mark the part to keep with I and O (or cut with X), then export with Ctrl+E.';
   const TRAY_HINT_MESSAGE =
     'Closing the window keeps Cutdown running in the tray. Restore it from the tray icon, or change this in Settings → General.';
   const BOOKMARK_DEDUPE_SECONDS = 0.05;
@@ -1077,7 +1078,7 @@
         selectedSegmentId: null,
         exportStatus: {
           state: 'idle',
-          message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
+          message: `Opened ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
         },
       }));
 
@@ -1088,22 +1089,22 @@
           previewStrategy: 'Native preview',
           exportStatus: {
             state: 'idle',
-            message: `Loaded ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} with native preview.`,
+            message: READY_HINT,
           },
         }));
       } else {
         openingMessage =
           plan === 'proxy'
-            ? 'Building a playable preview. Export still uses the original file…'
-            : 'Preparing a WebView-friendly preview…';
+            ? `This ${probed.codec.toUpperCase()} file can't play here directly, so Cutdown is making a quick preview copy. Your export still uses the original.`
+            : `Repackaging the ${probed.container?.toUpperCase() || 'video'} file so it can play here (no quality change)…`;
         editor.update((state) => ({
           ...state,
           exportStatus: {
             state: 'running',
             message:
               plan === 'proxy'
-                ? 'This codec needs a proxy preview (HEVC/AV1/10-bit often shows a black frame otherwise).'
-                : 'Remuxing preview so the built-in player can decode it.',
+                ? `Making a preview copy of this ${probed.codec.toUpperCase()} file…`
+                : 'Repackaging for preview…',
           },
         }));
         const result = await invoke<PreviewResult>('prepare_preview', {
@@ -1117,7 +1118,7 @@
           previewStrategy: result.strategy as EditorState['previewStrategy'],
           exportStatus: {
             state: 'idle',
-            message: `${result.strategy} ready. Export still uses the original file.`,
+            message: READY_HINT,
           },
         }));
       }
@@ -1272,12 +1273,9 @@
         ...state,
         segments: result.segments,
         selectedSegmentId: result.selectedSegmentId,
-        exportStatus: {
-          state: 'idle',
-          message: 'Reordered segment.',
-        },
       };
     });
+    noteEdit('Moved segment.');
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
@@ -1366,10 +1364,6 @@
       ...state,
       segments: result.segments,
       selectedSegmentId: result.selectedSegmentId,
-      exportStatus: {
-        state: 'idle',
-        message: `Kept range ${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}.`,
-      },
     }));
     noteEdit(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`);
     seekTo(normalizedRange.start);
@@ -1387,11 +1381,8 @@
       ...state,
       segments: result.segments,
       selectedSegmentId: result.selectedSegmentId,
-      exportStatus: {
-        state: 'idle',
-        message: 'Removed footage outside the I/O range.',
-      },
     }));
+    noteEdit('Removed everything outside In and Out.');
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
@@ -2103,10 +2094,7 @@
         return goToNextMarker();
       case 'removeMarkerAtPlayhead':
         if (removeNearestBookmark($editor.currentTime)) {
-          editor.update((state) => ({
-            ...state,
-            exportStatus: { state: 'idle', message: 'Removed marker at playhead.' },
-          }));
+          noteEdit('Removed marker at playhead.');
         }
         return;
       case 'addMarker':
@@ -2437,7 +2425,7 @@
     openingMessage = 'Building a playable preview…';
     editor.update((state) => ({
       ...state,
-      exportStatus: { state: 'running', message: 'Building proxy preview...' },
+      exportStatus: { state: 'running', message: 'Making a preview copy…' },
     }));
 
     try {
@@ -2452,7 +2440,7 @@
         previewStrategy: result.strategy as EditorState['previewStrategy'],
         exportStatus: {
           state: 'idle',
-          message: `Proxy preview ready (${result.strategy}).`,
+          message: `Preview copy ready. ${READY_HINT}`,
         },
       }));
     } catch (error) {
@@ -2664,7 +2652,7 @@
     }
 
     if ($editor.previewStrategy === 'Preview proxy') {
-      const detail = `${message} Export still uses the original file.`;
+      const detail = `The preview can’t play this file (${message}). You can still cut and export: export reads the original, not the preview.`;
       editor.update((state) => ({
         ...state,
         exportStatus: {
@@ -2688,13 +2676,13 @@
         fileSize: $editor.metadata.fileSize,
       }) !== 'remux';
     openingMessage = skipRemux
-      ? 'Building a playable preview. Export still uses the original file…'
-      : 'Preparing a WebView-friendly preview…';
+      ? 'This file can’t play here directly, so Cutdown is making a quick preview copy. Your export still uses the original.'
+      : 'Repackaging the file so it can play here (no quality change)…';
     editor.update((state) => ({
       ...state,
       exportStatus: {
         state: 'running',
-        message: skipRemux ? 'Generating a playable preview proxy...' : 'Trying preview remux...',
+        message: skipRemux ? 'The preview player can’t decode this file. Making a preview copy…' : 'The preview player had trouble. Repackaging the file for preview…',
       },
     }));
 
@@ -2716,7 +2704,7 @@
         currentTime: 0,
         exportStatus: {
           state: 'idle',
-          message: `${result.strategy} ready. Export will still use the original file.`,
+          message: `Preview copy ready; export still uses the original. ${READY_HINT}`,
         },
       }));
       preview?.seekTo(0);
