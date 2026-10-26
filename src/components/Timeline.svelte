@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import IconButton from './IconButton.svelte';
+  import TimelineFilmstrip from './TimelineFilmstrip.svelte';
   import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
   import { placeMenu } from '../lib/placeMenu';
@@ -27,12 +28,16 @@
   export let videoTrackHeight = 68;
   export let audioTrackHeight = 58;
   let audioLaneHeight = 58;
+  let videoLaneHeight = 58;
   export let audioCodec: string | null = null;
   export let audioChannels: number | null = null;
   export let bookmarks: TimelineBookmark[] = [];
   export let selectedBookmarkId: string | null = null;
   export let waveformPeaks: number[] = [];
   export let waveformLoading = false;
+  export let thumbnails: (string | null)[] = [];
+  /** Video frame width / height. */
+  export let videoAspect = 16 / 9;
   export let sourceDuration = 0;
 
   const TRACK_SPLIT_STORAGE_KEY = 'cutdown-track-split';
@@ -597,6 +602,9 @@
       if (audioScroll) {
         audioLaneHeight = audioScroll.clientHeight;
       }
+      if (videoScroll) {
+        videoLaneHeight = videoScroll.clientHeight;
+      }
     });
 
     if (timelineBody) {
@@ -608,6 +616,9 @@
 
       if (audioScroll) {
         audioLaneHeight = audioScroll.clientHeight;
+      }
+      if (videoScroll) {
+        videoLaneHeight = videoScroll.clientHeight;
       }
     });
 
@@ -911,6 +922,17 @@
         style:width={`${timelineWidth}px`}
         on:pointerdown={onTrackBackgroundPointerDown}
       >
+        {#if thumbnails.length > 0}
+          <TimelineFilmstrip
+            {thumbnails}
+            {sourceDuration}
+            {segments}
+            {pixelsPerSecond}
+            width={timelineWidth}
+            height={Math.max(24, videoLaneHeight - 8)}
+            aspect={videoAspect}
+          />
+        {/if}
         {#each ticks as tick}
           <div class="timeline__tick" style:left={`${tick.left}px`}></div>
         {/each}

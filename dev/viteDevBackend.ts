@@ -82,6 +82,17 @@ async function waveform(path: string, buckets: number): Promise<number[]> {
   return peaks;
 }
 
+// Same ffmpeg arguments as extract_thumbnail in src-tauri/src/ffmpeg.rs.
+async function thumbnail(path: string, time: number, height: number): Promise<string | null> {
+  const seek = Number.isFinite(time) ? Math.max(0, time) : 0;
+  const h = Math.min(240, Math.max(24, height || 72));
+  const jpeg = await run(findTool('ffmpeg'), [
+    '-hide_banner', '-loglevel', 'error', '-ss', seek.toFixed(3), '-i', path,
+    '-frames:v', '1', '-an', '-vf', `scale=-2:${h}`, '-q:v', '6', '-f', 'image2pipe', '-c:v', 'mjpeg', 'pipe:1',
+  ]);
+  return jpeg.length ? `data:image/jpeg;base64,${jpeg.toString('base64')}` : null;
+}
+
 // Range-aware file streaming so the <video> element can seek.
 function serveFile(path: string, req: IncomingMessage, res: ServerResponse): void {
   const size = statSync(path).size;
@@ -134,6 +145,10 @@ export function devTauriBackend(): Plugin {
           }
           if (url.pathname === '/probe') {
             return sendJson(res, 200, await probe(path));
+          }
+          if (url.pathname === '/thumbnail') {
+            const time = Number(url.searchParams.get('time'));
+            return sendJson(res, 200, await thumbnail(path, time, Number(url.searchParams.get('height'))));
           }
           if (url.pathname === '/waveform') {
             return sendJson(res, 200, await waveform(path, Number(url.searchParams.get('buckets')) || 2400));

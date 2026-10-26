@@ -16,13 +16,17 @@
   const dispatch = createEventDispatcher<{
     aspect: { aspect: CropAspect };
     fit: void;
-    zoomOut: void;
-    zoomIn: void;
     proxy: void;
   }>();
 
   const presets: Exclude<CropAspect, 'free' | 'custom'>[] = ['16:9', '9:16', '4:3', '1:1'];
-  const rates = [0.5, 1, 2];
+  // Same steps as the J/L shuttle.
+  const rates = [0.5, 1, 1.5, 2];
+
+  function cycleRate(): void {
+    const index = rates.indexOf(playbackRate);
+    playbackRate = rates[(index + 1) % rates.length] ?? 1;
+  }
 </script>
 
 <div class="preview-panel__tools">
@@ -79,20 +83,25 @@
     {/if}
   </div>
   <span class="preview-panel__divider" aria-hidden="true"></span>
-  <IconButton icon="scaleFit" title="Fit preview to panel" variant="secondary" disabled={!hasClip} on:click={() => dispatch('fit')} />
-  <button type="button" class="secondary" title="Zoom preview out" disabled={!hasClip} on:click={() => dispatch('zoomOut')}>−</button>
-  <button type="button" class="secondary" title="Zoom preview in" disabled={!hasClip} on:click={() => dispatch('zoomIn')}>+</button>
+  <IconButton icon="scaleFit" title="Fit preview to panel (scroll to zoom)" variant="secondary" disabled={!hasClip} on:click={() => dispatch('fit')} />
+  <button
+    type="button"
+    class="secondary preview-panel__speed"
+    class:active={playbackRate !== 1}
+    title="Playback speed: click to change (J/L also change it)"
+    disabled={!hasClip}
+    on:click={cycleRate}
+  >
+    {playbackRate}×
+  </button>
   <span class="preview-panel__divider" aria-hidden="true"></span>
-  {#each rates as rate}
-    <button type="button" class="secondary" class:active={playbackRate === rate} disabled={!hasClip} on:click={() => (playbackRate = rate)}>{rate}×</button>
-  {/each}
   <button
     type="button"
     class="secondary"
-    title="Rebuild a playable H.264 preview for heavy codecs"
+    title="Preview looks black or stutters? Make a smooth preview copy. Export still uses the original."
     disabled={!hasClip || proxyRunning}
     on:click={() => dispatch('proxy')}
   >
-    Proxy
+    Fix preview
   </button>
 </div>

@@ -85,6 +85,10 @@ const handlers: Record<string, (args: Args) => unknown> = {
   probe_video: (args) => fetchJson(devUrl('probe', { path: String(args?.path ?? '') })),
   extract_waveform: (args) =>
     fetchJson(devUrl('waveform', { path: String(args?.path ?? ''), buckets: String(args?.bucketCount ?? 2400) })),
+  extract_thumbnail: (args) =>
+    fetchJson(
+      devUrl('thumbnail', { path: String(args?.path ?? ''), time: String(args?.time ?? 0), height: String(args?.height ?? 72) }),
+    ),
   // The browser plays the source directly; no remux/proxy.
   prepare_preview: (args) => {
     const params = args?.params as { inputPath: string } | undefined;

@@ -782,6 +782,11 @@ kbd {
   padding: 8px 8px 0;
 }
 
+.preview-panel__speed {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  min-width: 46px;
+}
+
 .preview-panel__divider {
   align-self: stretch;
   background: var(--line);
@@ -1272,6 +1277,14 @@ kbd {
   position: relative;
 }
 
+.timeline__filmstrip {
+  inset: 4px 0;
+  opacity: 0.9;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
 .timeline__waveform {
   inset: 4px 0;
   pointer-events: none;
@@ -1338,7 +1351,8 @@ kbd {
 }
 
 .timeline__segment--video {
-  background: var(--track-video);
+  /* See-through so the filmstrip behind it shows; labels sit on a chip. */
+  background: rgba(20, 23, 27, 0.25);
   border: 1px solid #3a424c;
 }
 
@@ -1357,14 +1371,14 @@ kbd {
 }
 
 .timeline__segment--video.selected {
-  background: #2c323a;
+  background: rgba(255, 255, 255, 0.1);
   border-color: var(--selected-border);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
   color: #ffffff;
 }
 
 .timeline__segment--video.selected.timeline__segment--sole {
-  background: #22272d;
+  background: rgba(255, 255, 255, 0.06);
   box-shadow: inset 0 0 0 2px var(--selected-border);
   color: #ffffff;
 }
@@ -1384,6 +1398,13 @@ kbd {
 
 .timeline__segment--drag-target {
   box-shadow: inset 0 0 0 2px var(--neutral-strong);
+}
+
+.timeline__segment--video span,
+.timeline__segment--video strong {
+  background: rgba(8, 9, 10, 0.72);
+  padding: 0 3px;
+  width: fit-content;
 }
 
 .timeline__segment span {

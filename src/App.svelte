@@ -39,6 +39,7 @@
     type CustomExportPreset,
   } from './lib/exportPresets';
   import { resolveShortcut, type ShortcutAction } from './lib/editorShortcuts';
+  import { coarseToFineOrder, thumbnailCount, thumbnailTimes } from './lib/thumbnailPlan';
   import { quickExportPath, quickExportRanges, remainingLabel, totalSeconds } from './lib/quickExport';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
@@ -300,6 +301,10 @@
   let bookmarks: TimelineBookmark[] = [];
   let selectedBookmarkId: string | null = null;
   let waveformPeaks: number[] = [];
+  // Filmstrip frames, filled in coarse-to-fine; null until fetched.
+  let thumbnails: (string | null)[] = [];
+  let thumbnailsFor: string | null = null;
+  let thumbnailGeneration = 0;
   let waveformLoading = false;
   let waveformLoadGeneration = 0;
   let pendingWaveform: { path: string; hasAudio: boolean; generation: number; duration: number } | null =
@@ -1046,6 +1051,9 @@
     bookmarks = [];
     selectedBookmarkId = null;
     waveformPeaks = [];
+    thumbnailGeneration += 1;
+    thumbnails = [];
+    thumbnailsFor = null;
     cancelPendingWaveform();
     waveformLoadGeneration += 1;
     rangeLoopPlayback = false;
@@ -1555,6 +1563,35 @@
     });
   }
 
+  async function loadThumbnails(path: string, clipSeconds: number): Promise<void> {
+    const generation = ++thumbnailGeneration;
+    const count = thumbnailCount(clipSeconds);
+    const times = thumbnailTimes(clipSeconds, count);
+    const order = coarseToFineOrder(count);
+    thumbnailsFor = path;
+    thumbnails = new Array(count).fill(null);
+
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < order.length && generation === thumbnailGeneration) {
+        const index = order[next++];
+        try {
+          const frame = await invoke<string | null>('extract_thumbnail', { path, time: times[index], height: 72 });
+          if (generation !== thumbnailGeneration) {
+            return;
+          }
+          if (frame) {
+            thumbnails[index] = frame;
+            thumbnails = thumbnails;
+          }
+        } catch {
+          // A missing frame just leaves that tile empty.
+        }
+      }
+    };
+    await Promise.all([worker(), worker(), worker()]);
+  }
+
   function startPendingWaveform(): void {
     const pending = pendingWaveform;
 
@@ -1576,6 +1613,11 @@
     if (autoplayOnReady) {
       autoplayOnReady = false;
       preview?.playPlayback();
+    }
+
+    // Thumbnails come from the original file (ffmpeg reads any codec), once per clip.
+    if ($editor.currentFile && metadata && thumbnailsFor !== $editor.currentFile) {
+      void loadThumbnails($editor.currentFile, metadata.duration);
     }
 
     if (!pendingWaveform || pendingWaveform.generation !== waveformLoadGeneration) {
@@ -2919,8 +2961,6 @@
       bind:playbackRate={previewPlaybackRate}
       on:aspect={(event) => applyAspectCrop(event.detail.aspect)}
       on:fit={() => preview?.fitToView()}
-      on:zoomOut={() => preview?.zoomOut()}
-      on:zoomIn={() => preview?.zoomIn()}
       on:proxy={() => void prepareProxyPreview()}
     />
     <VideoPreview
@@ -2980,6 +3020,8 @@
     {selectedBookmarkId}
     waveformPeaks={waveformPeaks}
     waveformLoading={waveformLoading}
+    {thumbnails}
+    videoAspect={metadata && metadata.height > 0 ? metadata.width / metadata.height : 16 / 9}
     sourceDuration={metadata?.duration ?? 0}
     selectedSegmentId={$editor.selectedSegmentId}
     rangeStart={normalizedRange?.start ?? null}

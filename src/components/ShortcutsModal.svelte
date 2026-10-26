@@ -33,6 +33,7 @@
     { keys: 'Shift + Left / Right', action: 'Step 1 second' },
     { keys: 'Ctrl + D', action: 'Duplicate selected segment' },
     { keys: 'Ctrl + Z / Y', action: 'Undo / redo segment edits' },
+    { keys: 'Scroll on preview', action: 'Zoom the preview (Fit resets it)' },
     { keys: 'Alt + drag', action: 'Pan preview when zoomed' },
     { keys: 'Preview + / −', action: 'Zoom preview in / out' },
     { keys: '?', action: 'Open this help window' },
@@ -65,7 +66,7 @@
       items: [
         'Fit keeps the preview scaled to the panel when you resize the window.',
         'Crop overlay supports locked aspect ratios including custom width:height.',
-        'Proxy is built automatically for HEVC, AV1, 10-bit, and awkward containers so preview is not a black frame. Export still uses the original file.',
+        'HEVC, AV1, 10-bit and awkward containers get a preview copy automatically, so the preview is never a black frame. If a preview still looks wrong, use Fix preview. Export always uses the original file.',
       ],
     },
     {

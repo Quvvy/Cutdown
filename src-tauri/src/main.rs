@@ -204,6 +204,7 @@ fn main() {
             launch::get_launch_path,
             ffmpeg::probe_video,
             ffmpeg::extract_waveform,
+            ffmpeg::extract_thumbnail,
             ffmpeg::export_clip,
             ffmpeg::cancel_export,
             ffmpeg::check_ffmpeg,

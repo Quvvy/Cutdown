@@ -1991,6 +1991,63 @@ pub async fn extract_waveform(
     .map_err(|err| format!("Waveform worker failed: {err}"))?
 }
 
+/// One small JPEG frame at `time` for the timeline filmstrip, as a data URL.
+/// Seeks before decoding (`-ss` ahead of `-i`), so it stays fast on long files.
+/// Returns `None` when there's no frame there (past the end, audio-only file).
+#[tauri::command]
+pub async fn extract_thumbnail(path: String, time: f64, height: Option<u32>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || extract_thumbnail_blocking(path, time, height))
+        .await
+        .map_err(|err| format!("Thumbnail worker failed: {err}"))?
+}
+
+fn extract_thumbnail_blocking(path: String, time: f64, height: Option<u32>) -> Result<Option<String>, String> {
+    use base64::Engine;
+
+    let input = PathBuf::from(path.trim());
+    if !input.exists() {
+        return Err("Input video does not exist.".to_string());
+    }
+    let height = height.unwrap_or(72).clamp(24, 240);
+    let seek = if time.is_finite() { time.max(0.0) } else { 0.0 };
+
+    let output = command(ffmpeg_path())
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-ss",
+            &format!("{seek:.3}"),
+            "-i",
+            input.to_string_lossy().as_ref(),
+            "-frames:v",
+            "1",
+            "-an",
+            "-vf",
+            &format!("scale=-2:{height}"),
+            "-q:v",
+            "6",
+            "-f",
+            "image2pipe",
+            "-c:v",
+            "mjpeg",
+            "pipe:1",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|err| format!("Failed to run ffmpeg for thumbnail: {err}"))?;
+
+    if !output.status.success() {
+        return Err(command_error("ffmpeg", &output.stderr));
+    }
+    if output.stdout.is_empty() {
+        return Ok(None);
+    }
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&output.stdout);
+    Ok(Some(format!("data:image/jpeg;base64,{encoded}")))
+}
+
 fn extract_waveform_blocking(
     path: String,
     bucket_count: Option<u32>,
