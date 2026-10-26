@@ -80,6 +80,11 @@
     keepRange: void;
     trimOutsideRange: void;
     toggleRangeLoop: void;
+    snapToRangeStart: void;
+    snapToRangeEnd: void;
+    previousMarker: void;
+    nextMarker: void;
+    deleteSelectedMarker: void;
     reorderSegment: { id: string; toIndex: number };
     segmentResize: {
       id: string;
@@ -728,7 +733,12 @@
       | 'keepRange'
       | 'trimOutside'
       | 'loopRange'
-      | 'clear',
+      | 'clear'
+      | 'snapIn'
+      | 'snapOut'
+      | 'prevMarker'
+      | 'nextMarker'
+      | 'deleteMarker',
   ): void {
     if (!contextMenu && action === 'split') {
       return;
@@ -752,6 +762,16 @@
       dispatch('toggleRangeLoop');
     } else if (action === 'clear') {
       dispatch('clearRange');
+    } else if (action === 'snapIn') {
+      dispatch('snapToRangeStart');
+    } else if (action === 'snapOut') {
+      dispatch('snapToRangeEnd');
+    } else if (action === 'prevMarker') {
+      dispatch('previousMarker');
+    } else if (action === 'nextMarker') {
+      dispatch('nextMarker');
+    } else if (action === 'deleteMarker') {
+      dispatch('deleteSelectedMarker');
     }
 
     closeContextMenu();
@@ -1032,19 +1052,27 @@
       style:top={`${contextMenu.y}px`}
       use:placeMenu={{ x: contextMenu.x, y: contextMenu.y }}
     >
-      <button type="button" on:click={() => runContextAction('split')}>Split here</button>
-      <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}>Delete selected segment</button>
+      <button type="button" on:click={() => runContextAction('split')}><span>Split here</span><kbd>S</kbd></button>
+      <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}><span>Delete selected segment</span><kbd>Del</kbd></button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => {
         deselectSegment();
         closeContextMenu();
-      }}>Deselect segment</button>
-      <button type="button" on:click={() => runContextAction('fit')}>Zoom to fit</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}>Zoom to range</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}>Split at I and O</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('keepRange')}>Keep only range</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('trimOutside')}>Trim outside range</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('loopRange')}>Loop preview range</button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('clear')}>Clear selection</button>
+      }}><span>Deselect segment</span><kbd>Esc</kbd></button>
+      <hr class="timeline-menu__sep" />
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}><span>Split at I and O</span></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('keepRange')}><span>Keep only range</span></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('trimOutside')}><span>Trim outside range</span></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('loopRange')}><span>Loop preview range</span><kbd>Shift+L</kbd></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('snapIn')}><span>Playhead to In</span><kbd>[</kbd></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('snapOut')}><span>Playhead to Out</span><kbd>]</kbd></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('clear')}><span>Clear In/Out range</span></button>
+      <hr class="timeline-menu__sep" />
+      <button type="button" disabled={!bookmarks.length} on:click={() => runContextAction('prevMarker')}><span>Previous marker</span><kbd>,</kbd></button>
+      <button type="button" disabled={!bookmarks.length} on:click={() => runContextAction('nextMarker')}><span>Next marker</span><kbd>.</kbd></button>
+      <button type="button" disabled={!selectedBookmarkId} on:click={() => runContextAction('deleteMarker')}><span>Delete selected marker</span></button>
+      <hr class="timeline-menu__sep" />
+      <button type="button" on:click={() => runContextAction('fit')}><span>Zoom to fit</span></button>
+      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}><span>Zoom to range</span></button>
     </div>
   {/if}
 </section>
