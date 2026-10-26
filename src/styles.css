@@ -511,56 +511,80 @@ kbd {
   flex: 1;
 }
 
-.toolbar-recent {
+.file-menu {
   position: relative;
 }
 
-.toolbar-recent > button.active {
+.file-menu > .file-menu__trigger.active {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--icon-active);
 }
 
-.toolbar-recent__menu {
+.file-menu__panel {
+  background: var(--bg2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+  display: grid;
   left: 0;
+  max-height: 70vh;
+  max-width: 360px;
+  min-width: 240px;
+  overflow: auto;
+  padding: 4px;
   position: absolute;
   top: calc(100% + 4px);
   z-index: 1200;
 }
 
-.toolbar-recent__list {
-  background: var(--bg2);
-  border: 1px solid var(--line-strong);
-  box-shadow: var(--shadow);
-  border-radius: 0;
-  list-style: none;
-  margin: 0;
-  max-height: 220px;
-  min-width: 240px;
-  max-width: 360px;
-  overflow: auto;
-  padding: 4px;
-}
-
-.toolbar-recent__list button {
+.file-menu__panel button {
+  align-items: center;
   background: transparent;
   color: var(--text);
+  display: flex;
   font-size: 12px;
+  gap: 24px;
+  justify-content: space-between;
   min-height: 0;
   padding: 6px 8px;
   text-align: left;
-  width: 100%;
 }
 
-.toolbar-recent__list button:hover {
+.file-menu__panel button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-menu__panel button:hover:not(:disabled) {
   background: #27303a;
 }
 
-.toolbar-recent__empty {
+.file-menu__panel kbd {
+  color: var(--faint);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.file-menu__sep {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 2px;
+}
+
+.file-menu__heading {
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  margin: 2px 8px 4px;
+  text-transform: uppercase;
+}
+
+.file-menu__empty {
   color: var(--muted);
   font-size: 11px;
   margin: 0;
-  padding: 8px 10px;
+  padding: 4px 8px 6px;
   white-space: nowrap;
 }
 
@@ -2217,8 +2241,7 @@ label.modal__stack:has(> input[type='checkbox']) input[type='checkbox'] {
   white-space: nowrap;
 }
 
-.ffmpeg-banner,
-.tray-hint-banner {
+.ffmpeg-banner {
   align-items: center;
   display: flex;
   flex: 0 0 auto;
@@ -2235,12 +2258,6 @@ label.modal__stack:has(> input[type='checkbox']) input[type='checkbox'] {
   border-bottom: 1px solid rgba(248, 113, 113, 0.35);
   color: #fecaca;
   flex-wrap: wrap;
-}
-
-.tray-hint-banner {
-  background: rgba(42, 167, 255, 0.1);
-  border-bottom: 1px solid rgba(42, 167, 255, 0.25);
-  color: #b9e6ff;
 }
 
 .panel-backdrop {
@@ -2580,7 +2597,7 @@ textarea:focus-visible,
 .toast,
 .history-drawer,
 .history-drawer__item,
-.toolbar-recent__list,
+.file-menu__panel,
 .timeline-menu,
 .preset-picker__option,
 .preset-settings__list li,
@@ -2601,7 +2618,7 @@ textarea:focus-visible,
 .floating-panel,
 .history-drawer,
 .toast,
-.toolbar-recent__list,
+.file-menu__panel,
 .timeline-menu,
 .bottom-bar__upload-menu {
   box-shadow: var(--shadow);

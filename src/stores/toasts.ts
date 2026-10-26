@@ -15,7 +15,7 @@ export const toasts = writable<Toast[]>([]);
 
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
-function scheduleDismiss(id: string): void {
+function scheduleDismiss(id: string, durationMs: number): void {
   const existing = timers.get(id);
   if (existing) {
     clearTimeout(existing);
@@ -24,15 +24,15 @@ function scheduleDismiss(id: string): void {
   const timer = setTimeout(() => {
     dismissToast(id);
     timers.delete(id);
-  }, DISMISS_MS);
+  }, durationMs);
   timers.set(id, timer);
 }
 
-export function pushToast(message: string, kind: ToastKind = 'info'): string {
+export function pushToast(message: string, kind: ToastKind = 'info', durationMs = DISMISS_MS): string {
   const id = crypto.randomUUID();
   const toast: Toast = { id, kind, message, createdAt: Date.now() };
   toasts.update((items) => [...items.slice(-4), toast]);
-  scheduleDismiss(id);
+  scheduleDismiss(id, durationMs);
   return id;
 }
 

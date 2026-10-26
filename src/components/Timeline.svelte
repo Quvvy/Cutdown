@@ -784,8 +784,6 @@
   <header class="timeline__controls">
     <div class="timeline__readouts">
       <span>Now <strong>{formatTime(currentTime)}</strong></span>
-      <span>Out <strong>{formatTime(outputDuration)}</strong></span>
-      <span>Range <strong>{normalizedRange ? `${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}` : 'none'}</strong></span>
     </div>
     <div class="timeline__zoom">
       <span>Zoom</span>
