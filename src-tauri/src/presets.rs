@@ -7,7 +7,8 @@ pub const PRESET_DISCORD: &str = "discord";
 pub const PRESET_ARCHIVE: &str = "archive";
 pub const PRESET_TWITTER: &str = "twitter";
 
-pub const DISCORD_TARGET_BYTES: u64 = 9 * 1024 * 1024;
+// Discord's upload cap is 20 MB; aim ~6% under it for encoder overshoot.
+pub const DISCORD_TARGET_BYTES: u64 = 18 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -439,7 +440,7 @@ pub fn builtin_presets() -> Vec<PresetInfo> {
         PresetInfo {
             id: PRESET_DISCORD.to_string(),
             name: "Discord".to_string(),
-            description: "H.264/AAC sized for ~9 MB uploads.".to_string(),
+            description: "H.264/AAC sized to stay under Discord's 20 MB limit.".to_string(),
             lossless: false,
             requires_gpu: false,
             custom: false,

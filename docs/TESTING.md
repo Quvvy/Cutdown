@@ -55,7 +55,7 @@ Check Pass when done. Skip rows that don’t apply.
 | | Raw reopen = fresh; `.cutdown` = restore | |
 | **Export** | Lossless single + multi-segment | |
 | | I/O range export | |
-| | Discord ~9 MB (30–60s) | |
+| | Discord under 20 MB (60–120s) | |
 | | Archive, Twitter presets | |
 | | Progress % on re-encode | |
 | | GPU when enabled in Settings | |
