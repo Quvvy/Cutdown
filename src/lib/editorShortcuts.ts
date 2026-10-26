@@ -14,9 +14,9 @@ export type ShortcutAction =
   | 'markIn'
   | 'markOut'
   | 'togglePlay'
-  | 'reverse'
+  | 'shuttleBack'
   | 'pause'
-  | 'forward'
+  | 'shuttleForward'
   | 'toRangeStart'
   | 'toRangeEnd'
   | 'previousMarker'
@@ -137,14 +137,15 @@ export function resolveShortcut(event: ShortcutKey, context: ShortcutContext): S
     case 'o':
       return 'markOut';
     case 'j':
-      return 'reverse';
+      return 'shuttleBack';
     case 'k':
       return 'pause';
     case 'l':
-      return 'forward';
+      return 'shuttleForward';
     case 'm':
       return 'addMarker';
     case 's':
+    case 'x':
       return 'split';
     case 'z':
       return context.hasRange ? 'zoomToRange' : null;

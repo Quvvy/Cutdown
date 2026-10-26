@@ -1983,9 +1983,33 @@
     runShortcut(action, event.shiftKey);
   }
 
+  const SHUTTLE_RATES = [0.5, 1, 1.5, 2];
+
+  // J/K/L as in editors. Browsers can't play backwards, so J slows down and,
+  // once paused, steps back a second (hold to keep stepping).
+  function shuttle(direction: 1 | -1): void {
+    const index = SHUTTLE_RATES.indexOf(previewPlaybackRate);
+    if (!previewPlaying) {
+      if (direction > 0) {
+        previewPlaybackRate = 1;
+        preview?.playPlayback();
+      } else {
+        seekBySequence(-1);
+      }
+      return;
+    }
+    if (direction < 0 && previewPlaybackRate <= SHUTTLE_RATES[0]) {
+      preview?.pausePlayback();
+      previewPlaybackRate = 1;
+      return;
+    }
+    const next = clamp((index < 0 ? 1 : index) + direction, 0, SHUTTLE_RATES.length - 1);
+    previewPlaybackRate = SHUTTLE_RATES[next];
+  }
+
   function runShortcut(action: ShortcutAction, shiftKey: boolean): void {
     const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
-    const step = shiftKey ? 5 : frameStep;
+    const step = shiftKey ? 1 : frameStep;
 
     switch (action) {
       case 'closeModals':
@@ -2024,12 +2048,13 @@
         return setRangeMarker('end', $editor.currentTime);
       case 'togglePlay':
         return preview?.togglePlayback();
-      case 'reverse':
-        return seekBySequence(-1);
+      case 'shuttleBack':
+        return shuttle(-1);
       case 'pause':
+        previewPlaybackRate = 1;
         return preview?.pausePlayback();
-      case 'forward':
-        return seekBySequence(1);
+      case 'shuttleForward':
+        return shuttle(1);
       case 'toRangeStart':
         if (normalizedRange) seekTo(normalizedRange.start);
         return;

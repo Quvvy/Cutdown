@@ -1050,7 +1050,7 @@
       style:top={`${contextMenu.y}px`}
       use:placeMenu={{ x: contextMenu.x, y: contextMenu.y }}
     >
-      <button type="button" on:click={() => runContextAction('split')}><span>Split here</span><kbd>S</kbd></button>
+      <button type="button" on:click={() => runContextAction('split')}><span>Cut here</span><kbd>X</kbd></button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}><span>Delete selected segment</span><kbd>Del</kbd></button>
       <button type="button" disabled={!selectedSegmentId} on:click={() => {
         deselectSegment();

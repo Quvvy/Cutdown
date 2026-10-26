@@ -20,7 +20,7 @@
 
 <div class="transport-row" aria-label="Edit and playback controls">
   <div class="transport-row__group">
-    <IconButton icon="split" title={canEdit ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canEdit} on:click={() => dispatch('split')} />
+    <IconButton icon="split" title={canEdit ? 'Cut at playhead (X)' : 'Open a clip to cut'} disabled={!canEdit} on:click={() => dispatch('split')} />
     <IconButton
       icon="delete"
       title="Delete selected segment (Del)"

@@ -21,7 +21,7 @@ function press(key: string, modifiers: Partial<ShortcutKey> = {}): ShortcutKey {
 describe('resolveShortcut', () => {
   it('maps Shift+L to the range loop, not step forward', () => {
     expect(resolveShortcut(press('L', { shiftKey: true }), context())).toBe('toggleRangeLoop');
-    expect(resolveShortcut(press('l'), context())).toBe('forward');
+    expect(resolveShortcut(press('l'), context())).toBe('shuttleForward');
   });
 
   it('maps Shift+M to removing the marker and M to adding one', () => {
@@ -61,6 +61,8 @@ describe('resolveShortcut', () => {
     expect(resolveShortcut(press('s'), context({ hasClip: false }))).toBeNull();
     expect(resolveShortcut(press(' '), context({ hasClip: false }))).toBeNull();
     expect(resolveShortcut(press('s'), context())).toBe('split');
+    expect(resolveShortcut(press('x'), context())).toBe('split');
+    expect(resolveShortcut(press('j'), context())).toBe('shuttleBack');
     expect(resolveShortcut(press(' '), context())).toBe('togglePlay');
   });
 
