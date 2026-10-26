@@ -2918,101 +2918,99 @@
       </div>
     {/if}
     <div class="preview-panel__tools">
-      <IconButton
-        icon="crop"
-        title={cropEnabled ? 'Disable crop overlay' : 'Enable crop overlay'}
-        variant="secondary"
-        active={cropEnabled}
-        disabled={!$editor.currentFile}
-        on:click={() => {
-          cropEnabled = !cropEnabled;
-        }}
-      />
-      <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
-        <input type="checkbox" bind:checked={cropLockAspect} disabled={!cropEnabled} />
-        Lock ratio
-      </label>
-      <button
-        type="button"
-        class="secondary"
-        class:active={cropAspect === '16:9'}
-        disabled={!cropEnabled}
-        title="Crop 16:9"
-        on:click={() => applyAspectCrop('16:9')}
-      >
-        16:9
-      </button>
-      <button
-        type="button"
-        class="secondary"
-        class:active={cropAspect === '9:16'}
-        disabled={!cropEnabled}
-        title="Crop 9:16"
-        on:click={() => applyAspectCrop('9:16')}
-      >
-        9:16
-      </button>
-      <button
-        type="button"
-        class="secondary"
-        class:active={cropAspect === '4:3'}
-        disabled={!cropEnabled}
-        title="Crop 4:3"
-        on:click={() => applyAspectCrop('4:3')}
-      >
-        4:3
-      </button>
-      <button
-        type="button"
-        class="secondary"
-        class:active={cropAspect === '1:1'}
-        disabled={!cropEnabled}
-        title="Crop 1:1"
-        on:click={() => applyAspectCrop('1:1')}
-      >
-        1:1
-      </button>
-      <span class="preview-panel__crop-custom" class:preview-panel__crop-custom--disabled={!cropEnabled}>
-        <input
-          type="number"
-          class="preview-panel__crop-input"
-          min="1"
-          max="100"
-          bind:value={cropCustomAspectW}
-          disabled={!cropEnabled}
-          aria-label="Custom aspect width"
+      <div class="preview-panel__crop">
+        <IconButton
+          icon="crop"
+          title={cropEnabled ? 'Disable crop overlay' : 'Enable crop overlay'}
+          variant="secondary"
+          active={cropEnabled}
+          disabled={!$editor.currentFile}
+          on:click={() => {
+            cropEnabled = !cropEnabled;
+          }}
         />
-        <span>:</span>
-        <input
-          type="number"
-          class="preview-panel__crop-input"
-          min="1"
-          max="100"
-          bind:value={cropCustomAspectH}
-          disabled={!cropEnabled}
-          aria-label="Custom aspect height"
-        />
-        <button
-          type="button"
-          class="secondary"
-          class:active={cropAspect === 'custom'}
-          disabled={!cropEnabled}
-          title="Apply custom aspect ratio"
-          on:click={() => applyAspectCrop('custom')}
-        >
-          Custom
-        </button>
-      </span>
-      <button
-        type="button"
-        class="secondary"
-        class:active={cropAspect === 'free'}
-        disabled={!cropEnabled}
-        title="Free crop (unlocked aspect)"
-        on:click={() => applyAspectCrop('free')}
-      >
-        Free
-      </button>
+        {#if cropEnabled}
+          <div class="crop-popover" role="group" aria-label="Crop aspect ratio">
+            <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
+              <input type="checkbox" bind:checked={cropLockAspect} />
+              Lock ratio
+            </label>
+            <button
+              type="button"
+              class="secondary"
+              class:active={cropAspect === '16:9'}
+              title="Crop 16:9"
+              on:click={() => applyAspectCrop('16:9')}
+            >
+              16:9
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              class:active={cropAspect === '9:16'}
+              title="Crop 9:16"
+              on:click={() => applyAspectCrop('9:16')}
+            >
+              9:16
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              class:active={cropAspect === '4:3'}
+              title="Crop 4:3"
+              on:click={() => applyAspectCrop('4:3')}
+            >
+              4:3
+            </button>
+            <button
+              type="button"
+              class="secondary"
+              class:active={cropAspect === '1:1'}
+              title="Crop 1:1"
+              on:click={() => applyAspectCrop('1:1')}
+            >
+              1:1
+            </button>
+            <span class="preview-panel__crop-custom">
+              <input
+                type="number"
+                class="preview-panel__crop-input"
+                min="1"
+                max="100"
+                bind:value={cropCustomAspectW}
+                aria-label="Custom aspect width"
+              />
+              <span>:</span>
+              <input
+                type="number"
+                class="preview-panel__crop-input"
+                min="1"
+                max="100"
+                bind:value={cropCustomAspectH}
+                aria-label="Custom aspect height"
+              />
+              <button
+                type="button"
+                class="secondary"
+                class:active={cropAspect === 'custom'}
+                title="Apply custom aspect ratio"
+                on:click={() => applyAspectCrop('custom')}
+              >
+                Custom
+              </button>
+            </span>
+            <button
+              type="button"
+              class="secondary"
+              class:active={cropAspect === 'free'}
+              title="Free crop (unlocked aspect)"
+              on:click={() => applyAspectCrop('free')}
+            >
+              Free
+            </button>
+          </div>
+        {/if}
+      </div>
       <span class="preview-panel__divider" aria-hidden="true"></span>
       <IconButton
         icon="scaleFit"

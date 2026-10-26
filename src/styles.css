@@ -566,8 +566,31 @@ kbd {
   gap: 4px;
 }
 
-.preview-panel__crop-custom--disabled {
-  opacity: 0.42;
+.preview-panel__crop {
+  position: relative;
+}
+
+.crop-popover {
+  align-items: center;
+  background: var(--bg2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+  display: flex;
+  gap: 4px;
+  left: 0;
+  padding: 6px 8px;
+  position: absolute;
+  top: calc(100% + 4px);
+  white-space: nowrap;
+  z-index: 40;
+}
+
+.crop-popover .preview-panel__crop-lock {
+  margin-right: 8px;
+}
+
+.crop-popover .preview-panel__crop-custom {
+  margin: 0 8px;
 }
 
 .preview-panel__crop-input {
