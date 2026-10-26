@@ -6,7 +6,9 @@ Stack: Tauri 2, Svelte, Rust, ffmpeg. Setup downloads ffmpeg to `%LOCALAPPDATA%\
 
 ## What it does
 
-**Editing.** Split at the playhead (`S`), delete segments, drag segments to reorder, drag the edges of a selected segment to trim or extend. Set In/Out (`I` / `O`) for a working range—keep only that span, trim everything else to it, or export the range as one file. Undo/redo. Bookmarks on the timeline (`M`). Range, snap and marker tools live in the timeline's right-click menu. Save your work as a `.cutdown` project file; opening the same MP4 again without a project starts clean.
+**Opening.** Right-click a video in Explorer → **Clip with Cutdown** (Windows 11: under *Show more options*), drag it onto the window, or File → Open (Ctrl+O). It opens playing, with the timeline fitted to the clip, frames along the video track and the waveform under it. Portrait phone video, variable-frame-rate recordings and multi-hour files are handled.
+
+**Editing.** Cut at the playhead (`X` or `S`), delete segments, drag segments to reorder, drag the edges of a selected segment to trim or extend. Set In/Out (`I` / `O`) for a working range—keep only that span, trim everything else to it, or export the range as one file. Undo/redo. Bookmarks on the timeline (`M`). Range, snap and marker tools live in the timeline's right-click menu. Save your work as a `.cutdown` project file; opening the same MP4 again without a project starts clean.
 
 **Preview.** WebView2 video with remux/proxy fallbacks when the codec is awkward. HEVC, AV1, and 10-bit files get a playable H.264 proxy automatically instead of a black frame. Fit, zoom, pan — Fit to window also runs when you resize the app window, unless you have zoomed or panned away. Playback speed and optional proxy for heavy files. Reordered segments play in sequence order; you might hear a tiny blip at joins—that’s the tradeoff for a simple preview path.
 
