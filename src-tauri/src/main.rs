@@ -228,6 +228,7 @@ fn main() {
             upload::save_upload_providers,
             upload::get_upload_providers_for_editor,
             upload::copy_text_to_clipboard,
+            upload::copy_file_to_clipboard,
             project::save_project_file,
             project::load_project_file,
             obs::find_latest_replay_in_folder,

@@ -104,6 +104,22 @@ pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
         .map_err(|err| format!("Failed to copy to clipboard: {err}"))
 }
 
+/// Puts the file itself on the clipboard (CF_HDROP on Windows, like Explorer's Copy),
+/// so it can be pasted straight into Discord or a folder.
+#[tauri::command]
+pub fn copy_file_to_clipboard(path: String) -> Result<(), String> {
+    let file = std::path::PathBuf::from(path.trim());
+    if !file.is_file() {
+        return Err(format!("File not found: {}", file.display()));
+    }
+    let mut clipboard =
+        Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?;
+    clipboard
+        .set()
+        .file_list(&[file])
+        .map_err(|err| format!("Failed to copy file to clipboard: {err}"))
+}
+
 fn resolve_provider_id(
     settings: &crate::settings::AppSettings,
     provider_id: Option<&str>,
@@ -170,5 +186,26 @@ fn upload_with_provider(
             providers::http_multipart::upload(path, &config)
         }
         other => Err(format!("Unknown upload provider kind: {other}")),
+    }
+}
+
+#[cfg(test)]
+mod clipboard_tests {
+    // Touches the real system clipboard, so it only runs on request:
+    // cargo test copy_file_round_trips -- --ignored
+    #[test]
+    #[ignore]
+    fn copy_file_round_trips() {
+        let path = std::env::temp_dir().join("cutdown-clipboard-test.mp4");
+        std::fs::write(&path, b"test").unwrap();
+        super::copy_file_to_clipboard(path.display().to_string()).unwrap();
+        let files = arboard::Clipboard::new().unwrap().get().file_list().unwrap();
+        assert_eq!(files, vec![path.clone()]);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn copy_file_rejects_missing_file() {
+        assert!(super::copy_file_to_clipboard(r"C:\nope\missing.mp4".into()).is_err());
     }
 }
