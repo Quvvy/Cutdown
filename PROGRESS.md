@@ -2,7 +2,9 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.4.0)
+## Now (v0.5.0)
+
+**0.5.0** — Reorganized around the clip loop (open, mark, export, share). Explorer right-click "Clip with Cutdown"; clips open playing with the timeline fitted, a filmstrip of frames and the waveform. Keys: X cut, J/K/L shuttle, Shift+arrows 1 s; In/Out auto-loops. One accent (range + Export), edit notes in the status bar instead of toasts, plain status messages. Export panel: Original quality / Discord (under 20 MB) / Twitter-X with honest instant-vs-re-encode labels, saved next to the original as `name-0m14s.mp4`, time remaining, Copy file to clipboard; the full dialog is under More options. Preview toolbar down to crop, fit, speed, fix preview. Fixes: rotated phone video size/crop, VFR frame stepping, multi-hour timeline zoom.
 
 **0.4.0** — Editor declutter. Transport bar and bottom bar merged into one status bar (output/selected/range, loop, volume, export progress and results); export activity strip removed. Clip metadata sits next to the clip name. Crop presets only appear while crop is on. Timeline toolbar replaced by a compact transport row (split, delete, In/Out, marker, play/pause); range, snap and marker-navigation actions moved to a grouped timeline right-click menu with shortcut hints.
 
