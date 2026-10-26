@@ -2,7 +2,9 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.3.2)
+## Now (v0.4.0)
+
+**0.4.0** — Editor declutter. Transport bar and bottom bar merged into one status bar (output/selected/range, loop, volume, export progress and results); export activity strip removed. Clip metadata sits next to the clip name. Crop presets only appear while crop is on. Timeline toolbar replaced by a compact transport row (split, delete, In/Out, marker, play/pause); range, snap and marker-navigation actions moved to a grouped timeline right-click menu with shortcut hints.
 
 **0.3.2** — Single instance / Open With handoff; Start with Windows, start-minimized, and close-to-tray honor Settings; HEVC/AV1/10-bit preview uses an H.264 proxy instead of a black frame; preview auto-fits when the app window resizes (unless you zoomed or panned); first-run Open/Export copy, unsaved confirm, and settings persistence fixes.
 
