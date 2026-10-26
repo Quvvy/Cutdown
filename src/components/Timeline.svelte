@@ -172,6 +172,9 @@
           end: Math.max(rangeStart, rangeEnd),
         }
       : null;
+  // The range starts as the whole clip; only tint it once In/Out actually select a part.
+  $: rangeNarrowed =
+    normalizedRange !== null && (normalizedRange.start > 0.05 || normalizedRange.end < sourceDuration - 0.05);
   $: rangeSequenceStart = normalizedRange ? sourceToSequenceTime(normalizedRange.start) : 0;
   $: rangeSequenceEnd = normalizedRange ? sourceToSequenceTime(normalizedRange.end) : 0;
   $: rangeLeft = rangeSequenceStart * pixelsPerSecond;
@@ -868,7 +871,9 @@
           {/each}
 
           {#if normalizedRange}
-            <div class="timeline__range-fill" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
+            {#if rangeNarrowed}
+              <div class="timeline__range-fill" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
+            {/if}
             <button
               type="button"
               class="timeline__marker timeline__marker--in"
@@ -909,7 +914,7 @@
         {#each ticks as tick}
           <div class="timeline__tick" style:left={`${tick.left}px`}></div>
         {/each}
-        {#if normalizedRange}
+        {#if rangeNarrowed}
           <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
         {/if}
         {#each segmentLayouts as layout, index (layout.segment.id)}
@@ -1001,7 +1006,7 @@
         {#each ticks as tick}
           <div class="timeline__tick" style:left={`${tick.left}px`}></div>
         {/each}
-        {#if normalizedRange}
+        {#if rangeNarrowed}
           <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
         {/if}
         {#each segmentLayouts as layout (layout.segment.id)}

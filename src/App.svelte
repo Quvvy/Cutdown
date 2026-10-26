@@ -1081,6 +1081,8 @@
           message: `Opened ${formatBytes(probed.fileSize)} ${probed.codec.toUpperCase()} clip.`,
         },
       }));
+      // Whole clip across the timeline, so segments are big enough to grab.
+      void tick().then(zoomToFit);
 
       if (plan === 'native') {
         editor.update((state) => ({
