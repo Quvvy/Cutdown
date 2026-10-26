@@ -2930,7 +2930,7 @@
           }}
         />
         {#if cropEnabled}
-          <div class="crop-popover" role="group" aria-label="Crop aspect ratio">
+          <div class="crop-presets" role="group" aria-label="Crop aspect ratio">
             <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
               <input type="checkbox" bind:checked={cropLockAspect} />
               Lock ratio
