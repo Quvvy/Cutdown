@@ -224,6 +224,10 @@
   let drainLaunchInFlight: Promise<void> | null = null;
   let exportMode: 'sequence' | 'range' = 'sequence';
   let rangeLoopPlayback = false;
+  // Set once the user toggles loop themselves; stops automatic looping for this clip.
+  let rangeLoopUserSet = false;
+  // Start playing when a newly opened clip's preview is ready.
+  let autoplayOnReady = false;
   const sequencePlayback = createSequencePlaybackDriver(
     {
       pauseVideo: (options) => preview?.pausePlayback(options),
@@ -988,6 +992,7 @@
   }
 
   async function openClipPath(selected: string): Promise<void> {
+    autoplayOnReady = true;
     if (!ffmpegAvailable) {
       const ffmpeg = await invoke<FfmpegCheckResult>('check_ffmpeg');
       ffmpegAvailable = ffmpeg.available;
@@ -1017,6 +1022,7 @@
     cancelPendingWaveform();
     waveformLoadGeneration += 1;
     rangeLoopPlayback = false;
+    rangeLoopUserSet = false;
     sequencePlayback.reset();
     clipVolume = 1;
     cropEnabled = false;
@@ -1383,6 +1389,7 @@
     }
 
     rangeLoopPlayback = !rangeLoopPlayback;
+    rangeLoopUserSet = true;
 
     if (rangeLoopPlayback && normalizedRange) {
       seekTo(normalizedRange.start);
@@ -1403,7 +1410,19 @@
     const result = setTimelineRangeMarker(marker, seconds, duration, { rangeStart, rangeEnd });
     rangeStart = result.rangeStart;
     rangeEnd = result.rangeEnd;
+    loopNarrowedRange();
+  }
 
+  // Trimming is about timing: once the range is narrower than the clip, loop it
+  // so the cut can be felt. Only until the user turns loop on or off themselves.
+  function loopNarrowedRange(): void {
+    if (rangeLoopUserSet || rangeStart === null || rangeEnd === null) {
+      return;
+    }
+    const narrowed = Math.abs(rangeEnd - rangeStart) < duration - 0.05;
+    if (narrowed && !rangeLoopPlayback) {
+      rangeLoopPlayback = true;
+    }
   }
 
   function clearRange(): void {
@@ -1535,6 +1554,11 @@
   }
 
   function handlePreviewReady(): void {
+    if (autoplayOnReady) {
+      autoplayOnReady = false;
+      preview?.playPlayback();
+    }
+
     if (!pendingWaveform || pendingWaveform.generation !== waveformLoadGeneration) {
       return;
     }
@@ -2878,6 +2902,7 @@
     on:rangeChange={(event) => {
       rangeStart = event.detail.start;
       rangeEnd = event.detail.end;
+      loopNarrowedRange();
     }}
     on:zoomChange={(event) => (timelineZoom = event.detail.zoom)}
     on:trackHeightChange={updateTrackHeights}
