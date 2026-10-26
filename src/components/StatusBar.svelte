@@ -16,6 +16,8 @@
   export let volumeEnabled = false;
   export let exportStatus: ExportStatus;
   export let statusLabel = '';
+  /** Brief confirmation of the last edit. */
+  export let note = '';
   export let progressPercent: number | null = null;
   export let dismissible = false;
   export let shareUrl: string | null = null;
@@ -85,6 +87,9 @@
     </div>
   </div>
   <div class="bottom-bar__status">
+    {#if note}
+      <span class="bottom-bar__note" aria-live="polite">{note}</span>
+    {/if}
     <ProgressBar
       active={exportStatus.state === 'running'}
       label={statusLabel}

@@ -1482,6 +1482,16 @@ kbd {
   text-align: right;
 }
 
+.bottom-bar__note {
+  color: var(--muted);
+  flex: 0 1 auto;
+  font-size: 11px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .bottom-bar button {
   background: var(--bg3);
   border: 1px solid var(--line-strong);

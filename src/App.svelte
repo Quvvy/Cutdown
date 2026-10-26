@@ -228,6 +228,18 @@
   let rangeLoopUserSet = false;
   // Start playing when a newly opened clip's preview is ready.
   let autoplayOnReady = false;
+  // Short confirmation of the last edit, shown in the status bar instead of a toast
+  // so nothing pops over the video while trimming.
+  let editNote = '';
+  let editNoteTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function noteEdit(message: string): void {
+    editNote = message;
+    if (editNoteTimer) {
+      clearTimeout(editNoteTimer);
+    }
+    editNoteTimer = setTimeout(() => (editNote = ''), 4000);
+  }
   const sequencePlayback = createSequencePlaybackDriver(
     {
       pauseVideo: (options) => preview?.pausePlayback(options),
@@ -939,7 +951,7 @@
       segments: cloneSegments(snapshot.segments),
       selectedSegmentId: snapshot.selectedSegmentId,
     }));
-    pushToast('Undid last edit.');
+    noteEdit('Undid last edit.');
   }
 
   function redoSegmentEdit(): void {
@@ -962,7 +974,7 @@
       segments: cloneSegments(snapshot.segments),
       selectedSegmentId: snapshot.selectedSegmentId,
     }));
-    pushToast('Redid edit.');
+    noteEdit('Redid edit.');
   }
 
   async function chooseClip(): Promise<void> {
@@ -1180,7 +1192,7 @@
 
     const result = splitTimelineSegments($editor.segments, splitTime);
     if (!result.changed) {
-      pushToast('Move the playhead inside a segment to split.', 'info');
+      noteEdit('Move the playhead inside a segment to cut.');
       return;
     }
 
@@ -1193,7 +1205,7 @@
       selectedSegmentId: result.selectedSegmentId,
     }));
     if (toast) {
-      pushToast(`Split at ${formatTime(splitTime)}.`);
+      noteEdit(`Cut at ${formatTime(splitTime)}.`);
     }
     refreshPreviewPlaybackAfterSegmentEdit();
   }
@@ -1209,7 +1221,7 @@
 
     const result = deleteTimelineSegment($editor.segments, $editor.selectedSegmentId);
     if (result.status === 'minimum') {
-      pushToast('At least one segment is required.', 'info');
+      noteEdit('At least one segment is required.');
       return;
     }
 
@@ -1223,7 +1235,7 @@
       segments: result.segments,
       selectedSegmentId: result.selectedSegmentId,
     }));
-    pushToast('Deleted selected segment.');
+    noteEdit('Deleted selected segment.');
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
@@ -1244,7 +1256,7 @@
       segments: result.segments,
       selectedSegmentId: result.selectedSegmentId,
     }));
-    pushToast('Duplicated selected segment.');
+    noteEdit('Duplicated selected segment.');
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
@@ -1339,7 +1351,7 @@
     pushUndoSnapshot();
     splitAtTime(normalizedRange.start, { recordUndo: false, toast: false });
     splitAtTime(normalizedRange.end, { recordUndo: false, toast: false });
-    pushToast(`Split at I/O markers.`);
+    noteEdit('Cut at In and Out.');
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
@@ -1359,7 +1371,7 @@
         message: `Kept range ${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}.`,
       },
     }));
-    pushToast(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`, 'success');
+    noteEdit(`Kept only ${formatTime(normalizedRange.start)} – ${formatTime(normalizedRange.end)}.`);
     seekTo(normalizedRange.start);
   }
 
@@ -1446,7 +1458,7 @@
       dedupeSeconds: BOOKMARK_DEDUPE_SECONDS,
     });
     if (result.status === 'duplicate') {
-      pushToast('A marker already exists at this time.', 'info');
+      noteEdit('A marker already exists at this time.');
       return;
     }
 
@@ -1470,7 +1482,7 @@
     }
 
     removeBookmark(selectedBookmarkId);
-    pushToast('Marker deleted.');
+    noteEdit('Marker deleted.');
   }
 
   function openBookmarkLabelEditor(id: string): void {
@@ -1815,7 +1827,7 @@
 
   async function removeHistoryEntry(outputPath: string): Promise<void> {
     clipHistory = await invoke<ClipHistoryEntry[]>('remove_clip_history_entry', { outputPath });
-    pushToast('Removed from clip history.');
+    noteEdit('Removed from clip history.');
   }
 
   function requestClearHistory(): void {
@@ -1829,7 +1841,7 @@
     clearHistoryConfirmOpen = false;
     await invoke('clear_clip_history');
     clipHistory = [];
-    pushToast('Clip history cleared.');
+    noteEdit('Clip history cleared.');
   }
 
   function uploadProviderName(providerId: string | null): string {
@@ -2612,7 +2624,7 @@
     }));
     await tick();
     seekTo(get(editor).currentTime);
-    pushToast(`Loaded project ${projectLabel}.`, 'success');
+    noteEdit(`Loaded project ${projectLabel}.`);
   }
 
   async function relinkProjectSource(): Promise<void> {
@@ -2952,6 +2964,7 @@
     volumeEnabled={Boolean($editor.currentFile && metadata?.audioCodec)}
     exportStatus={$editor.exportStatus}
     statusLabel={exportStatusLabel}
+    note={editNote}
     progressPercent={exportProgressPercent}
     dismissible={statusDismissible}
     shareUrl={lastShareUrl}
