@@ -1,0 +1,12 @@
+# Store and check out text as LF on every OS (stops the CRLF warnings on Windows).
+* text=auto eol=lf
+
+# Windows installer hooks and batch files expect CRLF.
+*.nsh text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.exe binary
