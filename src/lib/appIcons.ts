@@ -4,6 +4,8 @@ import clipboard from '@iconify-icons/fluent/clipboard-20-regular';
 import cloudArrowUp from '@iconify-icons/fluent/cloud-arrow-up-20-filled';
 import crop from '@iconify-icons/fluent/crop-20-filled';
 import link from '@iconify-icons/fluent/link-20-filled';
+import pause from '@iconify-icons/fluent/pause-20-filled';
+import play from '@iconify-icons/fluent/play-20-filled';
 import { iconFromSvg } from './svgIcon';
 
 import autofitWidthSvg from '../assets/icons/arrow-autofit-width-20-filled.svg?raw';
@@ -30,6 +32,8 @@ export const appIcons = {
   crop,
   export: arrowExport,
   link,
+  play,
+  pause,
   upload: cloudArrowUp,
   open: iconFromSvg(openSvg),
   save: iconFromSvg(saveSvg),

@@ -258,24 +258,45 @@ kbd {
   overflow: hidden;
 }
 
-.timeline-pane__tools {
+.transport-row {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-bottom: 8px;
-  padding-left: 8px;
+  gap: 16px;
+  margin-bottom: 6px;
+  min-height: 30px;
+  padding: 0 8px;
+  position: relative;
 }
 
-.timeline-pane__tools button.secondary {
-  height: 25px;
+.transport-row__group {
+  align-items: center;
+  display: flex;
+  gap: 2px;
 }
 
-.timeline-pane__divider {
-  align-self: stretch;
-  background: var(--line);
-  margin: 2px 2px;
-  width: 1px;
+.transport-row__center {
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.transport-row__center .icon-btn {
+  height: 30px;
+  width: 38px;
+}
+
+.transport-row__hint {
+  color: var(--faint);
+  font-size: 11px;
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .transport-row__hint {
+    display: none;
+  }
 }
 
 .timeline-pane > .timeline {
@@ -1320,13 +1341,29 @@ kbd {
 }
 
 .timeline-menu button {
+  align-items: center;
   background: transparent;
   color: #cfcfcf;
+  display: flex;
   font-size: 12px;
   font-weight: 500;
+  gap: 24px;
+  justify-content: space-between;
   min-height: 0;
-  padding: 7px 9px;
+  padding: 6px 9px;
   text-align: left;
+}
+
+.timeline-menu button kbd {
+  color: var(--faint);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+}
+
+.timeline-menu__sep {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 4px 2px;
 }
 
 .timeline-menu button:hover:not(:disabled) {

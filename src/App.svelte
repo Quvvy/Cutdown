@@ -196,6 +196,7 @@
   let clipHistory: ClipHistoryEntry[] = [];
   let historyBusyPath: string | null = null;
   let cropEnabled = false;
+  let previewPlaying = false;
   let cropAspect: 'free' | '16:9' | '9:16' | '4:3' | '1:1' | 'custom' = 'free';
   let cropLockAspect = false;
   let cropCustomAspectW = 16;
@@ -1123,6 +1124,7 @@
   }
 
   function handlePreviewPlayState(playing: boolean): void {
+    previewPlaying = playing;
     sequencePlayback.onPlayState(playing);
   }
 
@@ -3080,111 +3082,50 @@
   ></button>
 
   <div class="timeline-pane" style:flex={`${1 - workspaceSplitRatio} 1 0`}>
-    <div class="timeline-pane__tools">
-      <IconButton icon="split" title={canExport ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canExport} on:click={splitAtCurrentTime} />
-      <span class="timeline-pane__divider" aria-hidden="true"></span>
-      <IconButton
-        icon="markIn"
-        title="Mark In at playhead (I)"
-        variant="secondary"
-        disabled={!canExport}
-        on:click={() => setRangeMarker('start', $editor.currentTime)}
-      />
-      <IconButton
-        icon="markOut"
-        title="Mark Out at playhead (O)"
-        variant="secondary"
-        disabled={!canExport}
-        on:click={() => setRangeMarker('end', $editor.currentTime)}
-      />
-      <IconButton
-        icon="clearRange"
-        title="Clear I/O range"
-        variant="secondary"
-        disabled={!canUseRange}
-        on:click={clearRange}
-      />
-      <span class="timeline-pane__divider" aria-hidden="true"></span>
-      <IconButton
-        icon="bookmark"
-        title="Add marker at playhead (M)"
-        variant="secondary"
-        disabled={!canExport}
-        on:click={() => addBookmarkMarker($editor.currentTime)}
-      />
-      <button
-        type="button"
-        class="secondary"
-        title="Previous marker (,)"
-        disabled={!bookmarks.length}
-        on:click={goToPreviousMarker}
-      >
-        ‹
-      </button>
-      <button
-        type="button"
-        class="secondary"
-        title="Next marker (.)"
-        disabled={!bookmarks.length}
-        on:click={goToNextMarker}
-      >
-        ›
-      </button>
-      <IconButton
-        icon="delete"
-        title="Delete selected marker (Del)"
-        variant="secondary"
-        disabled={!selectedBookmarkId}
-        on:click={deleteSelectedBookmark}
-      />
-      <span class="timeline-pane__divider" aria-hidden="true"></span>
-      <IconButton
-        icon="snapIn"
-        title="Snap playhead to In ( [ )"
-        variant="secondary"
-        disabled={!canUseRange}
-        on:click={snapToRangeStart}
-      />
-      <IconButton
-        icon="snapOut"
-        title="Snap playhead to Out ( ] )"
-        variant="secondary"
-        disabled={!canUseRange}
-        on:click={snapToRangeEnd}
-      />
-      <span class="timeline-pane__divider" aria-hidden="true"></span>
-      <button
-        type="button"
-        class="secondary"
-        title="Split at I/O markers"
-        disabled={!canUseRange}
-        on:click={splitAtRangeMarkers}
-      >
-        Split I/O
-      </button>
-      <IconButton
-        icon="keepRange"
-        title="Keep only I/O range — remove all footage outside In/Out"
-        variant="secondary"
-        disabled={!canUseRange}
-        on:click={keepOnlyRange}
-      />
-      <button
-        type="button"
-        class="secondary"
-        title="Deselect segment (Esc)"
-        disabled={!selectedSegment}
-        on:click={deselectSegment}
-      >
-        Deselect
-      </button>
-      <IconButton
-        icon="delete"
-        title="Delete selected segment (Del)"
-        variant="secondary"
-        disabled={!selectedSegment || segments.length <= 1}
-        on:click={deleteSelectedSegment}
-      />
+    <div class="transport-row" aria-label="Edit and playback controls">
+      <div class="transport-row__group">
+        <IconButton icon="split" title={canExport ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canExport} on:click={splitAtCurrentTime} />
+        <IconButton
+          icon="delete"
+          title="Delete selected segment (Del)"
+          variant="secondary"
+          disabled={!selectedSegment || segments.length <= 1}
+          on:click={deleteSelectedSegment}
+        />
+      </div>
+      <div class="transport-row__group">
+        <IconButton
+          icon="markIn"
+          title="Mark In at playhead (I)"
+          variant="secondary"
+          disabled={!canExport}
+          on:click={() => setRangeMarker('start', $editor.currentTime)}
+        />
+        <IconButton
+          icon="markOut"
+          title="Mark Out at playhead (O)"
+          variant="secondary"
+          disabled={!canExport}
+          on:click={() => setRangeMarker('end', $editor.currentTime)}
+        />
+        <IconButton
+          icon="bookmark"
+          title="Add marker at playhead (M)"
+          variant="secondary"
+          disabled={!canExport}
+          on:click={() => addBookmarkMarker($editor.currentTime)}
+        />
+      </div>
+      <div class="transport-row__center">
+        <IconButton
+          icon={previewPlaying ? 'pause' : 'play'}
+          title={previewPlaying ? 'Pause (Space)' : 'Play (Space)'}
+          variant="secondary"
+          disabled={!$editor.currentFile}
+          on:click={() => preview?.togglePlayback()}
+        />
+      </div>
+      <span class="transport-row__hint">Right-click the timeline for range and marker tools</span>
     </div>
   <Timeline
     bind:this={timeline}
@@ -3222,6 +3163,11 @@
     on:keepRange={keepOnlyRange}
     on:trimOutsideRange={deleteOutsideRange}
     on:toggleRangeLoop={toggleRangeLoop}
+    on:snapToRangeStart={snapToRangeStart}
+    on:snapToRangeEnd={snapToRangeEnd}
+    on:previousMarker={goToPreviousMarker}
+    on:nextMarker={goToNextMarker}
+    on:deleteSelectedMarker={deleteSelectedBookmark}
     on:reorderSegment={(event) => reorderSegment(event.detail.id, event.detail.toIndex)}
     on:segmentResize={(event) =>
       resizeSegment(event.detail.id, event.detail.sourceStart, event.detail.sourceEnd, {
