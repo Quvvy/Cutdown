@@ -23,6 +23,9 @@ if (-not (Test-Path $SignaturePath)) {
   throw "Signature file not found: $SignaturePath"
 }
 
+. (Join-Path $PSScriptRoot "signing.ps1")
+Assert-SignatureMatchesApp $SignaturePath
+
 $installerName = Split-Path -Leaf $InstallerPath
 $tag = "$TagPrefix$Version"
 $downloadUrl = "https://github.com/$Repo/releases/download/$tag/$installerName"
