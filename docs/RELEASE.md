@@ -19,46 +19,47 @@ npm run validate:release
 
 That’s typecheck, frontend tests, Vite build, `cargo check`, `cargo test`, Clippy if installed. Not a substitute for the manual pass in TESTING.md.
 
-## 3. Build installer
+## 3. Build, sign, and write latest.json
 
-Unsigned (local only):
-
-```powershell
-npm run tauri -- build
-```
-
-Signed + updater artifacts (private key in `.tauri/cutdown.key`, gitignored):
+Run in a normal terminal (signing asks for the key password):
 
 ```powershell
-$env:TAURI_SIGNING_PRIVATE_KEY = Get-Content -Raw .tauri\cutdown.key
-npm run tauri -- build
+.\scripts\build-release.ps1 -Notes "Short plain-text release note"
 ```
 
-Output under `src-tauri/target/release/bundle/nsis/` (or the cargo target dir your machine uses). Copy into `release/` if you keep installers there.
+It runs `validate:release`, builds the NSIS installer **unsigned**, signs it as a separate step with `.tauri\cutdown.key`, refuses to continue if the signature's key ID doesn't match the `pubkey` in `tauri.conf.json`, then copies the installer + `.sig` into `release/` and writes `release/latest.json`. `-SkipValidate` / `-SkipBuild` re-run later steps (for example, to re-sign).
+
+If there's no console to answer the password prompt it stops immediately instead of hanging.
 
 ffmpeg is **not** inside the installer package. Post-install runs `Cutdown.exe --install-dependencies` to fetch essentials. Log: `%LOCALAPPDATA%\Cutdown\install-ffmpeg.log`.
 
-## 4. Updater manifest
+### Signing key
 
-After a signed build:
+| File (`.tauri/`, gitignored) | What it is |
+|------|-----|
+| `cutdown.key` | The updater key every shipped build trusts (key ID `99-39-06-CC-EF-F9-F0-19`). Never replace it. |
+| `cutdown.key.pub` | Its public key, same as `plugins.updater.pubkey`. |
+| `cutdown-unused-FAC75342.key` | A key generated in June 2026 that no release trusts. Don't sign with it. |
+
+Losing `cutdown.key`, or its password, means installed copies can't auto-update. Keep a copy and the password somewhere off this machine.
+
+To set or change its password without changing the key (needs `winget install jedisct1.minisign`):
 
 ```powershell
-.\scripts\generate-latest-json.ps1 `
-  -Version 0.3.0 `
-  -InstallerPath release\Cutdown_0.3.0_x64-setup.exe `
-  -SignaturePath release\Cutdown_0.3.0_x64-setup.exe.sig `
-  -Notes "Short plain-text release note"
+.\scripts\protect-signing-key.ps1
 ```
 
-Upload to the GitHub release tag (e.g. `v0.3.0`):
+Switching to a different key takes two releases: first ship a build signed with the old key whose `pubkey` is the new one, then sign later releases with the new key.
+
+## 4. Publish files
+
+Upload to the GitHub release tag (e.g. `v0.4.0`):
 
 | File | Why |
 |------|-----|
 | `Cutdown_*_x64-setup.exe` | NSIS only (not MSI) |
 | `Cutdown_*_x64-setup.exe.sig` | Updater signature |
 | `latest.json` | Exact name; app hits `/releases/latest/download/latest.json` |
-
-Pubkey is in `tauri.conf.json`. Don’t commit the private key.
 
 ## 5. Quick install smoke
 
