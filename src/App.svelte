@@ -9,7 +9,6 @@
   import { get } from 'svelte/store';
   import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
-  import ExportActivity from './components/ExportActivity.svelte';
   import ExportModal from './components/ExportModal.svelte';
   import IconButton from './components/IconButton.svelte';
   import ProgressBar from './components/ProgressBar.svelte';
@@ -836,7 +835,22 @@
   $: canExport = Boolean($editor.currentFile && outputDuration > 0);
   $: exportActivityVisible = exportQueueProcessing;
   $: uploadTargetsConfigured = getEnabledUploadTargets().length > 0;
-  $: exportPresetDisplayName = exportPresets.find((preset) => preset.id === exportPresetId)?.name ?? exportPresetId;
+  $: exportStatusLabel =
+    exportActivityVisible && exportJobLabel
+      ? [exportJobLabel, exportJobTotal > 1 ? `${exportJobIndex}/${exportJobTotal}` : '', $editor.exportStatus.message]
+          .filter(Boolean)
+          .join(' · ')
+      : $editor.exportStatus.message;
+  $: clipMetadataDetail = metadata
+    ? [
+        `${metadata.width}x${metadata.height}`,
+        `${metadata.fps.toFixed(2)} fps`,
+        metadata.codec,
+        metadata.audioCodec ? `${metadata.audioCodec}${metadata.audioChannels ? ` ${metadata.audioChannels}ch` : ''}` : 'no audio',
+        `preview: ${$editor.previewStrategy}`,
+        formatBytes(metadata.fileSize),
+      ].join(' · ')
+    : '';
   $: statusDismissible =
     !statusDismissed &&
     ($editor.exportStatus.state === 'success' || $editor.exportStatus.state === 'error');
@@ -2885,25 +2899,15 @@
     <div class="toolbar__spacer"></div>
     {#if $editor.currentFile}
       <span class="toolbar__clip-name" title={$editor.currentFile}>{fileName}</span>
+      {#if metadata}
+        <span class="toolbar__meta" title={clipMetadataDetail}>{metadata.width}×{metadata.height} · {metadata.fps.toFixed(0)} fps · {metadata.codec}</span>
+      {/if}
     {/if}
-    <span class="toolbar__status">{ffmpegAvailable ? ($editor.currentFile ? $editor.previewStrategy : 'No clip') : 'ffmpeg missing'}</span>
     <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
     <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
     <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
     <IconButton icon="export" title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'} variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal}>Export</IconButton>
   </section>
-
-  <ExportActivity
-    visible={exportActivityVisible}
-    jobLabel={exportJobLabel}
-    jobIndex={exportJobIndex}
-    jobTotal={exportJobTotal}
-    presetName={exportPresetDisplayName}
-    percent={exportProgressPercent}
-    message={$editor.exportStatus.message}
-    outputPath={$editor.exportStatus.outputPath ?? null}
-    on:reveal={revealExport}
-  />
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style:flex={`${workspaceSplitRatio} 1 0`}>
@@ -3243,44 +3247,31 @@
   </div>
   </section>
 
-  <section class="transport-bar" aria-label="Editor controls">
-    <div class="transport-bar__stat">
-      <span>Selected</span>
-      <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : 'None'}</strong>
-      {#if selectedSegment}
-        <small>{formatTime(selectedSegment.sourceStart)} - {formatTime(selectedSegment.sourceEnd)}</small>
-      {/if}
+  <footer class="bottom-bar" aria-label="Editor status">
+    <div class="bottom-bar__stats">
+      <span class="stat" title="Total output length after cuts">
+        <span class="stat__label">Output</span>
+        <strong>{formatTime(outputDuration)}</strong>
+        <small>{segments.length} seg</small>
+      </span>
+      <span
+        class="stat"
+        class:stat--empty={!selectedSegment}
+        title={selectedSegment ? `${formatTime(selectedSegment.sourceStart)} - ${formatTime(selectedSegment.sourceEnd)}` : 'No segment selected'}
+      >
+        <span class="stat__label">Selected</span>
+        <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : '—'}</strong>
+      </span>
+      <span
+        class="stat"
+        class:stat--empty={!normalizedRange}
+        title={normalizedRange ? `${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}` : 'No In/Out range'}
+      >
+        <span class="stat__label">Range</span>
+        <strong>{normalizedRange ? formatTime(rangeDuration) : '—'}</strong>
+      </span>
     </div>
-    <div class="transport-bar__stat">
-      <span>Range</span>
-      <strong>{normalizedRange ? formatTime(rangeDuration) : 'None'}</strong>
-      {#if normalizedRange}
-        <small>{formatTime(normalizedRange.start)} - {formatTime(normalizedRange.end)}</small>
-      {/if}
-    </div>
-    <div class="transport-bar__stat">
-      <span>Output</span>
-      <strong>{formatTime(outputDuration)}</strong>
-      <small>{segments.length} segment{segments.length === 1 ? '' : 's'}</small>
-    </div>
-    <div class="transport-bar__volume">
-      <label for="clip-volume">Volume</label>
-      <input
-        id="clip-volume"
-        class="app-slider"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value={Math.round(clipVolume * 100)}
-        disabled={!$editor.currentFile || !metadata?.audioCodec}
-        aria-label="Clip volume"
-        style:--slider-fill={`${Math.round(clipVolume * 100)}%`}
-        on:input={handleVolumeInput}
-      />
-      <span>{Math.round(clipVolume * 100)}%</span>
-    </div>
-    <div class="transport-bar__actions">
+    <div class="bottom-bar__playback">
       <IconButton
         icon="loop"
         variant="secondary"
@@ -3289,33 +3280,28 @@
         disabled={!canUseRange}
         on:click={toggleRangeLoop}
       />
-      <IconButton
-        icon="delete"
-        variant="secondary"
-        title="Delete selected segment (Del)"
-        disabled={!selectedSegment || segments.length <= 1}
-        on:click={deleteSelectedSegment}
-      />
-    </div>
-  </section>
-
-  <footer class="bottom-bar">
-    <div class="metadata">
-      {#if metadata}
-        <span>{metadata.width}x{metadata.height}</span>
-        <span>{metadata.fps.toFixed(2)} fps</span>
-        <span>{metadata.codec}</span>
-        <span>{metadata.audioCodec ? `${metadata.audioCodec}${metadata.audioChannels ? ` ${metadata.audioChannels}ch` : ''}` : 'no audio'}</span>
-        <span>{$editor.previewStrategy}</span>
-        <span>{formatBytes(metadata.fileSize)}</span>
-      {:else}
-        <span>Open a clip to start cutting</span>
-      {/if}
+      <div class="bottom-bar__volume">
+        <input
+          id="clip-volume"
+          class="app-slider"
+          type="range"
+          min="0"
+          max="100"
+          step="1"
+          value={Math.round(clipVolume * 100)}
+          disabled={!$editor.currentFile || !metadata?.audioCodec}
+          aria-label="Clip volume"
+          title="Clip volume"
+          style:--slider-fill={`${Math.round(clipVolume * 100)}%`}
+          on:input={handleVolumeInput}
+        />
+        <span>{Math.round(clipVolume * 100)}%</span>
+      </div>
     </div>
     <div class="bottom-bar__status">
       <ProgressBar
         active={$editor.exportStatus.state === 'running'}
-        label={$editor.exportStatus.message}
+        label={exportStatusLabel}
         percent={exportProgressPercent}
         state={$editor.exportStatus.state}
         dismissible={statusDismissible}
