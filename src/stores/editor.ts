@@ -3,6 +3,9 @@ import { writable } from 'svelte/store';
 export type VideoMetadata = {
   duration: number;
   fps: number;
+  /** Highest frame rate; frame stepping uses it. Missing in older project files. */
+  maxFps?: number;
+  variableFrameRate?: boolean;
   codec: string;
   width: number;
   height: number;

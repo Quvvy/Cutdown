@@ -22,6 +22,10 @@ static EXPORT_CANCELLED: AtomicBool = AtomicBool::new(false);
 pub struct VideoMetadata {
     pub duration: f64,
     pub fps: f64,
+    /// Highest frame rate in the stream (r_frame_rate). Frame stepping uses this so it
+    /// never skips frames in variable-frame-rate recordings.
+    pub max_fps: f64,
+    pub variable_frame_rate: bool,
     pub codec: String,
     pub width: u32,
     pub height: u32,
@@ -143,6 +147,38 @@ pub struct PreviewResult {
     strategy: String,
 }
 
+/// Average and maximum rate differ by more than 5% (screen/phone recordings, OBS with
+/// dropped frames); small differences are rounding (29.97 vs 30000/1001).
+fn is_variable_frame_rate(average: f64, max: f64) -> bool {
+    average > 0.0 && max > 0.0 && (max - average).abs() / max > 0.05
+}
+
+/// Rotation from the stream's display matrix (or the older `rotate` tag), in degrees.
+fn display_rotation(video_stream: &Value) -> i64 {
+    let from_side_data = video_stream
+        .get("side_data_list")
+        .and_then(Value::as_array)
+        .and_then(|list| list.iter().find_map(|item| item.get("rotation").and_then(parse_json_f64)));
+    let from_tag = video_stream
+        .get("tags")
+        .and_then(|tags| tags.get("rotate"))
+        .and_then(parse_json_f64);
+    from_side_data.or(from_tag).unwrap_or(0.0).round() as i64
+}
+
+/// Width and height as the video is shown. Phones store portrait video as landscape
+/// frames plus a 90° rotation flag; players and ffmpeg filters see it upright, so the
+/// preview, crop math and labels must use the swapped size.
+fn upright_dimensions(video_stream: &Value) -> (u32, u32) {
+    let width = video_stream.get("width").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let height = video_stream.get("height").and_then(Value::as_u64).unwrap_or(0) as u32;
+    if display_rotation(video_stream).rem_euclid(180) == 90 {
+        (height, width)
+    } else {
+        (width, height)
+    }
+}
+
 #[tauri::command]
 pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
     let input = PathBuf::from(path);
@@ -203,23 +239,27 @@ pub fn probe_video(path: String) -> Result<VideoMetadata, String> {
     let file_size = std::fs::metadata(&input)
         .map_err(|err| format!("Failed to read input metadata: {err}"))?
         .len();
+    let (width, height) = upright_dimensions(video_stream);
+    let max_fps = video_stream
+        .get("r_frame_rate")
+        .and_then(Value::as_str)
+        .and_then(parse_rate)
+        .filter(|rate| *rate > 0.0 && *rate < 1000.0)
+        .unwrap_or(fps);
+    let variable_frame_rate = is_variable_frame_rate(fps, max_fps);
 
     Ok(VideoMetadata {
         duration,
         fps,
+        max_fps,
+        variable_frame_rate,
         codec: video_stream
             .get("codec_name")
             .and_then(Value::as_str)
             .unwrap_or("unknown")
             .to_string(),
-        width: video_stream
-            .get("width")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-        height: video_stream
-            .get("height")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
+        width,
+        height,
         file_size,
         audio_codec,
         audio_channels,
@@ -2145,6 +2185,33 @@ fn extract_waveform_blocking(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn flags_variable_frame_rate() {
+        assert!(super::is_variable_frame_rate(37.5, 60.0));
+        assert!(!super::is_variable_frame_rate(29.97, 30000.0 / 1001.0));
+        assert!(!super::is_variable_frame_rate(30.0, 30.0));
+        assert!(!super::is_variable_frame_rate(0.0, 60.0));
+    }
+
+    #[test]
+    fn swaps_dimensions_for_rotated_phone_video() {
+        let rotated = serde_json::json!({
+            "width": 1280, "height": 720,
+            "side_data_list": [{ "side_data_type": "Display Matrix", "rotation": -90 }]
+        });
+        assert_eq!(super::upright_dimensions(&rotated), (720, 1280));
+
+        let tagged = serde_json::json!({ "width": 1920, "height": 1080, "tags": { "rotate": "270" } });
+        assert_eq!(super::upright_dimensions(&tagged), (1080, 1920));
+
+        let flipped = serde_json::json!({
+            "width": 1280, "height": 720,
+            "side_data_list": [{ "rotation": 180 }]
+        });
+        assert_eq!(super::upright_dimensions(&flipped), (1280, 720));
+        assert_eq!(super::upright_dimensions(&serde_json::json!({ "width": 640, "height": 360 })), (640, 360));
+    }
+
     use super::*;
 
     #[test]

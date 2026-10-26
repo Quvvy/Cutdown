@@ -95,7 +95,7 @@
   {#if filePath}
     <span class="toolbar__clip-name" title={filePath}>{fileName}</span>
     {#if metadata}
-      <span class="toolbar__meta" title={metadataDetail}>{metadata.width}×{metadata.height} · {metadata.fps.toFixed(0)} fps · {metadata.codec}</span>
+      <span class="toolbar__meta" title={metadataDetail}>{metadata.width}×{metadata.height} · {metadata.variableFrameRate ? `VFR, up to ${Math.round(metadata.maxFps ?? metadata.fps)}` : `${metadata.fps.toFixed(0)}`} fps · {metadata.codec}</span>
     {/if}
   {/if}
   <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => dispatch('help')}>?</button>

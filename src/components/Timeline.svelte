@@ -2,6 +2,7 @@
   import { createEventDispatcher, onMount, tick } from 'svelte';
   import IconButton from './IconButton.svelte';
   import TimelineFilmstrip from './TimelineFilmstrip.svelte';
+  import { MAX_ZOOM, pixelsPerSecondForZoom, zoomToFit } from '../lib/timelineZoom';
   import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
   import { placeMenu } from '../lib/placeMenu';
@@ -68,7 +69,6 @@
     width: number;
   };
 
-  const MAX_ZOOM = 320;
 
   const dispatch = createEventDispatcher<{
     seek: { seconds: number };
@@ -126,12 +126,7 @@
   const MIN_SEGMENT_HANDLE_WIDTH = 20;
 
   function zoomLevelForSequenceSeconds(sequenceSeconds: number): number {
-    if (sequenceSeconds <= 0) {
-      return 28;
-    }
-
-    const viewport = scrollArea?.clientWidth ?? 640;
-    return clamp((viewport / sequenceSeconds - 1.5) / 0.42, 0, MAX_ZOOM);
+    return zoomToFit(sequenceSeconds, scrollArea?.clientWidth ?? 640);
   }
 
   export function zoomToFitView(): void {
@@ -167,7 +162,7 @@
   }
 
   $: outputDuration = segments.reduce((total, segment) => total + Math.max(0, segment.sourceEnd - segment.sourceStart), 0);
-  $: pixelsPerSecond = 1.5 + zoom * 0.42;
+  $: pixelsPerSecond = pixelsPerSecondForZoom(zoom);
   $: timelineWidth = Math.max(640, outputDuration * pixelsPerSecond);
   $: playheadLeft = sourceToSequenceTime(currentTime) * pixelsPerSecond;
   $: normalizedRange =
@@ -199,7 +194,7 @@
     }
 
     const targetSpacing = 90;
-    const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+    const candidates = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
     const step = candidates.find((candidate) => candidate * pxPerSecond >= targetSpacing) ?? candidates[candidates.length - 1];
     const ticks = [];
 

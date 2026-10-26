@@ -282,7 +282,8 @@
     selectedSegmentId: string | null;
   }> = [];
   let previewFallbackRunning = false;
-  let timelineZoom = 28;
+  // ~13 px/s until the clip opens and the timeline fits it (see timelineZoom.ts).
+  let timelineZoom = 225;
   let videoTrackHeight = 68;
   let audioTrackHeight = 58;
   let workspaceEl: HTMLElement | undefined;
@@ -873,7 +874,9 @@
   $: clipMetadataDetail = metadata
     ? [
         `${metadata.width}x${metadata.height}`,
-        `${metadata.fps.toFixed(2)} fps`,
+        metadata.variableFrameRate
+          ? `variable frame rate, ${metadata.fps.toFixed(1)} fps average, up to ${Math.round(metadata.maxFps ?? metadata.fps)}`
+          : `${metadata.fps.toFixed(2)} fps`,
         metadata.codec,
         metadata.audioCodec ? `${metadata.audioCodec}${metadata.audioChannels ? ` ${metadata.audioChannels}ch` : ''}` : 'no audio',
         `preview: ${$editor.previewStrategy}`,
@@ -2095,7 +2098,9 @@
   }
 
   function runShortcut(action: ShortcutAction, shiftKey: boolean): void {
-    const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
+    // Step by the highest frame rate so variable-frame-rate clips never skip a frame.
+    const stepFps = metadata?.maxFps || metadata?.fps || 30;
+    const frameStep = 1 / stepFps;
     const step = shiftKey ? 1 : frameStep;
 
     switch (action) {

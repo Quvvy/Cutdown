@@ -46,12 +46,23 @@ async function probe(path: string) {
   if (!video) {
     throw new Error('No video stream found.');
   }
+  // Same as upright_dimensions in Rust: portrait phone video is landscape frames + a 90° flag.
+  const rotation = Number(
+    video.side_data_list?.find((item: { rotation?: number }) => item.rotation !== undefined)?.rotation ?? video.tags?.rotate ?? 0,
+  );
+  const sideways = ((Math.round(rotation) % 180) + 180) % 180 === 90;
   return {
     duration: Number(info.format.duration),
     fps: parseRate(video.avg_frame_rate) || parseRate(video.r_frame_rate),
+    maxFps: parseRate(video.r_frame_rate) || parseRate(video.avg_frame_rate),
+    variableFrameRate: (() => {
+      const average = parseRate(video.avg_frame_rate);
+      const max = parseRate(video.r_frame_rate);
+      return average > 0 && max > 0 && Math.abs(max - average) / max > 0.05;
+    })(),
     codec: video.codec_name,
-    width: video.width,
-    height: video.height,
+    width: sideways ? video.height : video.width,
+    height: sideways ? video.width : video.height,
     fileSize: Number(info.format.size),
     audioCodec: audio?.codec_name ?? null,
     audioChannels: audio?.channels ?? null,
