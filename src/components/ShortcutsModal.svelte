@@ -42,7 +42,7 @@
     {
       title: 'Open clips',
       items: [
-        'Open a video from the toolbar, drag-and-drop onto the window, or use Recent for prior sources. Opening a file while Cutdown is already running sends it to that window.',
+        'Open a video from the File menu (Ctrl+O), drag-and-drop onto the window, or pick a recent source under File. Opening a file while Cutdown is already running sends it to that window.',
         'Reopening a raw video starts a fresh edit — use Save project when you want to keep your work.',
         'Latest replay opens the newest file in your OBS watch folder (set in Settings → Folders).',
         'Save and reopen .cutdown project files to restore cuts, range, crop, and markers.',

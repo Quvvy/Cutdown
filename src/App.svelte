@@ -201,7 +201,7 @@
   let cropCustomAspectW = 16;
   let cropCustomAspectH = 9;
   let cropRect: NormalizedCropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
-  let recentMenuOpen = false;
+  let fileMenuOpen = false;
   let uploadProviders: UploadProvider[] = [];
   let uploadProviderSummaries: UploadProviderSummary[] = [];
   let uploadPickerProviders: UploadProviderSummary[] = [];
@@ -304,6 +304,8 @@
   let trayHintDismissed = false;
 
   const TRAY_HINT_KEY = 'cutdown-tray-hint-dismissed';
+  const TRAY_HINT_MESSAGE =
+    'Closing the window keeps Cutdown running in the tray. Restore it from the tray icon, or change this in Settings → General.';
   const BOOKMARK_DEDUPE_SECONDS = 0.05;
   const BOOKMARK_REMOVE_TOLERANCE = 0.1;
 
@@ -582,6 +584,7 @@
       runAtStartup = settings.runAtStartup;
       startMinimizedToTray = settings.startMinimizedToTray;
       closeToTray = settings.closeToTray ?? true;
+      showTrayHintOnce();
       uploadProviders = resolveUploadProvidersFromSettings(settings);
       const bootstrapSettingsRecord = settings as AppSettings & Record<string, unknown>;
       defaultUploadProviderId =
@@ -623,7 +626,12 @@
     }
   }
 
-  function dismissTrayHint(): void {
+  // One-time tip instead of a permanent banner.
+  function showTrayHintOnce(): void {
+    if (!closeToTray || trayHintDismissed) {
+      return;
+    }
+    pushToast(TRAY_HINT_MESSAGE, 'info', 12000);
     trayHintDismissed = true;
     try {
       localStorage.setItem(TRAY_HINT_KEY, '1');
@@ -639,26 +647,31 @@
     } catch {
       // Ignore storage failures.
     }
-    pushToast('Tray minimize tip restored.', 'info');
+    showTrayHintOnce();
   }
 
-  function toggleRecentMenu(): void {
-    recentMenuOpen = !recentMenuOpen;
+  function toggleFileMenu(): void {
+    fileMenuOpen = !fileMenuOpen;
+  }
+
+  function runFileAction(action: () => unknown): void {
+    fileMenuOpen = false;
+    void action();
   }
 
   function handleWindowClick(event: MouseEvent): void {
-    if (!recentMenuOpen) {
+    if (!fileMenuOpen) {
       return;
     }
 
     const target = event.target as HTMLElement;
-    if (!target.closest('.toolbar-recent')) {
-      recentMenuOpen = false;
+    if (!target.closest('.file-menu')) {
+      fileMenuOpen = false;
     }
   }
 
   function openRecentSource(path: string): void {
-    recentMenuOpen = false;
+    fileMenuOpen = false;
     void openIncomingPath(path);
   }
 
@@ -2828,7 +2841,7 @@
 <ToastHost />
 
 <main class="shell" class:shell--dragover={dragOver}>
-  {#if !ffmpegAvailable || (closeToTray && !trayHintDismissed)}
+  {#if !ffmpegAvailable}
     <div class="shell__alerts">
       {#if !ffmpegAvailable}
         <div class="ffmpeg-banner" role="alert">
@@ -2852,50 +2865,48 @@
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>
       {/if}
-      {#if closeToTray && !trayHintDismissed}
-        <div class="tray-hint-banner">
-          <span>Closing the window sends Cutdown to the tray (change this in Settings → General). Use the tray icon or Open Editor to restore.</span>
-          <button type="button" class="secondary" on:click={dismissTrayHint}>Dismiss</button>
-        </div>
-      {/if}
     </div>
   {/if}
 
   <section class="toolbar" aria-label="Editor toolbar">
-    <IconButton icon="open" title="Open video file (Ctrl+O)" on:click={chooseClip} />
-    <div class="toolbar-recent">
+    <div class="file-menu">
       <button
         type="button"
-        class="secondary"
-        class:active={recentMenuOpen}
-        title="Recently opened sources"
-        aria-expanded={recentMenuOpen}
-        on:click|stopPropagation={toggleRecentMenu}
+        class="secondary file-menu__trigger"
+        class:active={fileMenuOpen}
+        aria-haspopup="menu"
+        aria-expanded={fileMenuOpen}
+        on:click|stopPropagation={toggleFileMenu}
       >
-        Recent
+        File
       </button>
-      {#if recentMenuOpen}
+      {#if fileMenuOpen}
         <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <div class="toolbar-recent__menu" role="menu" tabindex="-1" on:click|stopPropagation={() => {}}>
+        <div
+          class="file-menu__panel"
+          role="menu"
+          tabindex="-1"
+          on:click|stopPropagation={() => {}}
+          on:keydown={(event) => event.key === 'Escape' && (fileMenuOpen = false)}
+        >
+          <button type="button" role="menuitem" on:click={() => runFileAction(chooseClip)}><span>Open video…</span><kbd>Ctrl+O</kbd></button>
+          <button type="button" role="menuitem" on:click={() => runFileAction(openProject)}><span>Open project…</span></button>
+          <button type="button" role="menuitem" title="Open newest video in watch folder" on:click={() => runFileAction(loadLatestReplay)}><span>Latest replay</span></button>
+          <button type="button" role="menuitem" disabled={!$editor.currentFile} on:click={() => runFileAction(saveProject)}><span>Save project</span><kbd>Ctrl+S</kbd></button>
+          <hr class="file-menu__sep" />
+          <p class="file-menu__heading">Recent</p>
           {#if recentSources.length === 0}
-            <p class="toolbar-recent__empty">No recent sources yet.</p>
+            <p class="file-menu__empty">No recent sources yet.</p>
           {:else}
-            <ul class="toolbar-recent__list">
-              {#each recentSources as source (source)}
-                <li>
-                  <button type="button" role="menuitem" title={source} on:click={() => openRecentSource(source)}>
-                    {source.split(/[\\/]/).pop() ?? source}
-                  </button>
-                </li>
-              {/each}
-            </ul>
+            {#each recentSources as source (source)}
+              <button type="button" role="menuitem" title={source} on:click={() => openRecentSource(source)}>
+                <span>{source.split(/[\\/]/).pop() ?? source}</span>
+              </button>
+            {/each}
           {/if}
         </div>
       {/if}
     </div>
-    <IconButton icon="save" title="Save Cutdown project (Ctrl+S)" disabled={!$editor.currentFile} on:click={() => void saveProject()} />
-    <button type="button" class="secondary" title="Open Cutdown project" on:click={() => void openProject()}>Open project</button>
-    <button type="button" class="secondary" title="Open newest video in watch folder" on:click={() => void loadLatestReplay()}>Latest replay</button>
     <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
     <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
     <div class="toolbar__spacer"></div>
