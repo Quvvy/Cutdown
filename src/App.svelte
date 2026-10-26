@@ -9,15 +9,17 @@
   import { get } from 'svelte/store';
   import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import EditorToolbar from './components/EditorToolbar.svelte';
   import ExportModal from './components/ExportModal.svelte';
-  import IconButton from './components/IconButton.svelte';
-  import ProgressBar from './components/ProgressBar.svelte';
   import RelinkSourceModal from './components/RelinkSourceModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import MarkerLabelModal from './components/MarkerLabelModal.svelte';
+  import PreviewToolbar from './components/PreviewToolbar.svelte';
   import ShortcutsModal from './components/ShortcutsModal.svelte';
+  import StatusBar from './components/StatusBar.svelte';
   import Timeline from './components/Timeline.svelte';
   import ToastHost from './components/ToastHost.svelte';
+  import TransportRow from './components/TransportRow.svelte';
   import UploadTargetModal from './components/UploadTargetModal.svelte';
   import UpdateModal from './components/UpdateModal.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
@@ -35,6 +37,7 @@
     parseCustomPresetsFromSettings,
     type CustomExportPreset,
   } from './lib/exportPresets';
+  import { resolveShortcut, type ShortcutAction } from './lib/editorShortcuts';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
     audioPresetFormat,
@@ -201,7 +204,6 @@
   let cropCustomAspectW = 16;
   let cropCustomAspectH = 9;
   let cropRect: NormalizedCropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
-  let fileMenuOpen = false;
   let uploadProviders: UploadProvider[] = [];
   let uploadProviderSummaries: UploadProviderSummary[] = [];
   let uploadPickerProviders: UploadProviderSummary[] = [];
@@ -648,31 +650,6 @@
       // Ignore storage failures.
     }
     showTrayHintOnce();
-  }
-
-  function toggleFileMenu(): void {
-    fileMenuOpen = !fileMenuOpen;
-  }
-
-  function runFileAction(action: () => unknown): void {
-    fileMenuOpen = false;
-    void action();
-  }
-
-  function handleWindowClick(event: MouseEvent): void {
-    if (!fileMenuOpen) {
-      return;
-    }
-
-    const target = event.target as HTMLElement;
-    if (!target.closest('.file-menu')) {
-      fileMenuOpen = false;
-    }
-  }
-
-  function openRecentSource(path: string): void {
-    fileMenuOpen = false;
-    void openIncomingPath(path);
   }
 
   $: cropLockedAspectRatio = (() => {
@@ -1400,11 +1377,6 @@
     refreshPreviewPlaybackAfterSegmentEdit();
   }
 
-  function handleVolumeInput(event: Event): void {
-    const value = Number((event.currentTarget as HTMLInputElement).value);
-    clipVolume = clamp(value / 100, 0, 1);
-  }
-
   function toggleRangeLoop(): void {
     if (!canUseRange) {
       return;
@@ -1986,221 +1958,115 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
-    const isTextInput =
-      target?.tagName === 'TEXTAREA' ||
-      target?.isContentEditable ||
-      (target instanceof HTMLInputElement &&
-        !['button', 'checkbox', 'radio', 'range'].includes(target.type));
+    const action = resolveShortcut(event, {
+      isTextInput:
+        target?.tagName === 'TEXTAREA' ||
+        Boolean(target?.isContentEditable) ||
+        (target instanceof HTMLInputElement && !['button', 'checkbox', 'radio', 'range'].includes(target.type)),
+      modals: {
+        export: exportModalOpen,
+        settings: settingsModalOpen,
+        history: historyDrawerOpen,
+        shortcuts: shortcutsModalOpen,
+        markerLabel: markerLabelModalOpen,
+      },
+      hasSelectedSegment: Boolean($editor.selectedSegmentId),
+      hasClip: canExport,
+      hasRange: canUseRange && Boolean(normalizedRange),
+    });
 
-    if (event.key === 'Escape') {
-      if (
-        exportModalOpen ||
-        settingsModalOpen ||
-        historyDrawerOpen ||
-        shortcutsModalOpen ||
-        markerLabelModalOpen
-      ) {
-        event.preventDefault();
-        closeModals();
+    if (!action) {
+      return;
+    }
+
+    event.preventDefault();
+    runShortcut(action, event.shiftKey);
+  }
+
+  function runShortcut(action: ShortcutAction, shiftKey: boolean): void {
+    const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
+    const step = shiftKey ? 5 : frameStep;
+
+    switch (action) {
+      case 'closeModals':
+        return closeModals();
+      case 'deselect':
+        return deselectSegment();
+      case 'showHelp':
+        shortcutsModalOpen = true;
         return;
-      }
-
-      if ($editor.selectedSegmentId) {
-        event.preventDefault();
-        deselectSegment();
+      case 'undo':
+        return undoSegmentEdit();
+      case 'redo':
+        return redoSegmentEdit();
+      case 'duplicate':
+        return duplicateSelectedSegment();
+      case 'open':
+        void chooseClip();
         return;
-      }
-    }
-
-    if (event.key === '?' && !event.ctrlKey && !event.altKey) {
-      event.preventDefault();
-      shortcutsModalOpen = true;
-      return;
-    }
-
-    if (isTextInput) {
-      return;
-    }
-
-    if (event.ctrlKey && event.key.toLowerCase() === 'z') {
-      event.preventDefault();
-      if (event.shiftKey) {
-        redoSegmentEdit();
-      } else {
-        undoSegmentEdit();
-      }
-      return;
-    }
-
-    if (event.ctrlKey && event.key.toLowerCase() === 'y') {
-      event.preventDefault();
-      redoSegmentEdit();
-      return;
-    }
-
-    if (event.ctrlKey && event.key.toLowerCase() === 'd') {
-      event.preventDefault();
-      duplicateSelectedSegment();
-      return;
-    }
-
-    if (
-      event.ctrlKey &&
-      event.key.toLowerCase() === 'o' &&
-      !exportModalOpen &&
-      !settingsModalOpen &&
-      !shortcutsModalOpen
-    ) {
-      event.preventDefault();
-      void chooseClip();
-      return;
-    }
-
-    if (
-      event.ctrlKey &&
-      event.key.toLowerCase() === 's' &&
-      !exportModalOpen &&
-      !settingsModalOpen
-    ) {
-      event.preventDefault();
-      if ($editor.currentFile) {
-        void saveProject();
-      } else {
-        pushToast('Open a clip before saving a project.', 'info');
-      }
-      return;
-    }
-
-    if (
-      event.ctrlKey &&
-      event.key.toLowerCase() === 'e' &&
-      !exportModalOpen &&
-      !settingsModalOpen &&
-      !shortcutsModalOpen
-    ) {
-      event.preventDefault();
-      if (canExport && !openingClip) {
-        void openExportModal();
-      } else {
-        pushToast('Open a clip before exporting.', 'info');
-      }
-      return;
-    }
-
-    if (!canExport) {
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'i') {
-      setRangeMarker('start', $editor.currentTime);
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'o') {
-      setRangeMarker('end', $editor.currentTime);
-      return;
-    }
-
-    if (event.code === 'Space') {
-      event.preventDefault();
-      preview?.togglePlayback();
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'j') {
-      event.preventDefault();
-      seekBySequence(-1);
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'k') {
-      event.preventDefault();
-      preview?.pausePlayback();
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'l') {
-      event.preventDefault();
-      seekBySequence(1);
-      return;
-    }
-
-    if (event.key === '[' && canUseRange && normalizedRange) {
-      event.preventDefault();
-      seekTo(normalizedRange.start);
-      return;
-    }
-
-    if (event.key === ']' && canUseRange && normalizedRange) {
-      event.preventDefault();
-      seekTo(normalizedRange.end);
-      return;
-    }
-
-    if (event.key === ',' || event.key === '<') {
-      event.preventDefault();
-      goToPreviousMarker();
-      return;
-    }
-
-    if (event.key === '.' || event.key === '>') {
-      event.preventDefault();
-      goToNextMarker();
-      return;
-    }
-
-    if (event.shiftKey && event.key.toLowerCase() === 'm') {
-      event.preventDefault();
-      if (removeNearestBookmark($editor.currentTime)) {
-        editor.update((state) => ({
-          ...state,
-          exportStatus: {
-            state: 'idle',
-            message: 'Removed marker at playhead.',
-          },
-        }));
-      }
-      return;
-    }
-
-    if (event.key.toLowerCase() === 'm') {
-      event.preventDefault();
-      addBookmarkMarker($editor.currentTime);
-      return;
-    }
-
-    if (event.key.toLowerCase() === 's') {
-      splitAtCurrentTime();
-      return;
-    }
-
-    if (event.key === 'Delete' || event.key === 'Backspace') {
-      event.preventDefault();
-      if (selectedBookmarkId) {
-        deleteSelectedBookmark();
-      } else {
-        deleteSelectedSegment();
-      }
-      return;
-    }
-
-    if (event.shiftKey && event.key.toLowerCase() === 'l' && canUseRange) {
-      toggleRangeLoop();
-      return;
-    }
-
-    if (!event.ctrlKey && event.key.toLowerCase() === 'z' && canUseRange) {
-      event.preventDefault();
-      zoomToRange();
-      return;
-    }
-
-    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
-      event.preventDefault();
-
-      const frameStep = metadata?.fps ? 1 / metadata.fps : 1 / 30;
-      const step = event.shiftKey ? 5 : frameStep;
-      seekBySequence(event.key === 'ArrowRight' ? step : -step);
+      case 'save':
+        if ($editor.currentFile) {
+          void saveProject();
+        } else {
+          pushToast('Open a clip before saving a project.', 'info');
+        }
+        return;
+      case 'export':
+        if (canExport && !openingClip) {
+          void openExportModal();
+        } else {
+          pushToast('Open a clip before exporting.', 'info');
+        }
+        return;
+      case 'markIn':
+        return setRangeMarker('start', $editor.currentTime);
+      case 'markOut':
+        return setRangeMarker('end', $editor.currentTime);
+      case 'togglePlay':
+        return preview?.togglePlayback();
+      case 'reverse':
+        return seekBySequence(-1);
+      case 'pause':
+        return preview?.pausePlayback();
+      case 'forward':
+        return seekBySequence(1);
+      case 'toRangeStart':
+        if (normalizedRange) seekTo(normalizedRange.start);
+        return;
+      case 'toRangeEnd':
+        if (normalizedRange) seekTo(normalizedRange.end);
+        return;
+      case 'previousMarker':
+        return goToPreviousMarker();
+      case 'nextMarker':
+        return goToNextMarker();
+      case 'removeMarkerAtPlayhead':
+        if (removeNearestBookmark($editor.currentTime)) {
+          editor.update((state) => ({
+            ...state,
+            exportStatus: { state: 'idle', message: 'Removed marker at playhead.' },
+          }));
+        }
+        return;
+      case 'addMarker':
+        return addBookmarkMarker($editor.currentTime);
+      case 'split':
+        return splitAtCurrentTime();
+      case 'delete':
+        if (selectedBookmarkId) {
+          deleteSelectedBookmark();
+        } else {
+          deleteSelectedSegment();
+        }
+        return;
+      case 'toggleRangeLoop':
+        return toggleRangeLoop();
+      case 'zoomToRange':
+        return zoomToRange();
+      case 'stepBack':
+        return seekBySequence(-step);
+      case 'stepForward':
+        return seekBySequence(step);
     }
   }
 
@@ -2835,7 +2701,6 @@
   on:pointermove={updateWorkspaceResize}
   on:pointerup={stopWorkspaceResize}
   on:pointercancel={stopWorkspaceResize}
-  on:click={handleWindowClick}
 />
 
 <ToastHost />
@@ -2868,59 +2733,27 @@
     </div>
   {/if}
 
-  <section class="toolbar" aria-label="Editor toolbar">
-    <div class="file-menu">
-      <button
-        type="button"
-        class="secondary file-menu__trigger"
-        class:active={fileMenuOpen}
-        aria-haspopup="menu"
-        aria-expanded={fileMenuOpen}
-        on:click|stopPropagation={toggleFileMenu}
-      >
-        File
-      </button>
-      {#if fileMenuOpen}
-        <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
-        <div
-          class="file-menu__panel"
-          role="menu"
-          tabindex="-1"
-          on:click|stopPropagation={() => {}}
-          on:keydown={(event) => event.key === 'Escape' && (fileMenuOpen = false)}
-        >
-          <button type="button" role="menuitem" on:click={() => runFileAction(chooseClip)}><span>Open video…</span><kbd>Ctrl+O</kbd></button>
-          <button type="button" role="menuitem" on:click={() => runFileAction(openProject)}><span>Open project…</span></button>
-          <button type="button" role="menuitem" title="Open newest video in watch folder" on:click={() => runFileAction(loadLatestReplay)}><span>Latest replay</span></button>
-          <button type="button" role="menuitem" disabled={!$editor.currentFile} on:click={() => runFileAction(saveProject)}><span>Save project</span><kbd>Ctrl+S</kbd></button>
-          <hr class="file-menu__sep" />
-          <p class="file-menu__heading">Recent</p>
-          {#if recentSources.length === 0}
-            <p class="file-menu__empty">No recent sources yet.</p>
-          {:else}
-            {#each recentSources as source (source)}
-              <button type="button" role="menuitem" title={source} on:click={() => openRecentSource(source)}>
-                <span>{source.split(/[\\/]/).pop() ?? source}</span>
-              </button>
-            {/each}
-          {/if}
-        </div>
-      {/if}
-    </div>
-    <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={segmentHistory.length === 0} on:click={undoSegmentEdit} />
-    <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={redoHistory.length === 0} on:click={redoSegmentEdit} />
-    <div class="toolbar__spacer"></div>
-    {#if $editor.currentFile}
-      <span class="toolbar__clip-name" title={$editor.currentFile}>{fileName}</span>
-      {#if metadata}
-        <span class="toolbar__meta" title={clipMetadataDetail}>{metadata.width}×{metadata.height} · {metadata.fps.toFixed(0)} fps · {metadata.codec}</span>
-      {/if}
-    {/if}
-    <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => (shortcutsModalOpen = true)}>?</button>
-    <IconButton icon="history" title="Clip history" on:click={() => (historyDrawerOpen = true)} />
-    <IconButton icon="settings" title="Settings" on:click={() => void openSettings()} />
-    <IconButton icon="export" title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'} variant="primary" showLabel disabled={!canExport || openingClip} on:click={openExportModal}>Export</IconButton>
-  </section>
+  <EditorToolbar
+    filePath={$editor.currentFile}
+    {metadata}
+    metadataDetail={clipMetadataDetail}
+    {recentSources}
+    canUndo={segmentHistory.length > 0}
+    canRedo={redoHistory.length > 0}
+    {canExport}
+    busy={openingClip}
+    on:open={() => void chooseClip()}
+    on:openProject={() => void openProject()}
+    on:latestReplay={() => void loadLatestReplay()}
+    on:save={() => void saveProject()}
+    on:openRecent={(event) => void openIncomingPath(event.detail.path)}
+    on:undo={undoSegmentEdit}
+    on:redo={redoSegmentEdit}
+    on:help={() => (shortcutsModalOpen = true)}
+    on:history={() => (historyDrawerOpen = true)}
+    on:settings={() => void openSettings()}
+    on:export={openExportModal}
+  />
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style:flex={`${workspaceSplitRatio} 1 0`}>
@@ -2934,132 +2767,21 @@
         </span>
       </div>
     {/if}
-    <div class="preview-panel__tools">
-      <div class="preview-panel__crop">
-        <IconButton
-          icon="crop"
-          title={cropEnabled ? 'Disable crop overlay' : 'Enable crop overlay'}
-          variant="secondary"
-          active={cropEnabled}
-          disabled={!$editor.currentFile}
-          on:click={() => {
-            cropEnabled = !cropEnabled;
-          }}
-        />
-        {#if cropEnabled}
-          <div class="crop-presets" role="group" aria-label="Crop aspect ratio">
-            <label class="preview-panel__crop-lock" title="Lock crop aspect ratio while resizing">
-              <input type="checkbox" bind:checked={cropLockAspect} />
-              Lock ratio
-            </label>
-            <button
-              type="button"
-              class="secondary"
-              class:active={cropAspect === '16:9'}
-              title="Crop 16:9"
-              on:click={() => applyAspectCrop('16:9')}
-            >
-              16:9
-            </button>
-            <button
-              type="button"
-              class="secondary"
-              class:active={cropAspect === '9:16'}
-              title="Crop 9:16"
-              on:click={() => applyAspectCrop('9:16')}
-            >
-              9:16
-            </button>
-            <button
-              type="button"
-              class="secondary"
-              class:active={cropAspect === '4:3'}
-              title="Crop 4:3"
-              on:click={() => applyAspectCrop('4:3')}
-            >
-              4:3
-            </button>
-            <button
-              type="button"
-              class="secondary"
-              class:active={cropAspect === '1:1'}
-              title="Crop 1:1"
-              on:click={() => applyAspectCrop('1:1')}
-            >
-              1:1
-            </button>
-            <span class="preview-panel__crop-custom">
-              <input
-                type="number"
-                class="preview-panel__crop-input"
-                min="1"
-                max="100"
-                bind:value={cropCustomAspectW}
-                aria-label="Custom aspect width"
-              />
-              <span>:</span>
-              <input
-                type="number"
-                class="preview-panel__crop-input"
-                min="1"
-                max="100"
-                bind:value={cropCustomAspectH}
-                aria-label="Custom aspect height"
-              />
-              <button
-                type="button"
-                class="secondary"
-                class:active={cropAspect === 'custom'}
-                title="Apply custom aspect ratio"
-                on:click={() => applyAspectCrop('custom')}
-              >
-                Custom
-              </button>
-            </span>
-            <button
-              type="button"
-              class="secondary"
-              class:active={cropAspect === 'free'}
-              title="Free crop (unlocked aspect)"
-              on:click={() => applyAspectCrop('free')}
-            >
-              Free
-            </button>
-          </div>
-        {/if}
-      </div>
-      <span class="preview-panel__divider" aria-hidden="true"></span>
-      <IconButton
-        icon="scaleFit"
-        title="Fit preview to panel"
-        variant="secondary"
-        disabled={!$editor.currentFile}
-        on:click={() => preview?.fitToView()}
-      />
-      <button
-        type="button"
-        class="secondary"
-        title="Zoom preview out"
-        disabled={!$editor.currentFile}
-        on:click={() => preview?.zoomOut()}
-      >
-        −
-      </button>
-      <button
-        type="button"
-        class="secondary"
-        title="Zoom preview in"
-        disabled={!$editor.currentFile}
-        on:click={() => preview?.zoomIn()}
-      >
-        +
-      </button>
-      <span class="preview-panel__divider" aria-hidden="true"></span>
-      <button type="button" class="secondary" class:active={previewPlaybackRate === 0.5} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 0.5)}>0.5×</button>
-      <button type="button" class="secondary" class:active={previewPlaybackRate === 1} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 1)}>1×</button>
-      <button type="button" class="secondary" class:active={previewPlaybackRate === 2} disabled={!$editor.currentFile} on:click={() => (previewPlaybackRate = 2)}>2×</button>
-      <button type="button" class="secondary" title="Rebuild a playable H.264 preview for heavy codecs" disabled={!$editor.currentFile || previewFallbackRunning} on:click={() => void prepareProxyPreview()}>Proxy</button>
-    </div>
+    <PreviewToolbar
+      hasClip={Boolean($editor.currentFile)}
+      proxyRunning={previewFallbackRunning}
+      bind:cropEnabled
+      bind:cropLockAspect
+      {cropAspect}
+      bind:cropCustomAspectW
+      bind:cropCustomAspectH
+      bind:playbackRate={previewPlaybackRate}
+      on:aspect={(event) => applyAspectCrop(event.detail.aspect)}
+      on:fit={() => preview?.fitToView()}
+      on:zoomOut={() => preview?.zoomOut()}
+      on:zoomIn={() => preview?.zoomIn()}
+      on:proxy={() => void prepareProxyPreview()}
+    />
     <VideoPreview
       bind:this={preview}
       playbackRate={previewPlaybackRate}
@@ -3095,51 +2817,18 @@
   ></button>
 
   <div class="timeline-pane" style:flex={`${1 - workspaceSplitRatio} 1 0`}>
-    <div class="transport-row" aria-label="Edit and playback controls">
-      <div class="transport-row__group">
-        <IconButton icon="split" title={canExport ? 'Split at playhead (S)' : 'Open a clip to split'} disabled={!canExport} on:click={splitAtCurrentTime} />
-        <IconButton
-          icon="delete"
-          title="Delete selected segment (Del)"
-          variant="secondary"
-          disabled={!selectedSegment || segments.length <= 1}
-          on:click={deleteSelectedSegment}
-        />
-      </div>
-      <div class="transport-row__group">
-        <IconButton
-          icon="markIn"
-          title="Mark In at playhead (I)"
-          variant="secondary"
-          disabled={!canExport}
-          on:click={() => setRangeMarker('start', $editor.currentTime)}
-        />
-        <IconButton
-          icon="markOut"
-          title="Mark Out at playhead (O)"
-          variant="secondary"
-          disabled={!canExport}
-          on:click={() => setRangeMarker('end', $editor.currentTime)}
-        />
-        <IconButton
-          icon="bookmark"
-          title="Add marker at playhead (M)"
-          variant="secondary"
-          disabled={!canExport}
-          on:click={() => addBookmarkMarker($editor.currentTime)}
-        />
-      </div>
-      <div class="transport-row__center">
-        <IconButton
-          icon={previewPlaying ? 'pause' : 'play'}
-          title={previewPlaying ? 'Pause (Space)' : 'Play (Space)'}
-          variant="secondary"
-          disabled={!$editor.currentFile}
-          on:click={() => preview?.togglePlayback()}
-        />
-      </div>
-      <span class="transport-row__hint">Right-click the timeline for range and marker tools</span>
-    </div>
+    <TransportRow
+      hasClip={Boolean($editor.currentFile)}
+      canEdit={canExport}
+      canDeleteSegment={Boolean(selectedSegment) && segments.length > 1}
+      playing={previewPlaying}
+      on:split={splitAtCurrentTime}
+      on:deleteSegment={deleteSelectedSegment}
+      on:markIn={() => setRangeMarker('start', $editor.currentTime)}
+      on:markOut={() => setRangeMarker('end', $editor.currentTime)}
+      on:addMarker={() => addBookmarkMarker($editor.currentTime)}
+      on:togglePlay={() => preview?.togglePlayback()}
+    />
   <Timeline
     bind:this={timeline}
     disabled={!$editor.currentFile}
@@ -3202,100 +2891,30 @@
   </div>
   </section>
 
-  <footer class="bottom-bar" aria-label="Editor status">
-    <div class="bottom-bar__stats">
-      <span class="stat" title="Total output length after cuts">
-        <span class="stat__label">Output</span>
-        <strong>{formatTime(outputDuration)}</strong>
-        <small>{segments.length} seg</small>
-      </span>
-      <span
-        class="stat"
-        class:stat--empty={!selectedSegment}
-        title={selectedSegment ? `${formatTime(selectedSegment.sourceStart)} - ${formatTime(selectedSegment.sourceEnd)}` : 'No segment selected'}
-      >
-        <span class="stat__label">Selected</span>
-        <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : '—'}</strong>
-      </span>
-      <span
-        class="stat"
-        class:stat--empty={!normalizedRange}
-        title={normalizedRange ? `${formatTime(normalizedRange.start)} - ${formatTime(normalizedRange.end)}` : 'No In/Out range'}
-      >
-        <span class="stat__label">Range</span>
-        <strong>{normalizedRange ? formatTime(rangeDuration) : '—'}</strong>
-      </span>
-    </div>
-    <div class="bottom-bar__playback">
-      <IconButton
-        icon="loop"
-        variant="secondary"
-        active={rangeLoopPlayback}
-        title={rangeLoopPlayback ? 'Disable range loop (Shift+L)' : 'Loop playback in I/O range (Shift+L)'}
-        disabled={!canUseRange}
-        on:click={toggleRangeLoop}
-      />
-      <div class="bottom-bar__volume">
-        <input
-          id="clip-volume"
-          class="app-slider"
-          type="range"
-          min="0"
-          max="100"
-          step="1"
-          value={Math.round(clipVolume * 100)}
-          disabled={!$editor.currentFile || !metadata?.audioCodec}
-          aria-label="Clip volume"
-          title="Clip volume"
-          style:--slider-fill={`${Math.round(clipVolume * 100)}%`}
-          on:input={handleVolumeInput}
-        />
-        <span>{Math.round(clipVolume * 100)}%</span>
-      </div>
-    </div>
-    <div class="bottom-bar__status">
-      <ProgressBar
-        active={$editor.exportStatus.state === 'running'}
-        label={exportStatusLabel}
-        percent={exportProgressPercent}
-        state={$editor.exportStatus.state}
-        dismissible={statusDismissible}
-        on:dismiss={dismissExportStatus}
-      />
-      {#if $editor.exportStatus.outputPath && ($editor.exportStatus.state === 'success' || $editor.exportStatus.state === 'error')}
-        <div class="bottom-bar__result">
-          <span class="bottom-bar__result-name" title={$editor.exportStatus.outputPath}>
-            {$editor.exportStatus.outputPath.split(/[\\/]/).pop()}
-          </span>
-          <IconButton
-            icon="copy"
-            variant="secondary"
-            title="Copy output file path"
-            on:click={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
-          />
-          {#if lastShareUrl}
-            <IconButton
-              icon="link"
-              variant="secondary"
-              title="Copy share link"
-              on:click={() => void copyShareLink(lastShareUrl ?? '')}
-            />
-          {/if}
-          <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={revealExport} />
-          <IconButton
-            icon="upload"
-            variant="secondary"
-            title="Upload and copy share link"
-            on:click={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}
-          />
-          <IconButton icon="export" variant="secondary" title="Open export settings" on:click={openExportModal} />
-        </div>
-      {:else if $editor.exportStatus.outputPath && $editor.exportStatus.state === 'running'}
-        <button type="button" class="secondary" title="Cancel export" on:click={() => void cancelExport()}>Cancel</button>
-        <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={revealExport} />
-      {/if}
-    </div>
-  </footer>
+  <StatusBar
+    {outputDuration}
+    segmentCount={segments.length}
+    selectedSegment={selectedSegment ?? null}
+    range={normalizedRange ?? null}
+    rangeLoop={rangeLoopPlayback}
+    {canUseRange}
+    volume={clipVolume}
+    volumeEnabled={Boolean($editor.currentFile && metadata?.audioCodec)}
+    exportStatus={$editor.exportStatus}
+    statusLabel={exportStatusLabel}
+    progressPercent={exportProgressPercent}
+    dismissible={statusDismissible}
+    shareUrl={lastShareUrl}
+    on:toggleLoop={toggleRangeLoop}
+    on:volume={(event) => (clipVolume = clamp(event.detail.volume, 0, 1))}
+    on:dismiss={dismissExportStatus}
+    on:copyPath={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
+    on:copyShareLink={() => void copyShareLink(lastShareUrl ?? '')}
+    on:reveal={revealExport}
+    on:upload={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}
+    on:openExport={openExportModal}
+    on:cancel={() => void cancelExport()}
+  />
 </main>
 
 <ExportModal
