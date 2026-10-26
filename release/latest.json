@@ -1,11 +1,11 @@
 {
-    "version":  "0.4.0",
-    "notes":  "Cleaner editor: one status bar instead of two, crop presets only while cropping, a compact transport row with play/pause, and range/marker tools in the timeline right-click menu.",
-    "pub_date":  "2026-10-26T12:58:19Z",
+    "version":  "0.5.0",
+    "notes":  "Reorganized around the clip loop: Clip with Cutdown in Explorer, filmstrip timeline, X/J/K/L keys, one-click export panel (Original, Discord under 20 MB, Twitter/X) saved next to the original, Copy file for Discord, and fixes for phone, VFR and long videos.",
+    "pub_date":  "2026-10-26T15:13:08Z",
     "platforms":  {
                       "windows-x86_64":  {
-                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWk9RYk03L253R1FFeDJIMDI1dDZIN3JDVTUvKzJqV09OandmS3MzaEZSSW9HNXZFWm45Q3Zva0VpOGUzOWx1TzRuSjBTdHlNK29ObmJ3dTdnK0RBWUl6S0pZd2FVWlE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDE5NDgzCWZpbGU6Q3V0ZG93bl8wLjQuMF94NjQtc2V0dXAuZXhlCnRkbnVycUtoNW5xV1p0QWhuZU9nSUFJdThCblozbVUvS1Aydk43aWM1TTZLdzVJbHRDVE90R1EydWx1NUtad1ZYQktrb3ZURTBrZHh5Z21yeTVaOUFBPT0K",
-                                             "url":  "https://github.com/Quvvy/Cutdown/releases/download/v0.4.0/Cutdown_0.4.0_x64-setup.exe"
+                                             "signature":  "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTWk9RYk03L253R1lSYnh6bEE1L0M0c25qYktyOW9TMUtOVWQrb1V2YVBPMVNybU1NeGJNWSszVWxwVEUxR1pSYnFrd1pBSFRXbDBFWElIc2VBM1VISnJPTWJnaDZKVWdJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzkzMDI3NTg4CWZpbGU6Q3V0ZG93bl8wLjUuMF94NjQtc2V0dXAuZXhlClRBK0pHYVROWldtMmVXcm83Ukc4ejFjRzVZblQ1L3NKOWpmQS9LOFNnQkxLd2RWODN5eG9MZEJpQkp5alRFM0krZXNSa3RXUFQ2TjY4SjVyOWdZNENRPT0K",
+                                             "url":  "https://github.com/Quvvy/Cutdown/releases/download/v0.5.0/Cutdown_0.5.0_x64-setup.exe"
                                          }
                   }
 }
