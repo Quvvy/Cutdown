@@ -578,8 +578,28 @@ kbd {
   gap: 4px;
 }
 
-.preview-panel__crop-custom--disabled {
-  opacity: 0.42;
+.preview-panel__crop {
+  align-items: center;
+  display: flex;
+  gap: 4px;
+}
+
+.crop-presets {
+  align-items: center;
+  border-left: 1px solid var(--line);
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+
+.crop-presets .preview-panel__crop-lock {
+  margin-right: 8px;
+}
+
+.crop-presets .preview-panel__crop-custom {
+  margin: 0 8px;
 }
 
 .preview-panel__crop-input {
