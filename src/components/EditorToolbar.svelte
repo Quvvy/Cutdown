@@ -11,6 +11,7 @@
   export let canRedo = false;
   export let canExport = false;
   export let busy = false;
+  export let exportPanelOpen = false;
 
   const dispatch = createEventDispatcher<{
     open: void;
@@ -100,12 +101,15 @@
   <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => dispatch('help')}>?</button>
   <IconButton icon="history" title="Clip history" on:click={() => dispatch('history')} />
   <IconButton icon="settings" title="Settings" on:click={() => dispatch('settings')} />
-  <IconButton
-    icon="export"
-    title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'}
-    variant="primary"
-    showLabel
-    disabled={!canExport || busy}
-    on:click={() => dispatch('export')}>Export</IconButton
-  >
+  <span data-export-button>
+    <IconButton
+      icon="export"
+      title={canExport ? 'Export clip (Ctrl+E)' : 'Open a clip before exporting'}
+      variant="primary"
+      showLabel
+      pressed={exportPanelOpen}
+      disabled={!canExport || busy}
+      on:click={() => dispatch('export')}>Export</IconButton
+    >
+  </span>
 </section>

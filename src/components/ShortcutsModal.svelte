@@ -16,7 +16,7 @@
   const shortcuts = [
     { keys: 'Ctrl + O', action: 'Open a video or Cutdown project' },
     { keys: 'Ctrl + S', action: 'Save Cutdown project' },
-    { keys: 'Ctrl + E', action: 'Open the Export window' },
+    { keys: 'Ctrl + E, then Enter', action: 'Export (Original quality, Discord or Twitter/X)' },
     { keys: 'X or S', action: 'Cut at playhead' },
     { keys: 'M', action: 'Add timeline marker at playhead' },
     { keys: ', / .', action: 'Previous / next marker' },
@@ -51,7 +51,7 @@
     {
       title: 'Edit on the timeline',
       items: [
-        'Cut with X (or S) at the playhead, then Delete removes the selected segment and the gap closes. Export (Ctrl+E) writes the kept timeline.',
+        'Cut with X (or S) at the playhead, then Delete removes the selected segment and the gap closes. Export (Ctrl+E, Enter) saves the kept parts between In and Out next to the original; Copy file in the status bar puts it on the clipboard for Discord.',
         'Click a segment to select it; drag its left or right edge to trim or extend the cut. Press Esc or click empty track space to deselect.',
         'Set In (I) and Out (O), then right-click the timeline and choose Keep only range to delete everything outside that span (one kept segment).',
         'Trim outside range (right-click menu) clips existing segments to the I/O span instead of replacing them.',

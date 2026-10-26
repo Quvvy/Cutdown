@@ -517,6 +517,114 @@ kbd {
   flex: 1;
 }
 
+.export-panel-anchor {
+  flex: 0 0 0;
+  height: 0;
+  position: relative;
+  z-index: 1300;
+}
+
+.export-panel {
+  background: var(--bg2);
+  border: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  position: absolute;
+  right: 8px;
+  top: 4px;
+  width: min(380px, calc(100vw - 16px));
+}
+
+.export-panel__summary {
+  color: var(--text);
+  font-size: 12px;
+  margin: 0;
+}
+
+.export-panel__choices {
+  display: grid;
+  gap: 4px;
+}
+
+.export-choice {
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: grid;
+  gap: 3px;
+  grid-template-columns: auto 1fr;
+  padding: 8px 10px 8px 6px;
+}
+
+.export-choice:hover {
+  background: var(--bg3);
+}
+
+.export-choice--selected {
+  background: var(--active-bg);
+  border-color: var(--active-border);
+}
+
+.export-choice input {
+  accent-color: #c9d1d9;
+  grid-row: span 2;
+  margin: 2px 8px 0 0;
+}
+
+.export-choice__head {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.export-choice__name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.export-choice__meta {
+  color: var(--muted);
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.export-choice__note {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.export-panel__destination {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-panel__destination strong {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.export-panel__actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.export-panel__actions kbd {
+  font-family: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 10px;
+  margin-left: 6px;
+  opacity: 0.7;
+}
+
 .file-menu {
   position: relative;
 }
@@ -1486,6 +1594,13 @@ kbd {
   font-size: 11px;
   min-width: 32px;
   text-align: right;
+}
+
+.bottom-bar .bottom-bar__copy-file {
+  background: var(--active-bg);
+  border-color: var(--active-border);
+  color: var(--active-fg);
+  font-weight: 600;
 }
 
 .bottom-bar__note {

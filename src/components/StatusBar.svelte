@@ -26,6 +26,7 @@
     toggleLoop: void;
     volume: { volume: number };
     dismiss: void;
+    copyFile: void;
     copyPath: void;
     copyShareLink: void;
     reveal: void;
@@ -101,6 +102,16 @@
     {#if outputPath && finished}
       <div class="bottom-bar__result">
         <span class="bottom-bar__result-name" title={outputPath}>{outputPath.split(/[\\/]/).pop()}</span>
+        {#if exportStatus.state === 'success'}
+          <button
+            type="button"
+            class="bottom-bar__copy-file"
+            title="Copy the file itself, then paste it into Discord or a folder"
+            on:click={() => dispatch('copyFile')}
+          >
+            Copy file
+          </button>
+        {/if}
         <IconButton icon="copy" variant="secondary" title="Copy output file path" on:click={() => dispatch('copyPath')} />
         {#if shareUrl}
           <IconButton icon="link" variant="secondary" title="Copy share link" on:click={() => dispatch('copyShareLink')} />

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { resolveShortcut, type ShortcutContext, type ShortcutKey } from './editorShortcuts';
 
-const noModals = { export: false, settings: false, history: false, shortcuts: false, markerLabel: false };
+const noModals = { export: false, settings: false, history: false, shortcuts: false, markerLabel: false, exportPanel: false };
 
 function context(overrides: Partial<ShortcutContext> = {}): ShortcutContext {
   return {
@@ -19,6 +19,13 @@ function press(key: string, modifiers: Partial<ShortcutKey> = {}): ShortcutKey {
 }
 
 describe('resolveShortcut', () => {
+  it('leaves the keyboard to the export panel while it is open', () => {
+    const panel = context({ modals: { ...noModals, exportPanel: true } });
+    expect(resolveShortcut(press('x'), panel)).toBeNull();
+    expect(resolveShortcut(press('ArrowLeft'), panel)).toBeNull();
+    expect(resolveShortcut(press('Escape'), panel)).toBe('closeModals');
+  });
+
   it('maps Shift+L to the range loop, not step forward', () => {
     expect(resolveShortcut(press('L', { shiftKey: true }), context())).toBe('toggleRangeLoop');
     expect(resolveShortcut(press('l'), context())).toBe('shuttleForward');

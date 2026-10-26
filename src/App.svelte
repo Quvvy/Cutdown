@@ -11,6 +11,7 @@
   import ConfirmModal from './components/ConfirmModal.svelte';
   import EditorToolbar from './components/EditorToolbar.svelte';
   import ExportModal from './components/ExportModal.svelte';
+  import ExportPanel from './components/ExportPanel.svelte';
   import RelinkSourceModal from './components/RelinkSourceModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import MarkerLabelModal from './components/MarkerLabelModal.svelte';
@@ -38,6 +39,7 @@
     type CustomExportPreset,
   } from './lib/exportPresets';
   import { resolveShortcut, type ShortcutAction } from './lib/editorShortcuts';
+  import { quickExportPath, quickExportRanges, remainingLabel, totalSeconds } from './lib/quickExport';
   import { buildPerSegmentJobs, type ExportJob } from './lib/exportQueue';
   import {
     audioPresetFormat,
@@ -223,6 +225,9 @@
   let launchHandoffReady = false;
   let drainLaunchInFlight: Promise<void> | null = null;
   let exportMode: 'sequence' | 'range' = 'sequence';
+  let exportPanelOpen = false;
+  let exportStartedAt = 0;
+  const QUICK_PRESET_IDS = ['lossless-trim', 'discord', 'twitter'];
   let rangeLoopPlayback = false;
   // Set once the user toggles loop themselves; stops automatic looping for this clip.
   let rangeLoopUserSet = false;
@@ -849,6 +854,17 @@
           .filter(Boolean)
           .join(' · ')
       : $editor.exportStatus.message;
+  $: exportEta =
+    $editor.exportStatus.state === 'running' ? remainingLabel((Date.now() - exportStartedAt) / 1000, exportProgressPercent) : null;
+  $: rangeIsNarrowed = Boolean(
+    normalizedRange && (normalizedRange.start > 0.05 || normalizedRange.end < duration - 0.05),
+  );
+  $: quickRanges = quickExportRanges(segments, rangeIsNarrowed ? normalizedRange : null);
+  $: quickExportSeconds = totalSeconds(quickRanges);
+  $: quickPresetIds = QUICK_PRESET_IDS.filter((id) => exportPresets.some((preset) => preset.id === id));
+  $: quickDestination = $editor.currentFile
+    ? quickExportPath($editor.currentFile, quickRanges[0]?.start ?? 0, extensionForExport('video', audioPresetId))
+    : '';
   $: clipMetadataDetail = metadata
     ? [
         `${metadata.width}x${metadata.height}`,
@@ -872,11 +888,9 @@
   $: rangeDuration = normalizedRange ? normalizedRange.end - normalizedRange.start : 0;
   $: canUseRange = Boolean(normalizedRange && rangeDuration > 0.05);
   $: selectedExportPreset = exportPresets.find((preset) => preset.id === exportPresetId) ?? null;
-  $: streamCopyBlockers = (() => {
-    if (!selectedExportPreset?.lossless) {
-      return [];
-    }
-
+  $: streamCopyBlockers = selectedExportPreset?.lossless ? reencodeReasons : [];
+  // Edits that make even a lossless preset re-encode.
+  $: reencodeReasons = (() => {
     const blockers: string[] = [];
     if (exportCropPixels()) {
       blockers.push('crop');
@@ -1671,6 +1685,7 @@
 
   function closeModals(): void {
     exportModalOpen = false;
+    exportPanelOpen = false;
     settingsModalOpen = false;
     shortcutsModalOpen = false;
     historyDrawerOpen = false;
@@ -1998,6 +2013,7 @@
         history: historyDrawerOpen,
         shortcuts: shortcutsModalOpen,
         markerLabel: markerLabelModalOpen,
+        exportPanel: exportPanelOpen,
       },
       hasSelectedSegment: Boolean($editor.selectedSegmentId),
       hasClip: canExport,
@@ -2066,7 +2082,7 @@
         return;
       case 'export':
         if (canExport && !openingClip) {
-          void openExportModal();
+          toggleExportPanel();
         } else {
           pushToast('Open a clip before exporting.', 'info');
         }
@@ -2284,6 +2300,7 @@
     const exportKindLabel = exportType === 'audio' ? 'audio' : job.label;
 
     exportProgressPercent = 0;
+    exportStartedAt = Date.now();
     statusDismissed = false;
     exportJobLabel = job.label;
     editor.update((state) => ({
@@ -2325,7 +2342,10 @@
       ...state,
       exportStatus: {
         state: 'success',
-        message: `Exported ${job.label}: ${formatBytes(result.fileSize)} in ${formatTime(result.duration)}.`,
+        message:
+          exportJobTotal > 1
+            ? `Exported ${job.label}: ${formatBytes(result.fileSize)}.`
+            : `Saved ${formatBytes(result.fileSize)}, ${formatTime(result.duration)} long. Copy file to paste it into Discord.`,
         outputPath: result.outputPath,
         outputSize: result.fileSize,
       },
@@ -2382,6 +2402,54 @@
       exportJobIndex = 1;
       exportJobTotal = 1;
       exportJobLabel = '';
+    }
+  }
+
+  function toggleExportPanel(): void {
+    if (!canExport || openingClip || exportQueueProcessing) {
+      exportPanelOpen = false;
+      return;
+    }
+    exportPanelOpen = !exportPanelOpen;
+  }
+
+  function openFullExportOptions(): void {
+    exportPanelOpen = false;
+    void openExportModal();
+  }
+
+  // One-click export: kept parts trimmed to In/Out, saved next to the original with a
+  // readable name. No save dialog; never overwrites (adds " (2)" instead).
+  async function quickExport(): Promise<void> {
+    if (!$editor.currentFile || quickRanges.length === 0) {
+      return;
+    }
+    if (!ffmpegAvailable) {
+      pushToast(ffmpegStatus || 'ffmpeg is needed to export. Install it from the banner at the top.', 'error');
+      return;
+    }
+
+    exportType = 'video';
+    const extension = extensionForExport('video', audioPresetId);
+    let path = quickExportPath($editor.currentFile, quickRanges[0].start, extension);
+    for (let attempt = 2; await invoke<boolean>('path_exists', { path }).catch(() => false); attempt += 1) {
+      path = quickExportPath($editor.currentFile, quickRanges[0].start, extension, attempt);
+    }
+
+    exportPanelOpen = false;
+    await processExportQueue([{ id: crypto.randomUUID(), outputPath: path, segments: quickRanges, label: 'Export' }]);
+  }
+
+  async function copyExportedFile(): Promise<void> {
+    const path = $editor.exportStatus.outputPath;
+    if (!path) {
+      return;
+    }
+    try {
+      await invoke('copy_file_to_clipboard', { path });
+      noteEdit('File copied. Paste it into Discord or a folder with Ctrl+V.');
+    } catch (error) {
+      pushToast(error instanceof Error ? error.message : String(error), 'error');
     }
   }
 
@@ -2803,8 +2871,30 @@
     on:help={() => (shortcutsModalOpen = true)}
     on:history={() => (historyDrawerOpen = true)}
     on:settings={() => void openSettings()}
-    on:export={openExportModal}
+    {exportPanelOpen}
+    on:export={toggleExportPanel}
   />
+
+  {#if exportPanelOpen}
+    <div class="export-panel-anchor">
+    <ExportPanel
+      presetIds={quickPresetIds}
+      presetId={QUICK_PRESET_IDS.includes(exportPresetId) ? exportPresetId : 'lossless-trim'}
+      exportSeconds={quickExportSeconds}
+      partCount={quickRanges.length}
+      trimmedToRange={rangeIsNarrowed}
+      sourceSeconds={duration}
+      sourceBytes={metadata?.fileSize ?? 0}
+      {reencodeReasons}
+      destinationName={quickDestination.split(/[\\/]/).pop() ?? ''}
+      destinationPath={quickDestination}
+      on:choose={(event) => (exportPresetId = event.detail.presetId)}
+      on:export={() => void quickExport()}
+      on:moreOptions={openFullExportOptions}
+      on:close={() => (exportPanelOpen = false)}
+    />
+    </div>
+  {/if}
 
   <section class="editor-workspace" bind:this={workspaceEl}>
   <section class="preview-panel" style:flex={`${workspaceSplitRatio} 1 0`}>
@@ -2953,7 +3043,7 @@
     volume={clipVolume}
     volumeEnabled={Boolean($editor.currentFile && metadata?.audioCodec)}
     exportStatus={$editor.exportStatus}
-    statusLabel={exportStatusLabel}
+    statusLabel={exportEta ? `${exportStatusLabel} · ${exportEta}` : exportStatusLabel}
     note={editNote}
     progressPercent={exportProgressPercent}
     dismissible={statusDismissible}
@@ -2961,6 +3051,7 @@
     on:toggleLoop={toggleRangeLoop}
     on:volume={(event) => (clipVolume = clamp(event.detail.volume, 0, 1))}
     on:dismiss={dismissExportStatus}
+    on:copyFile={() => void copyExportedFile()}
     on:copyPath={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
     on:copyShareLink={() => void copyShareLink(lastShareUrl ?? '')}
     on:reveal={revealExport}

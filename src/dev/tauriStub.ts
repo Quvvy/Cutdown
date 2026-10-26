@@ -67,7 +67,13 @@ const handlers: Record<string, (args: Args) => unknown> = {
   get_settings: () => defaultSettings,
   get_launch_path: () => null,
   check_ffmpeg: () => ({ available: true, ffmpegPath: 'dev', ffprobePath: 'dev', source: 'dev', message: 'Dev backend' }),
-  list_presets: () => [],
+  // Mirrors builtin_presets() in src-tauri/src/presets.rs.
+  list_presets: () => [
+    { id: 'lossless-trim', name: 'Lossless Trim', description: 'Fast stream-copy trim with no re-encode.', lossless: true, requiresGpu: false, custom: false, targetBytes: null },
+    { id: 'discord', name: 'Discord', description: "H.264/AAC sized to stay under Discord's 20 MB limit.", lossless: false, requiresGpu: false, custom: false, targetBytes: 18 * 1024 * 1024 },
+    { id: 'archive', name: 'Archive', description: 'High-quality H.264 re-encode for keeping clips.', lossless: false, requiresGpu: false, custom: false, targetBytes: null },
+    { id: 'twitter', name: 'Twitter / X', description: '720p H.264 with platform-friendly limits.', lossless: false, requiresGpu: false, custom: false, targetBytes: null },
+  ],
   detect_gpu_encoders: () => [],
   list_clip_history: () => [],
   list_upload_providers: () => [],

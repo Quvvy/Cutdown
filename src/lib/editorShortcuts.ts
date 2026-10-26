@@ -41,6 +41,8 @@ export type ShortcutContext = {
     history: boolean;
     shortcuts: boolean;
     markerLabel: boolean;
+    /** The export panel owns the keyboard while open (arrows choose, Enter exports). */
+    exportPanel: boolean;
   };
   hasSelectedSegment: boolean;
   /** A clip is loaded and editable. */
@@ -52,6 +54,10 @@ export type ShortcutContext = {
 export function resolveShortcut(event: ShortcutKey, context: ShortcutContext): ShortcutAction | null {
   const key = event.key.toLowerCase();
   const { modals } = context;
+
+  if (modals.exportPanel) {
+    return event.key === 'Escape' ? 'closeModals' : null;
+  }
 
   if (event.key === 'Escape') {
     if (modals.export || modals.settings || modals.history || modals.shortcuts || modals.markerLabel) {
