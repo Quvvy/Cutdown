@@ -32,10 +32,13 @@ Needs Windows 10/11 x64, Node, Rust, WebView2, VS C++ build tools, and ffmpeg on
 ```powershell
 npm install
 npm run tauri dev          # dev
+npm run dev                # UI only, in a normal browser (see below)
 npm run validate:release   # check + test + build smoke
 npm run tauri -- build     # installer (unsigned unless you set signing env—see docs/RELEASE.md)
 npm run icons              # after changing branding/app-icon.png
 ```
+
+**UI in a browser.** `npm run dev` and open http://127.0.0.1:1420. Without the desktop app, a dev-only stand-in (`src/dev/tauriStub.ts` + `dev/viteDevBackend.ts`) answers the backend calls: the folder button asks for a video path, and probing, the waveform and playback use your real ffmpeg/ffprobe. Export, upload, projects and tray need `npm run tauri dev`. None of this is in production builds. Restart `npm run dev` after editing `dev/viteDevBackend.ts`.
 
 Manual QA checklist: [docs/TESTING.md](docs/TESTING.md). Shipping a build: [docs/RELEASE.md](docs/RELEASE.md). Agent workflow (implement + review issues): [docs/AGENT-WORKFLOW.md](docs/AGENT-WORKFLOW.md).
 
