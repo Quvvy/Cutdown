@@ -48,7 +48,11 @@
     const mid = height / 2;
     const selectedRange = selectedSegmentId ? sequenceRangeForSegment(segments, selectedSegmentId) : null;
 
-    for (let x = 0; x < width; x += 1) {
+    // The lane is as wide as the timeline; stop where the output ends instead of
+    // repeating the last peak as a flat line across the empty space.
+    const drawWidth = Math.min(width, Math.ceil(outputDuration * pixelsPerSecond));
+
+    for (let x = 0; x < drawWidth; x += 1) {
       const sequenceTime = x / pixelsPerSecond;
       const sourceTime = sequenceToSourceTime(sequenceTime);
       const peak = peakAtSourceTime(sourceTime);
