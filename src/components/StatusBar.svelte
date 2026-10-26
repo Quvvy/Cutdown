@@ -92,7 +92,7 @@
     {/if}
     <ProgressBar
       active={exportStatus.state === 'running'}
-      label={statusLabel}
+      label={note && exportStatus.state === 'idle' ? '' : statusLabel}
       percent={progressPercent}
       state={exportStatus.state}
       {dismissible}

@@ -10,10 +10,16 @@
   --faint: #8b95a1;
   --accent: #149cff;
   --accent-soft: rgba(20, 156, 255, 0.16);
-  --range-in: #34c172;
-  --range-out: #e0524a;
-  --track-video: #14251a;
-  --track-audio: #0d1723;
+  /* The accent is reserved for the In/Out range and Export. Active toggles,
+     selections and tools use these neutrals. */
+  --active-bg: #262b31;
+  --active-border: #6b7480;
+  --active-fg: #f2f5f8;
+  --neutral-strong: #e6eaee;
+  --range-in: #149cff;
+  --range-out: #149cff;
+  --track-video: #1b1f24;
+  --track-audio: #15191e;
   --clip-selected: #75591c;
   --danger: #ff5d50;
   --shadow: 0 10px 0 rgba(0, 0, 0, 0.42);
@@ -25,10 +31,10 @@
   --scrollbar-thumb-hover: #596675;
   --slider-track: #161a1f;
   --slider-track-border: #38424c;
-  --slider-thumb: #149cff;
-  --slider-thumb-hover: #58bdff;
+  --slider-thumb: #c9d1d9;
+  --slider-thumb-hover: #ffffff;
   --slider-thumb-border: #05080b;
-  --selected-border: #f2bd4d;
+  --selected-border: #e6eaee;
   --success: #39c77b;
   color: var(--text);
   background: var(--bg0);
@@ -239,7 +245,7 @@ kbd {
 
 .workspace-splitter:hover,
 .workspace-splitter:focus-visible {
-  background: var(--accent);
+  background: var(--line-strong);
 }
 
 .timeline-pane {
@@ -296,7 +302,7 @@ kbd {
 }
 
 .shell--dragover::after {
-  border: 2px dashed var(--accent);
+  border: 2px dashed var(--neutral-strong);
   content: 'Drop a video or .cutdown project';
   inset: 0;
   pointer-events: none;
@@ -466,17 +472,17 @@ kbd {
 
 .icon-btn.active,
 .icon-btn[aria-pressed='true'] {
-  background: #102238;
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
-  color: var(--icon-active);
+  background: var(--active-bg);
+  border-color: var(--active-border);
+  box-shadow: inset 0 -2px 0 var(--neutral-strong);
+  color: var(--active-fg);
 }
 
 .bottom-bar__playback .icon-btn.active {
-  background: rgba(61, 176, 106, 0.14);
-  border-color: rgba(61, 176, 106, 0.55);
-  box-shadow: inset 0 0 0 1px rgba(61, 176, 106, 0.12);
-  color: #7ddea8;
+  background: var(--active-bg);
+  border-color: var(--active-border);
+  box-shadow: inset 0 -2px 0 var(--neutral-strong);
+  color: var(--active-fg);
 }
 
 .icon-btn__label {
@@ -496,8 +502,8 @@ kbd {
 .tool-button.active,
 .tool-button[aria-pressed="true"] {
   background: #102238;
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-color: var(--active-border);
+  box-shadow: inset 0 -2px 0 var(--neutral-strong);
   color: #8ed2ff;
 }
 
@@ -516,9 +522,9 @@ kbd {
 }
 
 .file-menu > .file-menu__trigger.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--icon-active);
+  background: var(--active-bg);
+  border-color: var(--active-border);
+  color: var(--active-fg);
 }
 
 .file-menu__panel {
@@ -637,9 +643,9 @@ kbd {
 }
 
 .preview-panel__tools button.secondary.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--icon-active);
+  background: var(--active-bg);
+  border-color: var(--active-border);
+  color: var(--active-fg);
 }
 
 .toolbar button.secondary,
@@ -688,7 +694,7 @@ kbd {
 }
 
 .preview-panel__tools button.secondary.active {
-  border-color: var(--accent);
+  border-color: var(--active-border);
   color: var(--text);
 }
 
@@ -1191,12 +1197,12 @@ kbd {
 }
 
 .timeline__segment-shell.timeline__segment--drag-target {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--neutral-strong);
 }
 
 .timeline__segment-shell--dragging {
   opacity: 0.72;
-  outline: 1px dashed #f5c25a;
+  outline: 1px dashed var(--neutral-strong);
   z-index: 4;
 }
 
@@ -1224,13 +1230,13 @@ kbd {
 }
 
 .timeline__segment--video {
-  background: #14251a;
-  border: 1px solid #3c915f;
+  background: var(--track-video);
+  border: 1px solid #3a424c;
 }
 
 .timeline__segment--audio {
   background: transparent;
-  border: 1px solid #365f84;
+  border: 1px solid #3a424c;
   color: transparent;
   min-height: 0;
   padding: 0;
@@ -1243,16 +1249,16 @@ kbd {
 }
 
 .timeline__segment--video.selected {
-  background: #6d5218;
+  background: #2c323a;
   border-color: var(--selected-border);
-  box-shadow: inset 0 0 0 1px #ffe4a6;
-  color: #fff1c5;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  color: #ffffff;
 }
 
 .timeline__segment--video.selected.timeline__segment--sole {
-  background: #19311f;
+  background: #22272d;
   box-shadow: inset 0 0 0 2px var(--selected-border);
-  color: #e8f5ec;
+  color: #ffffff;
 }
 
 .timeline__segment--audio.selected {
@@ -1264,12 +1270,12 @@ kbd {
 
 .timeline__segment--dragging {
   opacity: 0.72;
-  outline: 1px dashed #f5c25a;
+  outline: 1px dashed var(--neutral-strong);
   z-index: 4;
 }
 
 .timeline__segment--drag-target {
-  box-shadow: inset 0 0 0 2px var(--accent);
+  box-shadow: inset 0 0 0 2px var(--neutral-strong);
 }
 
 .timeline__segment span {
@@ -1315,12 +1321,12 @@ kbd {
 
 .timeline__segment-handle:hover::before,
 .timeline__segment-handle:focus-visible::before {
-  background: #fff1c5;
+  background: #ffffff;
   width: 3px;
 }
 
 .timeline__playhead {
-  background: #24adff;
+  background: var(--active-fg);
   bottom: 0;
   pointer-events: none;
   position: absolute;
@@ -1331,7 +1337,7 @@ kbd {
 }
 
 .timeline__playhead::before {
-  background: #24adff;
+  background: var(--active-fg);
   border-radius: 0;
   content: "";
   height: 8px;
@@ -1344,7 +1350,7 @@ kbd {
 
 .timeline__playhead--ruler::before {
   background: transparent;
-  border-color: var(--accent) transparent transparent transparent;
+  border-color: var(--active-fg) transparent transparent transparent;
   border-radius: 0;
   border-style: solid;
   border-width: 8px 5px 0;
@@ -1691,7 +1697,7 @@ kbd {
 }
 
 .preset-picker__option--selected {
-  border-color: var(--accent);
+  border-color: var(--active-border);
   box-shadow: inset 0 0 0 1px rgba(122, 162, 247, 0.35);
 }
 
@@ -1704,7 +1710,7 @@ kbd {
 }
 
 .preset-picker__name small {
-  color: var(--accent);
+  color: var(--muted);
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
@@ -1750,7 +1756,7 @@ kbd {
 }
 
 .preset-settings__list li.selected {
-  border-color: var(--accent);
+  border-color: var(--active-border);
 }
 
 .preset-settings__meta {
@@ -1855,7 +1861,7 @@ label.modal__mode {
 
 label.modal__mode input[type='checkbox'],
 label.modal__mode input[type='radio'] {
-  accent-color: var(--accent);
+  accent-color: #c9d1d9;
   flex-shrink: 0;
 }
 
@@ -1953,7 +1959,7 @@ label.modal__mode:has(input:disabled) {
 }
 
 .upload-settings__list li.selected {
-  border-color: var(--accent);
+  border-color: var(--active-border);
 }
 
 .upload-settings__default {
@@ -1964,7 +1970,7 @@ label.modal__mode:has(input:disabled) {
 }
 
 .upload-settings__default-badge {
-  color: var(--accent);
+  color: var(--active-fg);
   font-size: 10px;
   line-height: 1;
 }
@@ -2028,7 +2034,7 @@ label.modal__mode:has(input:disabled) {
 }
 
 .crop-overlay {
-  border: 2px solid var(--accent);
+  border: 2px solid var(--neutral-strong);
   box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
   box-sizing: border-box;
   cursor: move;
@@ -2037,7 +2043,7 @@ label.modal__mode:has(input:disabled) {
 }
 
 .crop-overlay__handle {
-  background: var(--accent);
+  background: var(--neutral-strong);
   border: 0;
   border-radius: 50%;
   bottom: -6px;
@@ -2402,8 +2408,8 @@ label.modal__stack:has(> input[type='checkbox']) input[type='checkbox'] {
 }
 
 .panel-nav__tab--active {
-  border-bottom-color: var(--accent);
-  color: var(--icon-active);
+  border-bottom-color: var(--active-border);
+  color: var(--active-fg);
   font-weight: 600;
 }
 
@@ -2517,7 +2523,7 @@ label.modal__stack:has(> input[type='checkbox']) input[type='checkbox'] {
 }
 
 .upload-target-list__option--selected {
-  border-color: var(--accent);
+  border-color: var(--active-border);
   box-shadow: inset 0 0 0 1px rgba(42, 167, 255, 0.25);
 }
 
@@ -2562,7 +2568,7 @@ button.danger.primary {
 .link-button {
   background: transparent;
   border: 0;
-  color: var(--accent);
+  color: var(--text);
   min-height: 0;
   padding: 0;
   text-decoration: underline;
@@ -2598,7 +2604,7 @@ textarea:focus-visible,
 .tool-button:focus-visible,
 .timeline__mini-button:focus-visible,
 .panel-nav__tab:focus-visible {
-  outline: 1px solid var(--accent);
+  outline: 1px solid var(--neutral-strong);
   outline-offset: -1px;
 }
 
@@ -2656,8 +2662,8 @@ textarea:focus-visible,
 
 .panel-nav__tab--active {
   background: #102238;
-  border-bottom-color: var(--accent);
-  box-shadow: inset 0 -1px 0 var(--accent);
+  border-bottom-color: var(--active-border);
+  box-shadow: inset 0 -1px 0 var(--active-border);
 }
 
 .panel-info,
@@ -2683,8 +2689,8 @@ textarea:focus-visible,
 .preset-settings__list li.selected,
 .upload-settings__list li.selected,
 .upload-target-list__option--selected {
-  border-color: var(--accent);
-  box-shadow: inset 0 -2px 0 var(--accent);
+  border-color: var(--active-border);
+  box-shadow: inset 0 -2px 0 var(--neutral-strong);
 }
 
 .toast {
@@ -2726,11 +2732,11 @@ textarea:focus-visible,
 }
 
 .crop-overlay {
-  border-color: var(--accent);
+  border-color: var(--neutral-strong);
 }
 
 .crop-overlay__handle {
-  background: var(--accent);
+  background: var(--neutral-strong);
   border: 1px solid #06121c;
 }
 

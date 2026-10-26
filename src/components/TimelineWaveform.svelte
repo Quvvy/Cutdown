@@ -61,7 +61,7 @@
         selectedRange !== null &&
         sequenceTime >= selectedRange.start &&
         sequenceTime <= selectedRange.end;
-      context.fillStyle = inSelected ? 'rgba(142, 196, 255, 0.82)' : 'rgba(95, 137, 176, 0.55)';
+      context.fillStyle = inSelected ? 'rgba(242, 245, 248, 0.9)' : 'rgba(190, 199, 209, 0.6)';
       context.fillRect(x, mid - barHeight, 1, barHeight * 2);
     }
   }
