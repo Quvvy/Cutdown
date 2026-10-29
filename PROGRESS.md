@@ -2,7 +2,9 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.5.0)
+## Now (v0.6.0)
+
+**0.6.0** — Linux. Builds as a .deb (ffmpeg as a dependency, Open With for video types and `.cutdown`) and an AppImage. Settings in `~/.config/cutdown`, secrets in the Secret Service keyring (file fallback), run at startup via XDG autostart, watch-folder desktop notifications, reveal via xdg-open. Preview streams over a token-guarded loopback HTTP server because WebKitGTK can't play `<video>` from `asset://`. Export paths keep `/` on Linux. Release builds use LTO and strip symbols; dev ffmpeg in `public/ffmpeg` is no longer embedded in the app.
 
 **0.5.0** — Reorganized around the clip loop (open, mark, export, share). Explorer right-click "Clip with Cutdown"; clips open playing with the timeline fitted, a filmstrip of frames and the waveform. Keys: X cut, J/K/L shuttle, Shift+arrows 1 s; In/Out auto-loops. One accent (range + Export), edit notes in the status bar instead of toasts, plain status messages. Export panel: Original quality / Discord (under 20 MB) / Twitter-X with honest instant-vs-re-encode labels, saved next to the original as `name-0m14s.mp4`, time remaining, Copy file to clipboard; the full dialog is under More options. Preview toolbar down to crop, fit, speed, fix preview. Fixes: rotated phone video size/crop, VFR frame stepping, multi-hour timeline zoom.
 
@@ -14,7 +16,7 @@ Internal scratch pad for what’s done, what’s flaky, and what’s next. Not r
 
 **0.3.0** — Editor state lives in `.cutdown` project files (no more per-source auto-session). Timeline proportional grid sizing.
 
-Still on Windows only. Updater (signed NSIS + `latest.json`) landed in 0.2.4.
+Updater (Windows only) (signed NSIS + `latest.json`) landed in 0.2.4.
 
 ## Works
 
