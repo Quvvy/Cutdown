@@ -1,8 +1,8 @@
 # Cutdown
 
-Windows desktop app for chopping up and compressing videos. Open a file, mark what you want to keep, export, optionally upload a link.
+Desktop app for Windows and Linux for chopping up and compressing videos. Open a file, mark what you want to keep, export, optionally upload a link.
 
-Stack: Tauri 2, Svelte, Rust, ffmpeg. Setup downloads ffmpeg to `%LOCALAPPDATA%\Cutdown\ffmpeg` (needs internet once).
+Stack: Tauri 2, Svelte, Rust, ffmpeg. On Windows, setup downloads ffmpeg to `%LOCALAPPDATA%\Cutdown\ffmpeg` (needs internet once). On Linux, Cutdown uses the system ffmpeg (the .deb pulls it in).
 
 ## What it does
 
@@ -16,9 +16,22 @@ Stack: Tauri 2, Svelte, Rust, ffmpeg. Setup downloads ffmpeg to `%LOCALAPPDATA%\
 
 **Around the editor.** Watch folder + toast when OBS drops a new file. Recent sources list. Clip history with reveal/copy path and upload. Tray: closing the window can hide to tray (Settings); the tray icon brings the window back. Only one instance runs — opening a clip or the app shortcut focuses it. Run at startup (points at the installed exe, not a dev build) follows Settings and is applied as soon as you toggle it. In-app updates from GitHub on 0.2.4+.
 
-**Uploads** (Settings → Upload targets): Catbox, File Garden (`api.filegarden.com`), or your own multipart HTTP endpoint. Secrets in Windows Credential Manager; other settings in `%APPDATA%\Cutdown\settings.json`.
+**Uploads** (Settings → Upload targets): Catbox, File Garden (`api.filegarden.com`), or your own multipart HTTP endpoint. Secrets in Windows Credential Manager (Linux: the Secret Service keyring — KWallet, GNOME Keyring — or a private `secrets.json` if no keyring is running); other settings in `%APPDATA%\Cutdown\settings.json` (Linux: `~/.config/cutdown/settings.json`).
 
 Press `?` in the app for the full shortcut list.
+
+## Linux
+
+Builds as a `.deb` (Debian, Ubuntu, Mint, Pop!_OS…) and an AppImage (anything else). Differences from Windows:
+
+- **ffmpeg** comes from your package manager, not an in-app download.
+- **Opening:** right-click a video in Dolphin / Files → *Open With* → Cutdown (the .deb registers the video types and `.cutdown` projects).
+- **Preview** plays through WebKitGTK + GStreamer. If a format shows a black frame, install `gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad`; the H.264 proxy fallback still kicks in for HEVC/AV1/10-bit. The AppImage bundles its own GStreamer.
+- **Tray:** needs a StatusNotifier/AppIndicator tray (KDE Plasma has one; GNOME needs the AppIndicator extension). Restore from the tray icon's menu → *Open Editor*.
+- **Run at startup** writes `~/.config/autostart/cutdown.desktop`.
+- **Watch-folder alerts** are desktop notifications with *Open* / *Not now*.
+- **NVIDIA:** Cutdown sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` on the proprietary driver to avoid a blank window. Set it yourself to `0` to opt out.
+- **Updates:** no in-app updater; install the newer .deb / AppImage from GitHub releases.
 
 ## Caveats worth knowing
 
@@ -30,6 +43,19 @@ Press `?` in the app for the full shortcut list.
 ## Building from source
 
 Needs Windows 10/11 x64, Node, Rust, WebView2, VS C++ build tools, and ffmpeg on PATH (or `npm run prepare:ffmpeg` for `public/ffmpeg/`).
+
+**On Linux** (Ubuntu/Debian names; Fedora/Arch: see the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/#linux)):
+
+```bash
+sudo apt install build-essential curl file pkg-config libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf ffmpeg nodejs npm cargo rustc
+npm install
+npm run tauri dev               # dev
+npm run validate:release:linux  # check + test + build smoke
+npm run build:linux             # .deb + AppImage in target/release/bundle/
+sudo apt install ./target/release/bundle/deb/Cutdown_*_amd64.deb
+```
+
+Linux bundle settings (targets, MIME types, deb dependencies) live in `src-tauri/tauri.linux.conf.json`, which Tauri merges over `tauri.conf.json` on Linux.
 
 ```powershell
 npm install

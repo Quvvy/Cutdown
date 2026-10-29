@@ -89,6 +89,8 @@ const handlers: Record<string, (args: Args) => unknown> = {
     fetchJson(
       devUrl('thumbnail', { path: String(args?.path ?? ''), time: String(args?.time ?? 0), height: String(args?.height ?? 72) }),
     ),
+  // The browser fetches media from the dev server (convertFileSrc below), not the app's media server.
+  media_base_url: () => null,
   // The browser plays the source directly; no remux/proxy.
   prepare_preview: (args) => {
     const params = args?.params as { inputPath: string } | undefined;

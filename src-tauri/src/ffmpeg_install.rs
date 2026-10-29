@@ -1,3 +1,6 @@
+// The ffmpeg download/extract path is Windows-only; Linux uses the distro ffmpeg.
+#![cfg_attr(not(windows), allow(unused_imports, dead_code))]
+
 use crate::command_util::command;
 use serde::Serialize;
 use std::fs::{self, File};
@@ -18,31 +21,15 @@ pub struct FfmpegInstallProgress {
 }
 
 pub fn user_ffmpeg_dir() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Ok(root) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(root).join("Cutdown").join("ffmpeg");
-        }
-    }
-
-    dirs_fallback().join("ffmpeg")
+    data_root().join("ffmpeg")
 }
 
 pub fn install_log_path() -> PathBuf {
-    #[cfg(windows)]
-    {
-        if let Ok(root) = std::env::var("LOCALAPPDATA") {
-            return PathBuf::from(root)
-                .join("Cutdown")
-                .join("install-ffmpeg.log");
-        }
-    }
-
-    dirs_fallback().join("install-ffmpeg.log")
+    data_root().join("install-ffmpeg.log")
 }
 
-fn dirs_fallback() -> PathBuf {
-    std::env::temp_dir().join("Cutdown")
+fn data_root() -> PathBuf {
+    crate::app_paths::data_dir().unwrap_or_else(|| std::env::temp_dir().join("Cutdown"))
 }
 
 pub fn user_ffmpeg_path(name: &str) -> PathBuf {
@@ -80,7 +67,7 @@ pub fn run_install(app: Option<&AppHandle>) -> Result<(), String> {
     {
         let _ = app;
         return Err(
-            "Automatic ffmpeg install is only supported on Windows. Install ffmpeg and add it to PATH."
+            "Automatic ffmpeg install is only supported on Windows. Install ffmpeg with your package manager (for example: sudo apt install ffmpeg), then restart Cutdown."
                 .to_string(),
         );
     }

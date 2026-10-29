@@ -29,9 +29,20 @@ export function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/** Drive-letter (`C:\`) or UNC (`\\server`) paths, or anything already using backslashes. */
+function isWindowsStylePath(path: string): boolean {
+  return /^[a-z]:/i.test(path) || path.includes('\\');
+}
+
 export function splitOutputPath(path: string): { directory: string; fileName: string } {
   if (!path) {
     return { directory: '', fileName: 'cutdown.mp4' };
+  }
+
+  if (!isWindowsStylePath(path)) {
+    const fileName = path.split('/').pop() || 'cutdown.mp4';
+    const directory = path.slice(0, path.length - fileName.length);
+    return { directory: directory === '/' ? '/' : directory.replace(/\/+$/, ''), fileName };
   }
 
   const normalized = path.replace(/\//g, '\\');
@@ -46,6 +57,10 @@ export function joinOutputPath(directory: string, fileName: string, defaultExten
 
   if (!directory) {
     return safeName;
+  }
+
+  if (!isWindowsStylePath(directory)) {
+    return `${directory.replace(/\/+$/, '')}/${safeName}`;
   }
 
   const trimmedDir = directory.replace(/\\+$/, '');

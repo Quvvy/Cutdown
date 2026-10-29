@@ -1,3 +1,4 @@
+use crate::app_paths;
 use crate::clip_history::{append_entry, ClipHistoryEntry};
 use crate::command_util::command;
 use crate::ffmpeg_install;
@@ -1300,10 +1301,29 @@ pub fn reveal_in_explorer(path: String) -> Result<(), String> {
             .ok_or_else(|| "Could not resolve output directory.".to_string())?
     };
 
+    open_folder(&target)
+}
+
+#[cfg(windows)]
+fn open_folder(target: &Path) -> Result<(), String> {
     command("explorer")
         .arg(target)
         .spawn()
         .map_err(|err| format!("Failed to open Explorer: {err}"))?;
+
+    Ok(())
+}
+
+/// Opens the folder in the desktop's file manager (Dolphin, Nautilus, …).
+#[cfg(not(windows))]
+fn open_folder(target: &Path) -> Result<(), String> {
+    command("xdg-open")
+        .arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| format!("Failed to open file manager (xdg-open): {err}"))?;
 
     Ok(())
 }
@@ -1480,8 +1500,8 @@ pub fn ffmpeg_is_available() -> bool {
 
 #[tauri::command]
 pub fn check_ffmpeg() -> FfmpegCheckResult {
-    let ffmpeg = resolve_binary("ffmpeg.exe", "ffmpeg");
-    let ffprobe = resolve_binary("ffprobe.exe", "ffprobe");
+    let ffmpeg = resolve_binary(app_paths::FFMPEG_BINARY, "ffmpeg");
+    let ffprobe = resolve_binary(app_paths::FFPROBE_BINARY, "ffprobe");
 
     let available = ffmpeg.available && ffprobe.available;
     let message = if available {
@@ -1489,8 +1509,10 @@ pub fn check_ffmpeg() -> FfmpegCheckResult {
             "Using {} ffmpeg and {} ffprobe.",
             ffmpeg.source, ffprobe.source
         )
-    } else {
+    } else if cfg!(windows) {
         "ffmpeg is not installed. Re-run the Cutdown installer (requires internet), use Download ffmpeg in the app, install ffmpeg on PATH, or run npm run prepare:ffmpeg for development.".to_string()
+    } else {
+        "ffmpeg is not installed. Install it with your package manager (for example: sudo apt install ffmpeg), then restart Cutdown.".to_string()
     };
 
     FfmpegCheckResult {
@@ -1886,11 +1908,11 @@ fn current_timestamp_millis() -> u128 {
 }
 
 pub(crate) fn ffmpeg_path() -> PathBuf {
-    locate_binary("ffmpeg.exe").unwrap_or_else(|| PathBuf::from("ffmpeg"))
+    locate_binary(app_paths::FFMPEG_BINARY).unwrap_or_else(|| PathBuf::from("ffmpeg"))
 }
 
 pub(crate) fn ffprobe_path() -> PathBuf {
-    locate_binary("ffprobe.exe").unwrap_or_else(|| PathBuf::from("ffprobe"))
+    locate_binary(app_paths::FFPROBE_BINARY).unwrap_or_else(|| PathBuf::from("ffprobe"))
 }
 
 fn locate_binary(name: &str) -> Option<PathBuf> {

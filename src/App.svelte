@@ -25,6 +25,7 @@
   import UpdateModal from './components/UpdateModal.svelte';
   import VideoPreview from './components/VideoPreview.svelte';
   import { checkForAppUpdate, installAppUpdate } from './lib/appUpdate';
+  import { isWindows } from './lib/platform';
   import {
     clamp,
     formatBytes,
@@ -55,7 +56,7 @@
     parseExportType,
     type ExportType,
   } from './lib/exportFormats';
-  import { mediaSrcFromPath } from './lib/mediaSrc';
+  import { initMediaSource, mediaSrcFromPath } from './lib/mediaSrc';
   import { isOpenablePath, isProjectPath, VIDEO_EXTENSIONS } from './lib/openPath';
   import { planPreview } from './lib/previewPlayback';
   import {
@@ -424,9 +425,12 @@
       await bootstrapApp();
     })();
 
-    const updateCheckTimer = window.setTimeout(() => {
-      void checkForUpdates();
-    }, 8000);
+    // In-app updates ship Windows installers only; Linux updates come from the .deb/AppImage.
+    const updateCheckTimer = isWindows
+      ? window.setTimeout(() => {
+          void checkForUpdates();
+        }, 8000)
+      : undefined;
 
     const unlistenFfmpegInstall = listen<{
       stage: string;
@@ -598,7 +602,7 @@
 
   async function bootstrapApp(): Promise<void> {
     try {
-      await refreshAppVersion();
+      await Promise.all([refreshAppVersion(), initMediaSource()]);
       const [settings, ffmpeg, presets, encoders] = await Promise.all([
         invoke<AppSettings>('get_settings'),
         invoke<FfmpegCheckResult>('check_ffmpeg'),
@@ -2238,7 +2242,7 @@
         (outputDirectory
           ? joinOutputPath(outputDirectory, outputFileName, extension)
           : defaultDir
-            ? `${defaultDir}\\${defaultName}`
+            ? joinOutputPath(defaultDir, defaultName, extension)
             : defaultOutputPath()),
       filters: saveFilters,
     });
@@ -2880,19 +2884,23 @@
             {ffmpegInstalling
               ? ffmpegInstallMessage || 'Downloading ffmpeg…'
               : ffmpegStatus ||
-                'ffmpeg is required for export and clip analysis. Re-run the installer (downloads latest ffmpeg) or use the button below (~80 MB).'}
+                (isWindows
+                  ? 'ffmpeg is required for export and clip analysis. Re-run the installer (downloads latest ffmpeg) or use the button below (~80 MB).'
+                  : 'ffmpeg is required for export and clip analysis. Install it with your package manager (sudo apt install ffmpeg), then restart Cutdown.')}
             {#if ffmpegInstalling && ffmpegInstallPercent !== null}
               {' '}({Math.round(ffmpegInstallPercent)}%)
             {/if}
           </span>
-          <button
-            type="button"
-            class="secondary"
-            disabled={ffmpegInstalling}
-            on:click={() => void installFfmpeg()}
-          >
-            {ffmpegInstalling ? 'Downloading…' : 'Install ffmpeg'}
-          </button>
+          {#if isWindows}
+            <button
+              type="button"
+              class="secondary"
+              disabled={ffmpegInstalling}
+              on:click={() => void installFfmpeg()}
+            >
+              {ffmpegInstalling ? 'Downloading…' : 'Install ffmpeg'}
+            </button>
+          {/if}
           <button type="button" class="secondary" title="Open Settings" on:click={() => void openSettings()}>Settings</button>
         </div>
       {/if}

@@ -3,6 +3,7 @@
   import IconButton from './IconButton.svelte';
   import ProgressBar from './ProgressBar.svelte';
   import { formatTime } from '../lib/format';
+  import { fileManagerName } from '../lib/platform';
   import type { ExportStatus, TimelineSegment } from '../stores/editor';
 
   export let outputDuration = 0;
@@ -116,13 +117,13 @@
         {#if shareUrl}
           <IconButton icon="link" variant="secondary" title="Copy share link" on:click={() => dispatch('copyShareLink')} />
         {/if}
-        <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={() => dispatch('reveal')} />
+        <IconButton icon="open" variant="secondary" title={`Show exported file in ${fileManagerName}`} on:click={() => dispatch('reveal')} />
         <IconButton icon="upload" variant="secondary" title="Upload and copy share link" on:click={() => dispatch('upload')} />
         <IconButton icon="export" variant="secondary" title="Open export settings" on:click={() => dispatch('openExport')} />
       </div>
     {:else if outputPath && exportStatus.state === 'running'}
       <button type="button" class="secondary" title="Cancel export" on:click={() => dispatch('cancel')}>Cancel</button>
-      <IconButton icon="open" variant="secondary" title="Show exported file in Explorer" on:click={() => dispatch('reveal')} />
+      <IconButton icon="open" variant="secondary" title={`Show exported file in ${fileManagerName}`} on:click={() => dispatch('reveal')} />
     {/if}
   </div>
 </footer>

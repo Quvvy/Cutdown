@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_paths;
 mod clip_history;
 mod command_util;
 mod encoder_detect;
 mod ffmpeg;
 mod ffmpeg_install;
 mod launch;
+mod media_server;
 mod obs;
 mod presets;
 mod preview_plan;
@@ -16,7 +18,15 @@ mod single_instance;
 mod upload;
 mod upload_providers;
 mod watch_folder;
+#[cfg(windows)]
 mod windows_integration;
+#[cfg(not(windows))]
+mod linux_integration;
+
+#[cfg(not(windows))]
+use linux_integration as os_integration;
+#[cfg(windows)]
+use windows_integration as os_integration;
 
 use launch::LaunchState;
 use settings::{AppSettings, UpdateSettingsParams};
@@ -138,7 +148,22 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// WebKitGTK's DMA-BUF renderer draws a blank or flickering window on the proprietary
+/// NVIDIA driver (especially under Wayland). Opt out unless the user already chose.
+#[cfg(target_os = "linux")]
+fn apply_webkit_gpu_workarounds() {
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && std::path::Path::new("/proc/driver/nvidia/version").exists()
+    {
+        // Runs before any other thread exists.
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
+
 fn main() {
+    #[cfg(target_os = "linux")]
+    apply_webkit_gpu_workarounds();
+
     if std::env::args().any(|arg| arg == "--install-dependencies") {
         let code = if ffmpeg_install::run_headless_install().is_ok() {
             0
@@ -153,12 +178,22 @@ fn main() {
         single_instance::Handshake::Primary(listener) => listener,
     };
 
+    // WebKitGTK can't play <video> from asset://, so Linux previews stream over loopback HTTP.
+    let media_base_url = if cfg!(windows) {
+        None
+    } else {
+        media_server::start()
+            .map_err(|err| eprintln!("preview media server failed to start: {err}"))
+            .ok()
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .manage(LaunchState::new())
+        .manage(media_server::MediaServerState(media_base_url))
         .setup(move |app| {
             setup_tray(app)?;
             single_instance::spawn_listener(app.handle().clone(), single_instance_listener);
@@ -182,7 +217,7 @@ fn main() {
             watch_folder::manage_state(app)?;
 
             let settings = settings::load_settings();
-            windows_integration::sync_run_at_startup(settings.run_at_startup);
+            os_integration::sync_run_at_startup(settings.run_at_startup);
 
             let hide_to_tray = settings.start_minimized_to_tray
                 && launch::launched_from_startup()
@@ -202,6 +237,7 @@ fn main() {
             save_app_settings,
             save_editor_settings,
             launch::get_launch_path,
+            media_server::media_base_url,
             ffmpeg::probe_video,
             ffmpeg::extract_waveform,
             ffmpeg::extract_thumbnail,
@@ -219,7 +255,7 @@ fn main() {
             settings::set_windows_behavior,
             presets::list_presets,
             encoder_detect::detect_gpu_encoders,
-            windows_integration::set_run_at_startup,
+            os_integration::set_run_at_startup,
             clip_history::list_clip_history,
             clip_history::clear_clip_history,
             clip_history::remove_clip_history_entry,

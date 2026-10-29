@@ -1,0 +1,71 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["deb", "appimage"],
+    "createUpdaterArtifacts": false,
+    "category": "Video",
+    "shortDescription": "Clip and compress videos",
+    "fileAssociations": [
+      {
+        "ext": ["mp4", "m4v"],
+        "mimeType": "video/mp4",
+        "description": "MP4 video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["mkv"],
+        "mimeType": "video/x-matroska",
+        "description": "Matroska video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["mov"],
+        "mimeType": "video/quicktime",
+        "description": "QuickTime video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["webm"],
+        "mimeType": "video/webm",
+        "description": "WebM video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["ts"],
+        "mimeType": "video/mp2t",
+        "description": "MPEG transport stream",
+        "role": "Editor"
+      },
+      {
+        "ext": ["avi"],
+        "mimeType": "video/x-msvideo",
+        "description": "AVI video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["flv"],
+        "mimeType": "video/x-flv",
+        "description": "Flash video",
+        "role": "Editor"
+      },
+      {
+        "ext": ["cutdown"],
+        "mimeType": "application/x-cutdown-project",
+        "description": "Cutdown project",
+        "role": "Editor"
+      }
+    ],
+    "linux": {
+      "deb": {
+        "depends": ["ffmpeg"],
+        "desktopTemplate": "linux/cutdown.desktop",
+        "files": {
+          "/usr/share/mime/packages/cutdown.xml": "linux/cutdown-mime.xml"
+        }
+      },
+      "appimage": {
+        "bundleMediaFramework": true
+      }
+    }
+  }
+}

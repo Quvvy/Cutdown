@@ -93,17 +93,115 @@ mod platform {
     }
 }
 
+/// Linux: the freedesktop Secret Service (KWallet, GNOME Keyring, KeePassXC…). When no
+/// keyring daemon is running, secrets fall back to a 0600 file next to settings.json so
+/// uploads still work on minimal desktops.
 #[cfg(not(windows))]
 mod platform {
-    pub fn write_secret(_target: &str, _value: &str) -> Result<(), String> {
-        Err("OS secret storage is only implemented on Windows.".to_string())
+    use std::collections::BTreeMap;
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::path::PathBuf;
+
+    const SERVICE: &str = "Cutdown";
+
+    fn entry(target: &str) -> Result<keyring::Entry, keyring::Error> {
+        keyring::Entry::new(SERVICE, target)
     }
 
-    pub fn read_secret(_target: &str) -> Result<Option<String>, String> {
-        Ok(None)
+    /// The keyring itself is unreachable (no daemon, locked and dismissed, no D-Bus session).
+    fn keyring_unavailable(err: &keyring::Error) -> bool {
+        matches!(
+            err,
+            keyring::Error::PlatformFailure(_) | keyring::Error::NoStorageAccess(_)
+        )
     }
 
-    pub fn delete_secret(_target: &str) -> Result<(), String> {
+    pub fn write_secret(target: &str, value: &str) -> Result<(), String> {
+        match entry(target).and_then(|entry| entry.set_password(value)) {
+            Ok(()) => {
+                // Don't leave an older copy in the fallback file.
+                let _ = remove_file_secret(target);
+                Ok(())
+            }
+            Err(err) if keyring_unavailable(&err) => {
+                eprintln!("system keyring unavailable, storing secret in file: {err}");
+                write_file_secret(target, value)
+            }
+            Err(err) => Err(format!("Failed to store secret in the system keyring: {err}")),
+        }
+    }
+
+    pub fn read_secret(target: &str) -> Result<Option<String>, String> {
+        match entry(target).and_then(|entry| entry.get_password()) {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(read_file_secrets().remove(target)),
+            Err(err) if keyring_unavailable(&err) => Ok(read_file_secrets().remove(target)),
+            Err(err) => Err(format!("Failed to read secret from the system keyring: {err}")),
+        }
+    }
+
+    pub fn delete_secret(target: &str) -> Result<(), String> {
+        let keyring_result = entry(target).and_then(|entry| entry.delete_credential());
+        remove_file_secret(target)?;
+        match keyring_result {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(err) if keyring_unavailable(&err) => Ok(()),
+            Err(err) => Err(format!("Failed to delete secret from the system keyring: {err}")),
+        }
+    }
+
+    fn secrets_file() -> Result<PathBuf, String> {
+        Ok(crate::app_paths::config_dir()?.join("secrets.json"))
+    }
+
+    fn read_file_secrets() -> BTreeMap<String, String> {
+        secrets_file()
+            .ok()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
+    }
+
+    fn write_file_secrets(secrets: &BTreeMap<String, String>) -> Result<(), String> {
+        let path = secrets_file()?;
+        if secrets.is_empty() {
+            return match std::fs::remove_file(&path) {
+                Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+                    Err(format!("Failed to remove {}: {err}", path.display()))
+                }
+                _ => Ok(()),
+            };
+        }
+
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|err| format!("Failed to create settings directory: {err}"))?;
+        }
+        let raw = serde_json::to_string_pretty(secrets)
+            .map_err(|err| format!("Failed to serialize secrets: {err}"))?;
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|err| format!("Failed to open {}: {err}", path.display()))?;
+        file.write_all(raw.as_bytes())
+            .map_err(|err| format!("Failed to write {}: {err}", path.display()))
+    }
+
+    fn write_file_secret(target: &str, value: &str) -> Result<(), String> {
+        let mut secrets = read_file_secrets();
+        secrets.insert(target.to_string(), value.to_string());
+        write_file_secrets(&secrets)
+    }
+
+    fn remove_file_secret(target: &str) -> Result<(), String> {
+        let mut secrets = read_file_secrets();
+        if secrets.remove(target).is_some() {
+            write_file_secrets(&secrets)?;
+        }
         Ok(())
     }
 }

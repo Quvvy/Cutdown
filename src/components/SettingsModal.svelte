@@ -2,6 +2,7 @@
   import { createEventDispatcher } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import { isWindows } from '../lib/platform';
   import {
     createCatboxProvider,
     createCustomProvider,
@@ -474,7 +475,7 @@
 
   {#if activeTab === 'general'}
     <div class="panel-section">
-      <h3 class="panel-section__title">Windows</h3>
+      <h3 class="panel-section__title">{isWindows ? 'Windows' : 'Desktop'}</h3>
       <p class="panel-section__lead">
         These options apply as soon as you toggle them. Only one Cutdown window runs; opening a clip reuses it.
       </p>
@@ -489,7 +490,7 @@
               void persistWindowsBehavior();
             }}
           />
-          Open Cutdown when I sign in to Windows
+          Open Cutdown when I sign in{isWindows ? ' to Windows' : ''}
         </label>
         <label class="modal__mode">
           <input
@@ -504,7 +505,7 @@
           At sign-in, keep Cutdown in the tray until I click the icon
         </label>
         <p class="modal__hint">
-          Only applies when Cutdown starts with Windows. Opening the app or a clip still shows the editor.
+          Only applies when Cutdown starts {isWindows ? 'with Windows' : 'at sign-in'}. Opening the app or a clip still shows the editor.
         </p>
         <label class="modal__mode">
           <input
@@ -518,7 +519,7 @@
           Close the window to the tray instead of quitting
         </label>
         <p class="modal__hint">
-          Left-click the tray icon or choose Open Editor to restore. Quit from the tray menu exits completely.
+          {isWindows ? 'Left-click the tray icon or choose Open Editor' : 'Choose Open Editor from the tray icon menu'} to restore. Quit from the tray menu exits completely.
         </p>
         <button
           type="button"
@@ -555,12 +556,18 @@
       <div class="panel-field">
         <span>Updates</span>
         <div class="panel-info">Installed version {appVersion}</div>
-        <button type="button" class="secondary" on:click={() => dispatch('checkForUpdates')}>
-          Check for updates
-        </button>
-        <p class="modal__hint">
-          Updates download from GitHub releases and install in place. Cutdown restarts automatically after installing.
-        </p>
+        {#if isWindows}
+          <button type="button" class="secondary" on:click={() => dispatch('checkForUpdates')}>
+            Check for updates
+          </button>
+          <p class="modal__hint">
+            Updates download from GitHub releases and install in place. Cutdown restarts automatically after installing.
+          </p>
+        {:else}
+          <p class="modal__hint">
+            To update, install the newer .deb or AppImage from GitHub releases.
+          </p>
+        {/if}
       </div>
     </div>
   {:else if activeTab === 'folders'}
@@ -585,14 +592,14 @@
               draft = { ...draft, watchFolderEnabled: event.currentTarget.checked };
             }}
           />
-          Notify when a new replay is saved (Windows toast with Open / Not now)
+          Notify when a new replay is saved ({isWindows ? 'Windows toast' : 'desktop notification'} with Open / Not now)
         </label>
         <div class="panel-field__row">
           <span class="panel-field__path">{draft.watchFolder || 'No folder selected'}</span>
           <button type="button" class="secondary" on:click={browseWatchFolder}>Browse</button>
         </div>
         <p class="modal__hint">
-          Shows a Windows notification with <strong>Open</strong> and <strong>Not now</strong>. Cutdown
+          Shows a {isWindows ? 'Windows' : 'desktop'} notification with <strong>Open</strong> and <strong>Not now</strong>. Cutdown
           stays in the tray until you choose Open. Uncheck to disable notifications and folder watching.
           Latest replay still uses this folder when set.
         </p>

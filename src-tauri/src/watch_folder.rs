@@ -213,8 +213,52 @@ fn announce_clip(app: AppHandle, path: PathBuf) {
 
     #[cfg(not(windows))]
     {
-        let _ = app.emit("watch_folder_clip", payload);
+        if let Err(err) = show_desktop_replay_notification(&app, path_key.clone(), file_name) {
+            eprintln!("watch-folder notification failed, falling back to event only: {err}");
+            let _ = app.emit("watch_folder_clip", payload);
+        }
     }
+}
+
+/// freedesktop notification with Open / Not now, mirroring the Windows toast.
+#[cfg(not(windows))]
+fn show_desktop_replay_notification(
+    app: &AppHandle,
+    path: String,
+    file_name: &str,
+) -> Result<(), String> {
+    use notify_rust::{Hint, Notification};
+
+    let handle = Notification::new()
+        .appname("Cutdown")
+        .summary("Cutdown")
+        .body(&format!("New replay ready: {file_name}"))
+        .icon("cutdown")
+        .hint(Hint::DesktopEntry("cutdown".to_string()))
+        .action("open", "Open")
+        .action("dismiss", "Not now")
+        .show()
+        .map_err(|err| format!("Failed to show replay notification: {err}"))?;
+
+    let app_handle = app.clone();
+    std::thread::Builder::new()
+        .name("cutdown-replay-notification".into())
+        .spawn(move || {
+            handle.wait_for_action(|action| {
+                if action != "open" {
+                    return;
+                }
+
+                if let Err(err) = crate::show_editor_window(&app_handle) {
+                    eprintln!("failed to show editor for watch-folder clip: {err}");
+                }
+
+                let _ = app_handle.emit("watch_folder_clip", WatchFolderClip { path });
+            });
+        })
+        .map_err(|err| format!("Failed to wait on replay notification: {err}"))?;
+
+    Ok(())
 }
 
 #[cfg(windows)]

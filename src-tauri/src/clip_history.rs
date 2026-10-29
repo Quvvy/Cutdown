@@ -18,8 +18,7 @@ pub struct ClipHistoryEntry {
 }
 
 pub fn history_path() -> Result<PathBuf, String> {
-    let base = std::env::var("APPDATA").map_err(|err| format!("APPDATA is unavailable: {err}"))?;
-    Ok(PathBuf::from(base).join("Cutdown").join("history.json"))
+    Ok(crate::app_paths::config_dir()?.join("history.json"))
 }
 
 fn load_entries() -> Vec<ClipHistoryEntry> {

@@ -179,13 +179,12 @@ pub fn apply_editor_settings(params: SaveEditorSettingsParams) -> Result<AppSett
     )?;
 
     save_settings(&settings)?;
-    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
+    crate::os_integration::set_run_at_startup(settings.run_at_startup)?;
     Ok(settings)
 }
 
 pub fn settings_path() -> Result<PathBuf, String> {
-    let base = std::env::var("APPDATA").map_err(|err| format!("APPDATA is unavailable: {err}"))?;
-    Ok(PathBuf::from(base).join("Cutdown").join("settings.json"))
+    Ok(crate::app_paths::config_dir()?.join("settings.json"))
 }
 
 fn sanitize_secret_key_part(value: &str) -> String {
@@ -470,7 +469,7 @@ pub fn update_settings(params: UpdateSettingsParams) -> Result<AppSettings, Stri
     }
 
     save_settings(&settings)?;
-    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
+    crate::os_integration::set_run_at_startup(settings.run_at_startup)?;
     Ok(settings)
 }
 
@@ -489,7 +488,7 @@ pub fn set_windows_behavior(params: WindowsBehaviorParams) -> Result<AppSettings
     settings.start_minimized_to_tray = params.start_minimized_to_tray;
     settings.close_to_tray = params.close_to_tray;
     save_settings(&settings)?;
-    crate::windows_integration::set_run_at_startup(settings.run_at_startup)?;
+    crate::os_integration::set_run_at_startup(settings.run_at_startup)?;
     Ok(settings)
 }
 

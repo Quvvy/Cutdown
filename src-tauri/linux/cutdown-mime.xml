@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Lets file managers recognise .cutdown projects and offer Cutdown to open them. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-cutdown-project">
+    <comment>Cutdown project</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.cutdown"/>
+  </mime-type>
+</mime-info>

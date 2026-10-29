@@ -12,6 +12,8 @@
     "prepare:ffmpeg": "powershell -ExecutionPolicy Bypass -File scripts/prepare-ffmpeg.ps1",
     "icons": "tauri icon branding/app-icon.png -o src-tauri/icons",
     "validate:release": "powershell -ExecutionPolicy Bypass -File scripts/validate-release.ps1",
+    "validate:release:linux": "bash scripts/validate-release.sh",
+    "build:linux": "tauri build",
     "tauri": "tauri"
   },
   "dependencies": {

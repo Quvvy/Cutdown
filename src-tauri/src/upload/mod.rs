@@ -97,27 +97,52 @@ pub struct UploadProvidersEditorState {
 
 #[tauri::command]
 pub fn copy_text_to_clipboard(text: String) -> Result<(), String> {
-    let mut clipboard =
-        Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?;
-    clipboard
-        .set_text(text)
+    with_clipboard(|clipboard| clipboard.set_text(text))
         .map_err(|err| format!("Failed to copy to clipboard: {err}"))
 }
 
-/// Puts the file itself on the clipboard (CF_HDROP on Windows, like Explorer's Copy),
-/// so it can be pasted straight into Discord or a folder.
+/// Puts the file itself on the clipboard (CF_HDROP on Windows like Explorer's Copy,
+/// text/uri-list on Linux like Dolphin's), so it can be pasted straight into Discord or a folder.
 #[tauri::command]
 pub fn copy_file_to_clipboard(path: String) -> Result<(), String> {
     let file = std::path::PathBuf::from(path.trim());
     if !file.is_file() {
         return Err(format!("File not found: {}", file.display()));
     }
+    with_clipboard(|clipboard| clipboard.set().file_list(&[file]))
+        .map_err(|err| format!("Failed to copy file to clipboard: {err}"))
+}
+
+#[cfg(windows)]
+fn with_clipboard(
+    action: impl FnOnce(&mut Clipboard) -> Result<(), arboard::Error>,
+) -> Result<(), String> {
     let mut clipboard =
         Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?;
-    clipboard
-        .set()
-        .file_list(&[file])
-        .map_err(|err| format!("Failed to copy file to clipboard: {err}"))
+    action(&mut clipboard).map_err(|err| err.to_string())
+}
+
+/// On X11/Wayland the copying app serves every paste itself, so the clipboard has to
+/// outlive the command. Keep one for the session instead of dropping it after each copy.
+#[cfg(not(windows))]
+fn with_clipboard(
+    action: impl FnOnce(&mut Clipboard) -> Result<(), arboard::Error>,
+) -> Result<(), String> {
+    use std::sync::{Mutex, OnceLock};
+
+    static CLIPBOARD: OnceLock<Mutex<Option<Clipboard>>> = OnceLock::new();
+    let mut guard = CLIPBOARD
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| "Clipboard is unavailable.".to_string())?;
+
+    if guard.is_none() {
+        *guard =
+            Some(Clipboard::new().map_err(|err| format!("Failed to open clipboard: {err}"))?);
+    }
+
+    let clipboard = guard.as_mut().expect("clipboard initialised above");
+    action(clipboard).map_err(|err| err.to_string())
 }
 
 fn resolve_provider_id(
