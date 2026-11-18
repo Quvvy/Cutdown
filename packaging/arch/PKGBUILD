@@ -5,7 +5,7 @@
 #   scripts/build-arch.sh           build a package from your local checkout
 
 pkgname=cutdown
-pkgver=0.6.1
+pkgver=0.7.0
 pkgrel=1
 pkgdesc='Clip and compress videos'
 arch=('x86_64')
@@ -29,7 +29,7 @@ optdepends=(
 )
 options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('d7dbec587acedb247ec54526ebb74a148ceea01927fea30d21cc9a348cb379ea')
+sha256sums=('SKIP')
 
 _srcdir() {
   # GitHub names the folder Cutdown-<ver>; scripts/build-arch.sh uses the same name.
