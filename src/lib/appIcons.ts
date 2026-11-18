@@ -1,6 +1,16 @@
 import type { IconifyIcon } from '@iconify/svelte';
+import arrowClockwise from '@iconify-icons/fluent/arrow-clockwise-20-regular';
 import arrowExport from '@iconify-icons/fluent/arrow-export-20-filled';
+import checkmarkCircle from '@iconify-icons/fluent/checkmark-circle-20-filled';
 import clipboard from '@iconify-icons/fluent/clipboard-20-regular';
+import copy from '@iconify-icons/fluent/copy-20-regular';
+import dismiss from '@iconify-icons/fluent/dismiss-20-regular';
+import errorCircle from '@iconify-icons/fluent/error-circle-20-filled';
+import history from '@iconify-icons/fluent/history-20-regular';
+import info from '@iconify-icons/fluent/info-20-filled';
+import options from '@iconify-icons/fluent/options-20-regular';
+import questionCircle from '@iconify-icons/fluent/question-circle-20-regular';
+import speaker from '@iconify-icons/fluent/speaker-2-20-regular';
 import cloudArrowUp from '@iconify-icons/fluent/cloud-arrow-up-20-filled';
 import crop from '@iconify-icons/fluent/crop-20-filled';
 import link from '@iconify-icons/fluent/link-20-filled';
@@ -12,7 +22,6 @@ import autofitWidthSvg from '../assets/icons/arrow-autofit-width-20-filled.svg?r
 import undoSvg from '../assets/icons/fluent--arrow-hook-down-left-20-filled.svg?raw';
 import redoSvg from '../assets/icons/fluent--arrow-hook-up-right-20-filled.svg?raw';
 import loopSvg from '../assets/icons/fluent--arrow-repeat-all-20-filled.svg?raw';
-import historySvg from '../assets/icons/fluent--clipboard-bullet-list-20-filled.svg?raw';
 import splitSvg from '../assets/icons/fluent--filmstrip-split-20-filled.svg?raw';
 import saveSvg from '../assets/icons/fluent--save-20-filled.svg?raw';
 import bookmarkSvg from '../assets/icons/fluent--bookmark-20-filled.svg?raw';
@@ -28,7 +37,18 @@ import scaleFitSvg from '../assets/icons/fluent--scale-fit-20-filled.svg?raw';
 import settingsSvg from '../assets/icons/fluent--settings-20-filled.svg?raw';
 
 export const appIcons = {
+  /** Copy the exported file itself (for pasting into Discord). */
   copy: clipboard,
+  /** Copy a path or link as text. */
+  copyText: copy,
+  dismiss,
+  success: checkmarkCircle,
+  error: errorCircle,
+  retry: arrowClockwise,
+  options,
+  help: questionCircle,
+  info,
+  volume: speaker,
   crop,
   export: arrowExport,
   link,
@@ -48,7 +68,7 @@ export const appIcons = {
   snapIn: iconFromSvg(snapInSvg),
   snapOut: iconFromSvg(snapOutSvg),
   delete: iconFromSvg(deleteSvg),
-  history: iconFromSvg(historySvg),
+  history,
   settings: iconFromSvg(settingsSvg),
   loop: iconFromSvg(loopSvg),
   scaleFit: iconFromSvg(scaleFitSvg),

@@ -36,14 +36,17 @@
   $: summary =
     partCount === 0
       ? 'Nothing to export: In and Out don’t overlap any kept part.'
-      : `${formatTime(exportSeconds)} from ${partCount === 1 ? 'one part' : `${partCount} parts`}${trimmedToRange ? ', In to Out' : ''}`;
+      : `${formatTime(exportSeconds)} · ${partCount === 1 ? '1 part' : `${partCount} parts`}${trimmedToRange ? ', In → Out' : ''}`;
 
   function buildChoices(bytes: number, reasons: string[]): Choice[] {
     const lossless =
       reasons.length === 0
         ? {
             meta: `about ${formatBytes(bytes)} · instant`,
-            note: 'No quality loss. Cuts land on the nearest keyframe, so a part can start a moment early.',
+            note:
+              bytes > 0 && bytes < DISCORD_LIMIT
+                ? 'No quality loss, and small enough for Discord as it is. Cuts land on the nearest keyframe.'
+                : 'No quality loss. Cuts land on the nearest keyframe, so a part can start a moment early.',
           }
         : {
             meta: `re-encodes · slower`,
@@ -54,8 +57,8 @@
       {
         id: 'discord',
         name: 'Discord',
-        meta: bytes > 0 && bytes < DISCORD_LIMIT && reasons.length === 0 ? 'already under 20 MB · re-encodes' : 'under 20 MB · re-encodes',
-        note: 'Sized to fit Discord’s 20 MB upload limit. Takes a few seconds per minute of video.',
+        meta: 'under 20 MB · re-encodes',
+        note: 'Compressed to fit Discord’s 20 MB upload limit. Takes a few seconds per minute of video.',
       },
       {
         id: 'twitter',
@@ -93,12 +96,16 @@
 
 <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
 <div class="export-panel" role="dialog" aria-label="Export" bind:this={panel} on:keydown={handleKeydown}>
-  <p class="export-panel__summary">{summary}</p>
+  <header class="export-panel__head">
+    <h2 class="export-panel__title">Export</h2>
+    <span class="export-panel__summary mono">{summary}</span>
+  </header>
 
   <div class="export-panel__choices" role="radiogroup" aria-label="Export as">
     {#each choices as choice (choice.id)}
       <label class="export-choice" class:export-choice--selected={presetId === choice.id}>
         <input
+          class="export-choice__radio"
           type="radio"
           name="export-choice"
           value={choice.id}
@@ -115,11 +122,11 @@
   </div>
 
   <p class="export-panel__destination" title={destinationPath}>
-    Saves next to the original as <strong>{destinationName}</strong>
+    Saves next to the original as <strong class="mono">{destinationName}</strong>
   </p>
 
   <div class="export-panel__actions">
-    <button type="button" class="link-button" on:click={() => dispatch('moreOptions')}>More options…</button>
+    <button type="button" class="tool-button" on:click={() => dispatch('moreOptions')}>More options…</button>
     <button type="button" class="primary" disabled={partCount === 0} on:click={() => dispatch('export')}>
       Export <kbd>Enter</kbd>
     </button>

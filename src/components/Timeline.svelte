@@ -1,7 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
-  import IconButton from './IconButton.svelte';
-  import TimelineFilmstrip from './TimelineFilmstrip.svelte';
+    import TimelineFilmstrip from './TimelineFilmstrip.svelte';
   import { MAX_ZOOM, pixelsPerSecondForZoom, zoomToFit } from '../lib/timelineZoom';
   import TimelineWaveform from './TimelineWaveform.svelte';
   import { clamp, formatTime } from '../lib/format';
@@ -522,10 +521,6 @@
     dispatch('zoomChange', { zoom: clamp(nextZoom, 0, MAX_ZOOM) });
   }
 
-  function handleZoomInput(event: Event): void {
-    updateZoom(Number((event.currentTarget as HTMLInputElement).value));
-  }
-
   function handleWheel(event: WheelEvent): void {
     if (!event.ctrlKey || disabled) {
       return;
@@ -721,6 +716,58 @@
     bookmarkMenu = null;
   }
 
+  /** Menu keyboard behaviour: focus the first item, arrows/Home/End move, Escape and Tab close. */
+  function menuKeys(node: HTMLElement) {
+    const items = () => Array.from(node.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    items()[0]?.focus();
+
+    function close(restoreFocus: boolean): void {
+      closeContextMenu();
+      if (restoreFocus) {
+        opener?.focus();
+      }
+    }
+
+    function onKeydown(event: KeyboardEvent): void {
+      const list = items();
+      const index = list.indexOf(document.activeElement as HTMLButtonElement);
+      if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+        event.preventDefault();
+        const step = event.key === 'ArrowDown' ? 1 : -1;
+        list[(index + step + list.length) % list.length]?.focus();
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault();
+        list[event.key === 'Home' ? 0 : list.length - 1]?.focus();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        close(true);
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        close(true);
+      } else if (event.key !== 'Enter' && event.key !== ' ') {
+        // Any other shortcut (Ctrl+E, X, …) acts on the editor; the menu gets out of the way.
+        close(false);
+      }
+    }
+
+    function onFocusout(event: FocusEvent): void {
+      if (!node.contains(event.relatedTarget as Node | null)) {
+        closeContextMenu();
+      }
+    }
+
+    node.addEventListener('keydown', onKeydown);
+    node.addEventListener('focusout', onFocusout);
+    return {
+      destroy() {
+        node.removeEventListener('keydown', onKeydown);
+        node.removeEventListener('focusout', onFocusout);
+      },
+    };
+  }
+
   function bookmarkLabel(bookmark: TimelineBookmark): string {
     return bookmark.label?.trim() || formatTime(bookmark.time);
   }
@@ -789,44 +836,14 @@
 
 <svelte:window on:pointermove={handlePointerMove} on:pointerup={handlePointerUp} on:pointercancel={handlePointerUp} on:click={closeContextMenu} />
 
-<section class="timeline" aria-label="Vegas-style timeline" on:contextmenu={openContextMenu} on:wheel={handleWheel}>
-  <header class="timeline__controls">
-    <div class="timeline__readouts">
-      <span>Now <strong>{formatTime(currentTime)}</strong></span>
-    </div>
-    <div class="timeline__zoom">
-      <span>Zoom</span>
-      <input
-        class="app-slider"
-        type="range"
-        min="0"
-        max={MAX_ZOOM}
-        value={zoom}
-        disabled={disabled}
-        aria-label="Timeline zoom"
-        style:--slider-fill={`${(zoom / MAX_ZOOM) * 100}%`}
-        on:input={handleZoomInput}
-      />
-      <IconButton icon="scaleFit" title="Fit timeline to window" variant="mini" disabled={disabled} on:click={() => dispatch('zoomFit')} />
-      <IconButton
-        icon="zoomRange"
-        title="Zoom to I/O range"
-        variant="mini"
-        disabled={disabled || !normalizedRange}
-        on:click={() => dispatch('zoomRange')}
-      />
-    </div>
-  </header>
+<section class="timeline" aria-label="Timeline" on:contextmenu={openContextMenu} on:wheel={handleWheel}>
 
   <div
     class="timeline__body"
     bind:this={timelineBody}
     style:grid-template-rows={trackGridTemplateRows}
   >
-    {#if disabled}
-      <div class="timeline__empty">Open a video, drop a file, or load a .cutdown project. Press S to split, then Export when you are ready.</div>
-    {/if}
-    <div class="timeline__track-head timeline__track-head--spacer">Tracks</div>
+    <div class="timeline__track-head timeline__track-head--spacer" aria-hidden="true"></div>
     <div class="timeline__scroll" bind:this={scrollArea} on:scroll={syncTrackScroll}>
       <div class="timeline__content" style:width={`${timelineWidth}px`}>
         <div
@@ -845,7 +862,7 @@
           {#each ticks as tick}
             <div class:major={tick.major} class="timeline__ruler-tick" style:left={`${tick.left}px`}></div>
             {#if tick.major}
-              <span style:left={`${tick.left}px`}>{formatTime(tick.seconds)}</span>
+              <span class="timeline__ruler-label" style:left={`${tick.left + 4}px`}>{formatTime(tick.seconds)}</span>
             {/if}
           {/each}
 
@@ -879,6 +896,8 @@
           {#if normalizedRange}
             {#if rangeNarrowed}
               <div class="timeline__range-fill" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
+              <div class="timeline__outside" style:left="0" style:width={`${rangeLeft}px`}></div>
+              <div class="timeline__outside" style:left={`${rangeLeft + rangeWidth}px`} style:right="0"></div>
             {/if}
             <button
               type="button"
@@ -903,7 +922,9 @@
 
     <div class="timeline__track-head timeline__track-head--video">
       <strong>Video</strong>
-      <span>{segments.length} segment{segments.length === 1 ? '' : 's'}</span>
+      {#if !disabled}
+        <span>{segments.length} {segments.length === 1 ? 'part' : 'parts'}</span>
+      {/if}
     </div>
     <div
       bind:this={videoScroll}
@@ -933,6 +954,8 @@
         {/each}
         {#if rangeNarrowed}
           <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
+          <div class="timeline__outside" style:left="0" style:width={`${rangeLeft}px`}></div>
+          <div class="timeline__outside" style:left={`${rangeLeft + rangeWidth}px`} style:right="0"></div>
         {/if}
         {#each segmentLayouts as layout, index (layout.segment.id)}
           <div
@@ -943,7 +966,8 @@
             style:width={`${layout.width}px`}
           >
             <button
-              aria-label={`Video segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+              aria-label={`Video part from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+              title={`${formatTime(layout.segment.sourceStart)} – ${formatTime(layout.segment.sourceEnd)}`}
               class:selected={layout.segment.id === selectedSegmentId}
               class:timeline__segment--sole={segments.length === 1}
               class:timeline__segment--dragging={segmentDrag?.active && segmentDrag.id === layout.segment.id}
@@ -955,8 +979,9 @@
                 dispatch('seek', { seconds: layout.segment.sourceStart });
               }}
             >
-              <span>{formatTime(layout.segment.sourceStart)}</span>
-              <strong>{formatTime(layout.segment.sourceEnd - layout.segment.sourceStart)}</strong>
+              {#if layout.width >= 64}
+                <strong>{formatTime(layout.segment.sourceEnd - layout.segment.sourceStart)}</strong>
+              {/if}
             </button>
             {#if layout.segment.id === selectedSegmentId && layout.width >= MIN_SEGMENT_HANDLE_WIDTH}
               <button
@@ -992,9 +1017,9 @@
       on:dblclick={toggleAudioExpanded}
     >
       <strong>Audio</strong>
-      <span>
-        {audioLabel}{waveformLoading ? ' · loading waveform…' : waveformPeaks.length ? ' · waveform' : ''}
-      </span>
+      {#if !disabled}
+        <span>{waveformLoading ? 'Loading…' : audioLabel}</span>
+      {/if}
     </button>
     <div
       bind:this={audioScroll}
@@ -1025,10 +1050,12 @@
         {/each}
         {#if rangeNarrowed}
           <div class="timeline__track-range" style:left={`${rangeLeft}px`} style:width={`${rangeWidth}px`}></div>
+          <div class="timeline__outside" style:left="0" style:width={`${rangeLeft}px`}></div>
+          <div class="timeline__outside" style:left={`${rangeLeft + rangeWidth}px`} style:right="0"></div>
         {/if}
         {#each segmentLayouts as layout (layout.segment.id)}
           <button
-            aria-label={`Audio segment from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
+            aria-label={`Audio part from ${formatTime(layout.segment.sourceStart)} to ${formatTime(layout.segment.sourceEnd)}`}
             class:selected={layout.segment.id === selectedSegmentId}
             class="timeline__segment timeline__segment--audio"
             style:left={`${layout.left}px`}
@@ -1049,18 +1076,20 @@
     <div
       class="timeline-menu"
       role="menu"
+      aria-label="Marker"
       style:left={`${bookmarkMenu.x}px`}
       style:top={`${bookmarkMenu.y}px`}
       use:placeMenu={{ x: bookmarkMenu.x, y: bookmarkMenu.y }}
+      use:menuKeys
     >
-      <button type="button" on:click={() => {
+      <button type="button" role="menuitem" on:click={() => {
         dispatch('bookmarkEdit', { id: bookmarkMenuId });
         closeContextMenu();
-      }}>Edit label</button>
-      <button type="button" on:click={() => {
+      }}><span>Rename marker…</span></button>
+      <button type="button" role="menuitem" on:click={() => {
         dispatch('bookmarkRemove', { id: bookmarkMenuId });
         closeContextMenu();
-      }}>Delete marker</button>
+      }}><span>Delete marker</span></button>
     </div>
   {/if}
 
@@ -1068,31 +1097,29 @@
     <div
       class="timeline-menu"
       role="menu"
+      aria-label="Timeline"
       style:left={`${contextMenu.x}px`}
       style:top={`${contextMenu.y}px`}
       use:placeMenu={{ x: contextMenu.x, y: contextMenu.y }}
+      use:menuKeys
     >
-      <button type="button" on:click={() => runContextAction('split')}><span>Cut here</span><kbd>X</kbd></button>
-      <button type="button" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}><span>Delete selected segment</span><kbd>Del</kbd></button>
-      <button type="button" disabled={!selectedSegmentId} on:click={() => {
-        deselectSegment();
-        closeContextMenu();
-      }}><span>Deselect segment</span><kbd>Esc</kbd></button>
+      <button type="button" role="menuitem" on:click={() => runContextAction('split')}><span>Cut here</span><kbd>X</kbd></button>
+      <button type="button" role="menuitem" disabled={!selectedSegmentId} on:click={() => runContextAction('delete')}><span>Delete selected part</span><kbd>Del</kbd></button>
       <hr class="timeline-menu__sep" />
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}><span>Split at I and O</span></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('keepRange')}><span>Keep only range</span></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('trimOutside')}><span>Trim outside range</span></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('loopRange')}><span>Loop preview range</span><kbd>Shift+L</kbd></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('snapIn')}><span>Playhead to In</span><kbd>[</kbd></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('snapOut')}><span>Playhead to Out</span><kbd>]</kbd></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('clear')}><span>Clear In/Out range</span></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('trimOutside')}><span>Trim to In → Out</span></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('keepRange')}><span>Keep In → Out as one part</span></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('splitRange')}><span>Cut at In and Out</span></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('loopRange')}><span>Loop In → Out</span><kbd>Shift+L</kbd></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('snapIn')}><span>Playhead to In</span><kbd>[</kbd></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('snapOut')}><span>Playhead to Out</span><kbd>]</kbd></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('clear')}><span>Clear In and Out</span></button>
       <hr class="timeline-menu__sep" />
-      <button type="button" disabled={!bookmarks.length} on:click={() => runContextAction('prevMarker')}><span>Previous marker</span><kbd>,</kbd></button>
-      <button type="button" disabled={!bookmarks.length} on:click={() => runContextAction('nextMarker')}><span>Next marker</span><kbd>.</kbd></button>
-      <button type="button" disabled={!selectedBookmarkId} on:click={() => runContextAction('deleteMarker')}><span>Delete selected marker</span></button>
+      <button type="button" role="menuitem" disabled={!bookmarks.length} on:click={() => runContextAction('prevMarker')}><span>Previous marker</span><kbd>,</kbd></button>
+      <button type="button" role="menuitem" disabled={!bookmarks.length} on:click={() => runContextAction('nextMarker')}><span>Next marker</span><kbd>.</kbd></button>
+      <button type="button" role="menuitem" disabled={!selectedBookmarkId} on:click={() => runContextAction('deleteMarker')}><span>Delete selected marker</span></button>
       <hr class="timeline-menu__sep" />
-      <button type="button" on:click={() => runContextAction('fit')}><span>Zoom to fit</span></button>
-      <button type="button" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}><span>Zoom to range</span></button>
+      <button type="button" role="menuitem" on:click={() => runContextAction('fit')}><span>Zoom to fit</span></button>
+      <button type="button" role="menuitem" disabled={!normalizedRange} on:click={() => runContextAction('zoomRange')}><span>Zoom to In → Out</span><kbd>Z</kbd></button>
     </div>
   {/if}
 </section>

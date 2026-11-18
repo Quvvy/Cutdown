@@ -1,11 +1,14 @@
 <script lang="ts">
   import { createEventDispatcher, tick } from 'svelte';
   import { clamp } from '../lib/format';
+  import IconButton from './IconButton.svelte';
 
   export let open = false;
   export let title = '';
   export let width = 520;
   export let maxHeight = 'min(85vh, 720px)';
+  /** Tabbed panels keep one height so switching tabs doesn't make the panel jump. */
+  export let fixedHeight = false;
 
   const dispatch = createEventDispatcher<{ close: void }>();
 
@@ -31,8 +34,11 @@
     previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     await tick();
     const margin = 16;
-    posX = Math.max(margin, (window.innerWidth - width) / 2);
-    posY = Math.max(margin, (window.innerHeight - 420) / 2);
+    // Centre on the panel's real size so its footer (Save, Export) is always on screen.
+    const panelWidth = panelEl?.offsetWidth ?? width;
+    const panelHeight = panelEl?.offsetHeight ?? 420;
+    posX = Math.max(margin, (window.innerWidth - panelWidth) / 2);
+    posY = Math.max(margin, (window.innerHeight - panelHeight) / 2);
     focusFirstElement();
   }
 
@@ -109,8 +115,8 @@
       return;
     }
 
-    const maxX = Math.max(0, window.innerWidth - width - 8);
-    const maxY = Math.max(0, window.innerHeight - 80);
+    const maxX = Math.max(0, window.innerWidth - (panelEl?.offsetWidth ?? width) - 8);
+    const maxY = Math.max(0, window.innerHeight - (panelEl?.offsetHeight ?? 80) - 8);
     posX = clamp(event.clientX - dragOffsetX, 0, maxX);
     posY = clamp(event.clientY - dragOffsetY, 0, maxY);
   }
@@ -143,8 +149,9 @@
     tabindex="-1"
     style:left={`${posX}px`}
     style:top={`${posY}px`}
-    style:width={`${width}px`}
-    style:max-height={maxHeight}
+    style:width={`min(${width}px, calc(100vw - 24px))`}
+    style:max-height={`min(${maxHeight}, calc(100vh - 32px))`}
+    style:height={fixedHeight ? `min(${maxHeight}, calc(100vh - 32px))` : undefined}
     on:keydown={handleKeydown}
   >
     <header
@@ -152,18 +159,11 @@
       on:pointerdown={startDrag}
     >
       <div class="floating-panel__title-wrap">
-        <span class="floating-panel__drag" aria-hidden="true">⋮⋮</span>
         <h2 id="floating-panel-title">{title}</h2>
       </div>
-      <button
-        type="button"
-        class="floating-panel__close"
-        title="Close"
-        on:pointerdown|stopPropagation
-        on:click|stopPropagation={closePanel}
-      >
-        ×
-      </button>
+      <span class="floating-panel__close" on:pointerdown|stopPropagation role="presentation">
+        <IconButton icon="dismiss" title="Close (Esc)" variant="mini" size={16} on:click={closePanel} />
+      </span>
     </header>
 
     <div class="floating-panel__body">

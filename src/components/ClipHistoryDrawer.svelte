@@ -3,6 +3,8 @@
   import { formatBytes, formatTime } from '../lib/format';
   import type { ClipHistoryEntry } from '../lib/types';
   import DraggablePanel from './DraggablePanel.svelte';
+  import IconButton from './IconButton.svelte';
+  import { fileManagerName } from '../lib/platform';
 
   export let open = false;
   export let entries: ClipHistoryEntry[] = [];
@@ -25,6 +27,16 @@
     return path.split(/[\\/]/).pop() ?? path;
   }
 
+  const PRESET_NAMES: Record<string, string> = {
+    'lossless-trim': 'Original quality',
+    discord: 'Discord',
+    twitter: 'Twitter / X',
+  };
+
+  function presetName(id: string): string {
+    return PRESET_NAMES[id] ?? id;
+  }
+
   function formatExportedAt(value: string): string {
     const parsed = Date.parse(value);
     if (Number.isNaN(parsed)) {
@@ -37,28 +49,31 @@
 
 <DraggablePanel open={open} title="Clip history" width={620} maxHeight="min(85vh, 640px)" on:close={() => dispatch('close')}>
   {#if entries.length === 0}
-    <p class="history-drawer__empty">Exported clips will appear here.</p>
-    {#if !uploadConfigured}
-      <p class="history-drawer__empty">
-        Configure an upload target in
-        <button type="button" class="link-button" on:click={() => dispatch('openSettings')}>Settings → Upload</button>
-      </p>
-    {/if}
+    <div class="history-drawer__empty">
+      <p class="history-drawer__empty-title">No exports yet</p>
+      <p>Clips you export show up here, so you can copy, upload or find them again later.</p>
+      {#if !uploadConfigured}
+        <button type="button" class="secondary" on:click={() => dispatch('openSettings')}>Set up uploads</button>
+      {/if}
+    </div>
   {:else}
     <ul class="history-drawer__list">
       {#each entries as entry (entry.outputPath)}
         <li class="history-drawer__item">
           <div class="history-drawer__meta">
-            <strong>{fileName(entry.outputPath)}</strong>
-            {#if entry.shareUrl}
-              <span class="history-drawer__badge">Shared</span>
-            {/if}
+            <div class="history-drawer__name">
+              <strong title={entry.outputPath}>{fileName(entry.outputPath)}</strong>
+              {#if entry.shareUrl}
+                <span class="history-drawer__badge">Shared</span>
+              {/if}
+            </div>
+            <span class="mono">{presetName(entry.presetId)} · {formatBytes(entry.fileSize)} · {formatTime(entry.duration)}</span>
             <span>{formatExportedAt(entry.exportedAt)}</span>
-            <span>{entry.presetId} · {formatBytes(entry.fileSize)} · {formatTime(entry.duration)}</span>
           </div>
+          <IconButton icon="dismiss" title="Remove from history (the file stays on disk)" variant="mini" size={16} on:click={() => dispatch('remove', { path: entry.outputPath })} />
           <div class="history-drawer__actions">
-            <button type="button" class="secondary" on:click={() => dispatch('reveal', { path: entry.outputPath })}>Reveal</button>
-            <button type="button" class="secondary" on:click={() => dispatch('openClip', { path: entry.outputPath })}>Open</button>
+            <button type="button" class="secondary" on:click={() => dispatch('openClip', { path: entry.outputPath })}>Open in editor</button>
+            <button type="button" class="secondary" on:click={() => dispatch('reveal', { path: entry.outputPath })}>Show in {fileManagerName}</button>
             <button type="button" class="secondary" on:click={() => dispatch('copyPath', { path: entry.outputPath })}>Copy path</button>
             {#if entry.shareUrl}
               <button type="button" class="secondary" on:click={() => dispatch('copyLink', { url: entry.shareUrl ?? '' })}>Copy link</button>
@@ -71,7 +86,6 @@
             >
               {busyPath === entry.outputPath ? 'Uploading…' : 'Upload'}
             </button>
-            <button type="button" class="secondary" on:click={() => dispatch('remove', { path: entry.outputPath })}>Remove</button>
           </div>
         </li>
       {/each}

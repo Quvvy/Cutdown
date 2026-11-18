@@ -1,129 +1,56 @@
 <script lang="ts">
   import { createEventDispatcher } from 'svelte';
-  import IconButton from './IconButton.svelte';
   import ProgressBar from './ProgressBar.svelte';
   import { formatTime } from '../lib/format';
-  import { fileManagerName } from '../lib/platform';
   import type { ExportStatus, TimelineSegment } from '../stores/editor';
 
-  export let outputDuration = 0;
-  export let segmentCount = 0;
+  /** Length of what Export will write: kept parts, trimmed to In/Out. */
+  export let exportSeconds = 0;
+  export let exportParts = 0;
+  export let hasClip = false;
   export let selectedSegment: TimelineSegment | null = null;
   export let range: { start: number; end: number } | null = null;
-  export let rangeLoop = false;
-  export let canUseRange = false;
-  /** 0..1 */
-  export let volume = 1;
-  export let volumeEnabled = false;
   export let exportStatus: ExportStatus;
   export let statusLabel = '';
   /** Brief confirmation of the last edit. */
   export let note = '';
   export let progressPercent: number | null = null;
-  export let dismissible = false;
-  export let shareUrl: string | null = null;
 
-  const dispatch = createEventDispatcher<{
-    toggleLoop: void;
-    volume: { volume: number };
-    dismiss: void;
-    copyFile: void;
-    copyPath: void;
-    copyShareLink: void;
-    reveal: void;
-    upload: void;
-    openExport: void;
-    cancel: void;
-  }>();
+  const dispatch = createEventDispatcher<{ cancel: void }>();
 
-  $: volumePercent = Math.round(volume * 100);
-  $: outputPath = exportStatus.outputPath ?? null;
-  $: finished = exportStatus.state === 'success' || exportStatus.state === 'error';
+  $: running = exportStatus.state === 'running';
+  // Finished exports are shown on the result card, so the bar only reports work in progress.
+  $: label = note || (hasClip && exportStatus.state === 'idle' ? statusLabel : '');
 </script>
 
 <footer class="bottom-bar" aria-label="Editor status">
   <div class="bottom-bar__stats">
-    <span class="stat" title="Total output length after cuts">
-      <span class="stat__label">Output</span>
-      <strong>{formatTime(outputDuration)}</strong>
-      <small>{segmentCount} seg</small>
+    <span class="stat" class:stat--empty={!hasClip} title="What Export will write: the kept parts, trimmed to In and Out">
+      <span class="stat__label">Export</span>
+      <strong>{hasClip ? formatTime(exportSeconds) : '—'}</strong>
+      {#if hasClip}
+        <small>{exportParts} {exportParts === 1 ? 'part' : 'parts'}</small>
+      {/if}
     </span>
     <span
       class="stat"
       class:stat--empty={!selectedSegment}
-      title={selectedSegment ? `${formatTime(selectedSegment.sourceStart)} - ${formatTime(selectedSegment.sourceEnd)}` : 'No segment selected'}
+      title={selectedSegment ? `${formatTime(selectedSegment.sourceStart)} – ${formatTime(selectedSegment.sourceEnd)}` : 'No part selected'}
     >
       <span class="stat__label">Selected</span>
       <strong>{selectedSegment ? formatTime(selectedSegment.sourceEnd - selectedSegment.sourceStart) : '—'}</strong>
     </span>
-    <span class="stat" class:stat--empty={!range} title={range ? `${formatTime(range.start)} - ${formatTime(range.end)}` : 'No In/Out range'}>
-      <span class="stat__label">Range</span>
+    <span class="stat" class:stat--empty={!range} title={range ? `In ${formatTime(range.start)} – Out ${formatTime(range.end)}` : 'No In/Out range'}>
+      <span class="stat__label">In → Out</span>
       <strong>{range ? formatTime(range.end - range.start) : '—'}</strong>
     </span>
   </div>
-  <div class="bottom-bar__playback">
-    <IconButton
-      icon="loop"
-      variant="secondary"
-      active={rangeLoop}
-      title={rangeLoop ? 'Disable range loop (Shift+L)' : 'Loop playback in I/O range (Shift+L)'}
-      disabled={!canUseRange}
-      on:click={() => dispatch('toggleLoop')}
-    />
-    <div class="bottom-bar__volume">
-      <input
-        id="clip-volume"
-        class="app-slider"
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value={volumePercent}
-        disabled={!volumeEnabled}
-        aria-label="Clip volume"
-        title="Clip volume"
-        style:--slider-fill={`${volumePercent}%`}
-        on:input={(event) => dispatch('volume', { volume: Number(event.currentTarget.value) / 100 })}
-      />
-      <span>{volumePercent}%</span>
-    </div>
-  </div>
-  <div class="bottom-bar__status">
-    {#if note}
-      <span class="bottom-bar__note" aria-live="polite">{note}</span>
-    {/if}
-    <ProgressBar
-      active={exportStatus.state === 'running'}
-      label={note && exportStatus.state === 'idle' ? '' : statusLabel}
-      percent={progressPercent}
-      state={exportStatus.state}
-      {dismissible}
-      on:dismiss={() => dispatch('dismiss')}
-    />
-    {#if outputPath && finished}
-      <div class="bottom-bar__result">
-        <span class="bottom-bar__result-name" title={outputPath}>{outputPath.split(/[\\/]/).pop()}</span>
-        {#if exportStatus.state === 'success'}
-          <button
-            type="button"
-            class="bottom-bar__copy-file"
-            title="Copy the file itself, then paste it into Discord or a folder"
-            on:click={() => dispatch('copyFile')}
-          >
-            Copy file
-          </button>
-        {/if}
-        <IconButton icon="copy" variant="secondary" title="Copy output file path" on:click={() => dispatch('copyPath')} />
-        {#if shareUrl}
-          <IconButton icon="link" variant="secondary" title="Copy share link" on:click={() => dispatch('copyShareLink')} />
-        {/if}
-        <IconButton icon="open" variant="secondary" title={`Show exported file in ${fileManagerName}`} on:click={() => dispatch('reveal')} />
-        <IconButton icon="upload" variant="secondary" title="Upload and copy share link" on:click={() => dispatch('upload')} />
-        <IconButton icon="export" variant="secondary" title="Open export settings" on:click={() => dispatch('openExport')} />
-      </div>
-    {:else if outputPath && exportStatus.state === 'running'}
-      <button type="button" class="secondary" title="Cancel export" on:click={() => dispatch('cancel')}>Cancel</button>
-      <IconButton icon="open" variant="secondary" title={`Show exported file in ${fileManagerName}`} on:click={() => dispatch('reveal')} />
+  <div class="bottom-bar__status" aria-live="polite">
+    {#if running}
+      <ProgressBar active={true} label={statusLabel} percent={progressPercent} state="running" />
+      <button type="button" class="secondary" on:click={() => dispatch('cancel')}>Cancel</button>
+    {:else if label}
+      <span class="bottom-bar__note" title={label}>{label}</span>
     {/if}
   </div>
 </footer>

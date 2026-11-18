@@ -10,87 +10,94 @@
 
   const tabs = [
     { id: 'shortcuts' as const, label: 'Shortcuts' },
-    { id: 'guide' as const, label: 'Features' },
+    { id: 'guide' as const, label: 'How it works' },
   ];
 
-  const shortcuts = [
-    { keys: 'Ctrl + O', action: 'Open a video or Cutdown project' },
-    { keys: 'Ctrl + S', action: 'Save Cutdown project' },
-    { keys: 'Ctrl + E, then Enter', action: 'Export (Original quality, Discord or Twitter/X)' },
-    { keys: 'X or S', action: 'Cut at playhead' },
-    { keys: 'M', action: 'Add timeline marker at playhead' },
-    { keys: ', / .', action: 'Previous / next marker' },
-    { keys: 'Shift + M', action: 'Remove nearest marker at playhead' },
-    { keys: 'Del', action: 'Delete selected marker or segment' },
-    { keys: 'Esc', action: 'Deselect segment, or close a panel' },
-    { keys: 'I / O', action: 'Set range in / out points' },
-    { keys: 'Z', action: 'Zoom timeline to I/O range' },
-    { keys: 'Shift + L', action: 'Toggle loop in I/O range' },
-    { keys: 'Space', action: 'Play / pause preview' },
-    { keys: 'J / K / L', action: 'Shuttle: slower (or back 1s when paused) / pause / play, then faster' },
-    { keys: '[ / ]', action: 'Snap playhead to range in / out' },
-    { keys: 'Left / Right', action: 'Step one frame' },
-    { keys: 'Shift + Left / Right', action: 'Step 1 second' },
-    { keys: 'Ctrl + D', action: 'Duplicate selected segment' },
-    { keys: 'Ctrl + Z / Y', action: 'Undo / redo segment edits' },
-    { keys: 'Scroll on preview', action: 'Zoom the preview (Fit resets it)' },
-    { keys: 'Alt + drag', action: 'Pan preview when zoomed' },
-    { keys: 'Preview + / −', action: 'Zoom preview in / out' },
-    { keys: '?', action: 'Open this help window' },
+  type Shortcut = { keys: string[]; join?: 'or' | 'then' | '/'; action: string };
+
+  const shortcutGroups: Array<{ title: string; rows: Shortcut[] }> = [
+    {
+      title: 'Clip',
+      rows: [
+        { keys: ['Ctrl+O'], action: 'Open a video or .cutdown project' },
+        { keys: ['Ctrl+S'], action: 'Save project' },
+        { keys: ['Ctrl+E', 'Enter'], join: 'then', action: 'Export' },
+        { keys: ['?'], action: 'Show this help' },
+      ],
+    },
+    {
+      title: 'Playback',
+      rows: [
+        { keys: ['Space'], action: 'Play or pause' },
+        { keys: ['J', 'K', 'L'], join: '/', action: 'Slower or back 1 s / pause / play, then faster' },
+        { keys: ['Left', 'Right'], join: '/', action: 'Step one frame' },
+        { keys: ['Shift+Left', 'Shift+Right'], join: '/', action: 'Step one second' },
+        { keys: ['[', ']'], join: '/', action: 'Playhead to In / Out' },
+        { keys: ['Shift+L'], action: 'Loop In → Out' },
+      ],
+    },
+    {
+      title: 'Cutting',
+      rows: [
+        { keys: ['X', 'S'], join: 'or', action: 'Cut at the playhead' },
+        { keys: ['I', 'O'], join: '/', action: 'Set In / Out at the playhead' },
+        { keys: ['Del'], action: 'Delete the selected part or marker' },
+        { keys: ['Ctrl+D'], action: 'Duplicate the selected part' },
+        { keys: ['Ctrl+Z', 'Ctrl+Y'], join: '/', action: 'Undo / redo' },
+        { keys: ['Esc'], action: 'Deselect, or close a panel' },
+      ],
+    },
+    {
+      title: 'Markers and zoom',
+      rows: [
+        { keys: ['M'], action: 'Add a marker' },
+        { keys: ['Shift+M'], action: 'Remove the marker at the playhead' },
+        { keys: [',', '.'], join: '/', action: 'Previous / next marker' },
+        { keys: ['Z'], action: 'Zoom the timeline to In → Out' },
+        { keys: ['Ctrl+scroll'], action: 'Zoom the timeline' },
+        { keys: ['Scroll'], action: 'Zoom the preview (Alt+drag pans)' },
+      ],
+    },
   ];
 
   const guideSections = [
     {
-      title: 'Open clips',
+      title: 'Open',
       items: [
-        'Open a video from the File menu (Ctrl+O), drag-and-drop onto the window, or pick a recent source under File. Opening a file while Cutdown is already running sends it to that window.',
-        'Reopening a raw video starts a fresh edit — use Save project when you want to keep your work.',
-        'Latest replay opens the newest file in your OBS watch folder (set in Settings → Folders).',
-        'Save and reopen .cutdown project files to restore cuts, range, crop, and markers.',
+        'Open a video with Ctrl+O, drop it on the window, or right-click it in your file manager and choose Open With → Cutdown.',
+        'Latest replay opens the newest video in your watch folder (Settings → Folders). Point it at your OBS recordings folder.',
+        'Reopening a video starts fresh. Save a .cutdown project (Ctrl+S) to keep cuts, In/Out, crop and markers.',
       ],
     },
     {
-      title: 'Edit on the timeline',
+      title: 'Cut',
       items: [
-        'Cut with X (or S) at the playhead, then Delete removes the selected segment and the gap closes. Export (Ctrl+E, Enter) saves the kept parts between In and Out next to the original; Copy file in the status bar puts it on the clipboard for Discord.',
-        'Click a segment to select it; drag its left or right edge to trim or extend the cut. Press Esc or click empty track space to deselect.',
-        'Set In (I) and Out (O), then right-click the timeline and choose Keep only range to delete everything outside that span (one kept segment).',
-        'Trim outside range (right-click menu) clips existing segments to the I/O span instead of replacing them.',
-        'I/O range also controls single-clip export in the Export modal.',
-        'Markers (M) label moments on the source timeline — useful for navigation, not export by themselves.',
-        'The audio track shows a waveform; selection uses a border so the waveform stays visible.',
+        'Press X to cut at the playhead, select a part and press Del to remove it. Drag a selected part’s edges to trim it, or drag the part to reorder.',
+        'Set In (I) and Out (O) around the moment you want. Everything outside is dimmed: that’s what won’t be exported.',
+        'Trim to In → Out (the pin button, or right-click the timeline) removes everything outside the range and keeps your cuts inside it.',
+        'Markers (M) are bookmarks for finding moments again; they don’t change the export.',
       ],
     },
     {
-      title: 'Preview & crop',
+      title: 'Export and share',
       items: [
-        'Fit keeps the preview scaled to the panel when you resize the window.',
-        'Crop overlay supports locked aspect ratios including custom width:height.',
-        'HEVC, AV1, 10-bit and awkward containers get a preview copy automatically, so the preview is never a black frame. If a preview still looks wrong, use Fix preview. Export always uses the original file.',
+        'Ctrl+E opens Export: Original quality copies without re-encoding (fast, no quality loss), Discord compresses under 20 MB, Twitter / X makes a 720p copy.',
+        'The file is saved next to the original, named after where the clip starts, like replay-0m14s.mp4.',
+        'When it’s done, Copy file puts the file itself on the clipboard: paste it straight into Discord with Ctrl+V.',
+        'More options… picks another folder, audio-only export, fades, or one file per part. Upload targets live in Settings → Upload.',
       ],
     },
     {
-      title: 'Export & share',
+      title: 'Preview',
       items: [
-        'Lossless Trim is fastest (stream-copy). Discord/Archive presets re-encode for size targets.',
-        'Export can write video (MP4) or audio only (WAV, MP3, OGG) from the Export window.',
-        'Export can write each kept segment as its own file, or export the I/O range as one clip.',
-        'After export, upload to Catbox, File Garden, or a custom server (Settings → Upload).',
-        'Clip history stores past exports with copy-path and copy-link actions.',
-      ],
-    },
-    {
-      title: 'Windows & tray',
-      items: [
-        'Closing the window can send Cutdown to the tray (Settings → General) — use the tray icon to restore.',
-        'Only one Cutdown window runs. Opening a video or clicking the app focuses the existing instance.',
-        'Restore the blue tray tip from Settings → General if you dismissed it.',
+        'HEVC, AV1 and 10-bit videos get a smooth preview copy automatically. If a preview still looks wrong, use Fix preview; export always uses the original.',
+        'Crop shows ratio presets on the video. The crop applies to the export.',
       ],
     },
   ];
 </script>
 
-<DraggablePanel open={open} title="Help" width={520} maxHeight="min(88vh, 760px)" on:close={() => dispatch('close')}>
+<DraggablePanel open={open} title="Help" width={540} maxHeight="min(85vh, 640px)" fixedHeight on:close={() => dispatch('close')}>
   <nav class="panel-nav" aria-label="Help sections">
     {#each tabs as tab (tab.id)}
       <button
@@ -105,22 +112,26 @@
   </nav>
 
   {#if activeTab === 'shortcuts'}
-    <table class="shortcuts-table">
-      <thead>
-        <tr>
-          <th scope="col">Key</th>
-          <th scope="col">Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {#each shortcuts as row}
-          <tr>
-            <td><kbd>{row.keys}</kbd></td>
-            <td>{row.action}</td>
-          </tr>
-        {/each}
-      </tbody>
-    </table>
+    <div class="shortcut-groups">
+      {#each shortcutGroups as group (group.title)}
+        <section class="shortcut-group">
+          <h3>{group.title}</h3>
+          <dl>
+            {#each group.rows as row (row.action)}
+              <div class="shortcut-row">
+                <dt>
+                  {#each row.keys as key, index}
+                    {#if index > 0}<span class="shortcut-row__join">{row.join ?? '/'}</span>{/if}
+                    <kbd>{key}</kbd>
+                  {/each}
+                </dt>
+                <dd>{row.action}</dd>
+              </div>
+            {/each}
+          </dl>
+        </section>
+      {/each}
+    </div>
   {:else}
     <div class="help-guide">
       {#each guideSections as section}

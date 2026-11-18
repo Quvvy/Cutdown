@@ -9,9 +9,11 @@
   import { get } from 'svelte/store';
   import ClipHistoryDrawer from './components/ClipHistoryDrawer.svelte';
   import ConfirmModal from './components/ConfirmModal.svelte';
+  import CropBar from './components/CropBar.svelte';
   import EditorToolbar from './components/EditorToolbar.svelte';
   import ExportModal from './components/ExportModal.svelte';
   import ExportPanel from './components/ExportPanel.svelte';
+  import ExportResult from './components/ExportResult.svelte';
   import RelinkSourceModal from './components/RelinkSourceModal.svelte';
   import SettingsModal from './components/SettingsModal.svelte';
   import MarkerLabelModal from './components/MarkerLabelModal.svelte';
@@ -95,6 +97,7 @@
     editor,
     totalSegmentDuration,
     type EditorState,
+    type ExportStatus,
     type TimelineSegment,
     type VideoMetadata,
   } from './stores/editor';
@@ -318,7 +321,10 @@
   let openingClip = false;
   let openingMessage = 'Opening clip…';
   let lastShareUrl: string | null = null;
-  let statusDismissed = false;
+  let lastExportJobs: ExportJob[] = [];
+  // Outcome of the last export, for the result card. Kept apart from exportStatus, which
+  // also reports preview, ffmpeg and file-manager problems.
+  let exportResult: ExportStatus | null = null;
   let exportJobLabel = '';
   let exportJobIndex = 1;
   let exportJobTotal = 1;
@@ -706,7 +712,7 @@
   })();
 
   function dismissExportStatus(): void {
-    statusDismissed = true;
+    exportResult = null;
     editor.update((state) => ({
       ...state,
       exportStatus: {
@@ -887,9 +893,8 @@
         formatBytes(metadata.fileSize),
       ].join(' · ')
     : '';
-  $: statusDismissible =
-    !statusDismissed &&
-    ($editor.exportStatus.state === 'success' || $editor.exportStatus.state === 'error');
+  // The result card: what just got exported (or why it failed), with what to do next.
+  $: showExportResult = Boolean(exportResult && $editor.currentFile) && !exportQueueProcessing;
   $: normalizedRange =
     rangeStart !== null && rangeEnd !== null
       ? {
@@ -1070,10 +1075,11 @@
     cropEnabled = false;
     cropRect = { x: 0.05, y: 0.05, width: 0.9, height: 0.9 };
     exportMode = 'sequence';
+    exportResult = null;
+    lastExportJobs = [];
     openingClip = true;
     openingMessage = 'Reading clip…';
     exportProgressPercent = null;
-    statusDismissed = false;
     editor.update((state) => ({
       ...state,
       currentFile: selected,
@@ -1442,8 +1448,12 @@
 
   function setRangeMarker(marker: 'start' | 'end', seconds: number): void {
     const result = setTimelineRangeMarker(marker, seconds, duration, { rangeStart, rangeEnd });
+    const changed = result.rangeStart !== rangeStart || result.rangeEnd !== rangeEnd;
     rangeStart = result.rangeStart;
     rangeEnd = result.rangeEnd;
+    if (changed && rangeStart !== null && rangeEnd !== null) {
+      noteEdit(`${marker === 'start' ? 'In' : 'Out'} set at ${formatTime(seconds)}. Exporting ${formatTime(Math.abs(rangeEnd - rangeStart))}.`);
+    }
     loopNarrowedRange();
   }
 
@@ -1997,7 +2007,6 @@
     selectedUploadProviderId = targetProviderId;
     const providerName = uploadProviderName(targetProviderId);
     historyBusyPath = path;
-    statusDismissed = false;
     editor.update((state) => ({
       ...state,
       exportStatus: {
@@ -2194,9 +2203,10 @@
       return `cutdown.${extension}`;
     }
 
-    const leaf = $editor.currentFile.split(/[\\/]/).pop() ?? 'clip.mp4';
-    const stem = leaf.replace(/(\.[^.]+)?$/i, '-cutdown');
-    return `${stem}.${extension}`;
+    return (
+      quickExportPath($editor.currentFile, quickRanges[0]?.start ?? 0, extension).split(/[\\/]/).pop() ??
+      `cutdown.${extension}`
+    );
   }
 
   function defaultExportDirectory(settings?: AppSettings | null): string {
@@ -2266,14 +2276,17 @@
     }
   }
 
-  async function openExportModal(): Promise<void> {
+  async function openExportModal(options: { nextToOriginal?: boolean } = {}): Promise<void> {
     const settings = await invoke<AppSettings>('get_settings').catch(() => null);
+    exportMode = rangeIsNarrowed && quickRanges.length > 0 ? 'range' : 'sequence';
     outputFileName = ensureExportFileExtension(
       defaultExportFileName(),
       extensionForExport(exportType, audioPresetId),
     );
 
-    if (!outputDirectory) {
+    if (options.nextToOriginal && quickDestination) {
+      outputDirectory = splitOutputPath(quickDestination).directory;
+    } else if (!outputDirectory) {
       outputDirectory = defaultExportDirectory(settings);
     }
 
@@ -2281,8 +2294,8 @@
   }
 
   function buildExportSegmentRanges(): Array<{ start: number; end: number }> {
-    if (exportMode === 'range' && canUseRange && normalizedRange) {
-      return [{ start: normalizedRange.start, end: normalizedRange.end }];
+    if (exportMode === 'range' && rangeIsNarrowed) {
+      return quickRanges.map((part) => ({ ...part }));
     }
 
     return segments.map((segment) => ({
@@ -2352,7 +2365,6 @@
 
     exportProgressPercent = 0;
     exportStartedAt = Date.now();
-    statusDismissed = false;
     exportJobLabel = job.label;
     editor.update((state) => ({
       ...state,
@@ -2417,6 +2429,9 @@
       return;
     }
 
+    lastExportJobs = jobs;
+    exportResult = null;
+
     exportQueueProcessing = true;
     exportJobTotal = jobs.length;
     exportJobIndex = 0;
@@ -2427,6 +2442,7 @@
         await runExportJob(jobs[index]);
       }
 
+      exportResult = { ...get(editor).exportStatus };
       await refreshClipHistory();
       if (exportType === 'video') {
         await invoke('set_last_preset_id', { presetId: exportPresetId });
@@ -2447,12 +2463,18 @@
           outputSize: state.exportStatus.outputSize,
         },
       }));
-      pushToast(message, 'error');
+      exportResult = { state: 'error', message, outputPath: get(editor).exportStatus.outputPath };
     } finally {
       exportQueueProcessing = false;
       exportJobIndex = 1;
       exportJobTotal = 1;
       exportJobLabel = '';
+    }
+  }
+
+  function retryLastExport(): void {
+    if (lastExportJobs.length > 0) {
+      void processExportQueue(lastExportJobs);
     }
   }
 
@@ -2466,7 +2488,7 @@
 
   function openFullExportOptions(): void {
     exportPanelOpen = false;
-    void openExportModal();
+    void openExportModal({ nextToOriginal: true });
   }
 
   // One-click export: kept parts trimmed to In/Out, saved next to the original with a
@@ -2492,7 +2514,7 @@
   }
 
   async function copyExportedFile(): Promise<void> {
-    const path = $editor.exportStatus.outputPath;
+    const path = exportResult?.outputPath ?? $editor.exportStatus.outputPath;
     if (!path) {
       return;
     }
@@ -2845,7 +2867,7 @@
   }
 
   async function revealExport(): Promise<void> {
-    const path = $editor.exportStatus.outputPath;
+    const path = exportResult?.outputPath ?? $editor.exportStatus.outputPath;
 
     if (!path) {
       return;
@@ -2928,10 +2950,21 @@
     on:settings={() => void openSettings()}
     {exportPanelOpen}
     on:export={toggleExportPanel}
-  />
+  >
+    <PreviewToolbar
+      slot="tools"
+      hasClip={Boolean($editor.currentFile)}
+      proxyRunning={previewFallbackRunning}
+      bind:cropEnabled
+      bind:playbackRate={previewPlaybackRate}
+      on:fit={() => preview?.fitToView()}
+      on:proxy={() => void prepareProxyPreview()}
+    />
+  </EditorToolbar>
 
-  {#if exportPanelOpen}
+  {#if exportPanelOpen || showExportResult}
     <div class="export-panel-anchor">
+    {#if exportPanelOpen}
     <ExportPanel
       presetIds={quickPresetIds}
       presetId={QUICK_PRESET_IDS.includes(exportPresetId) ? exportPresetId : 'lossless-trim'}
@@ -2948,6 +2981,21 @@
       on:moreOptions={openFullExportOptions}
       on:close={() => (exportPanelOpen = false)}
     />
+    {:else}
+      <ExportResult
+        status={exportResult ?? $editor.exportStatus}
+        shareUrl={lastShareUrl}
+        canRetry={lastExportJobs.length > 0}
+        on:dismiss={dismissExportStatus}
+        on:copyFile={() => void copyExportedFile()}
+        on:copyPath={() => void invoke('copy_text_to_clipboard', { text: exportResult?.outputPath ?? '' })}
+        on:copyShareLink={() => void copyShareLink(lastShareUrl ?? '')}
+        on:reveal={revealExport}
+        on:upload={() => openUploadPicker(exportResult?.outputPath ?? '')}
+        on:openExport={() => void openExportModal()}
+        on:retry={retryLastExport}
+      />
+    {/if}
     </div>
   {/if}
 
@@ -2963,24 +3011,19 @@
         </span>
       </div>
     {/if}
-    <PreviewToolbar
-      hasClip={Boolean($editor.currentFile)}
-      proxyRunning={previewFallbackRunning}
-      bind:cropEnabled
-      bind:cropLockAspect
-      {cropAspect}
-      bind:cropCustomAspectW
-      bind:cropCustomAspectH
-      bind:playbackRate={previewPlaybackRate}
-      on:aspect={(event) => applyAspectCrop(event.detail.aspect)}
-      on:fit={() => preview?.fitToView()}
-      on:proxy={() => void prepareProxyPreview()}
-    />
+    {#if cropEnabled && $editor.currentFile}
+      <CropBar
+        bind:cropLockAspect
+        {cropAspect}
+        bind:cropCustomAspectW
+        bind:cropCustomAspectH
+        on:aspect={(event) => applyAspectCrop(event.detail.aspect)}
+      />
+    {/if}
     <VideoPreview
       bind:this={preview}
       playbackRate={previewPlaybackRate}
       src={$editor.videoSrc}
-      currentTime={$editor.currentTime}
       loopEnabled={rangeLoopPlayback}
       loopStart={normalizedRange?.start ?? null}
       loopEnd={normalizedRange?.end ?? null}
@@ -2996,6 +3039,10 @@
       on:previewready={handlePreviewReady}
       on:error={(event) => void handlePreviewError(event.detail.message)}
       on:open={() => void chooseClip()}
+      {recentSources}
+      canOpenLatestReplay={Boolean(watchFolder)}
+      on:latestReplay={() => void loadLatestReplay()}
+      on:openRecent={(event) => void openIncomingPath(event.detail.path)}
       on:playstate={(event) => handlePreviewPlayState(event.detail.playing)}
       on:ended={handlePreviewEnded}
       on:timeupdate={(event) => handlePreviewTimeUpdate(event.detail.currentTime)}
@@ -3016,12 +3063,26 @@
       canEdit={canExport}
       canDeleteSegment={Boolean(selectedSegment) && segments.length > 1}
       playing={previewPlaying}
+      currentTime={$editor.currentTime}
+      {duration}
+      zoom={timelineZoom}
+      rangeNarrowed={rangeIsNarrowed}
+      {canUseRange}
+      rangeLoop={rangeLoopPlayback}
+      volume={clipVolume}
+      volumeEnabled={Boolean($editor.currentFile && metadata?.audioCodec)}
       on:split={splitAtCurrentTime}
       on:deleteSegment={deleteSelectedSegment}
       on:markIn={() => setRangeMarker('start', $editor.currentTime)}
       on:markOut={() => setRangeMarker('end', $editor.currentTime)}
+      on:trimToRange={deleteOutsideRange}
       on:addMarker={() => addBookmarkMarker($editor.currentTime)}
       on:togglePlay={() => preview?.togglePlayback()}
+      on:toggleLoop={toggleRangeLoop}
+      on:volume={(event) => (clipVolume = clamp(event.detail.volume, 0, 1))}
+      on:zoomChange={(event) => (timelineZoom = event.detail.zoom)}
+      on:zoomFit={zoomToFit}
+      on:zoomRange={zoomToRange}
     />
   <Timeline
     bind:this={timeline}
@@ -3089,29 +3150,15 @@
   </section>
 
   <StatusBar
-    {outputDuration}
-    segmentCount={segments.length}
+    exportSeconds={quickExportSeconds}
+    exportParts={quickRanges.length}
+    hasClip={Boolean($editor.currentFile)}
     selectedSegment={selectedSegment ?? null}
     range={normalizedRange ?? null}
-    rangeLoop={rangeLoopPlayback}
-    {canUseRange}
-    volume={clipVolume}
-    volumeEnabled={Boolean($editor.currentFile && metadata?.audioCodec)}
     exportStatus={$editor.exportStatus}
     statusLabel={exportEta ? `${exportStatusLabel} · ${exportEta}` : exportStatusLabel}
     note={editNote}
     progressPercent={exportProgressPercent}
-    dismissible={statusDismissible}
-    shareUrl={lastShareUrl}
-    on:toggleLoop={toggleRangeLoop}
-    on:volume={(event) => (clipVolume = clamp(event.detail.volume, 0, 1))}
-    on:dismiss={dismissExportStatus}
-    on:copyFile={() => void copyExportedFile()}
-    on:copyPath={() => void invoke('copy_text_to_clipboard', { text: $editor.exportStatus.outputPath ?? '' })}
-    on:copyShareLink={() => void copyShareLink(lastShareUrl ?? '')}
-    on:reveal={revealExport}
-    on:upload={() => openUploadPicker($editor.exportStatus.outputPath ?? '')}
-    on:openExport={openExportModal}
     on:cancel={() => void cancelExport()}
   />
 </main>
@@ -3124,8 +3171,8 @@
   bind:audioPresetId
   segmentCount={segments.length}
   duration={outputDuration}
-  {rangeDuration}
-  canExportRange={canUseRange}
+  rangeDuration={quickExportSeconds}
+  canExportRange={rangeIsNarrowed && quickRanges.length > 0}
   {exportMode}
   presets={exportPresets}
   presetId={exportPresetId}

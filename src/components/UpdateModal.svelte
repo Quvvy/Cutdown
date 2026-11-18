@@ -64,10 +64,11 @@
 
 <style>
   .update-modal__notes {
-    background: var(--bg3);
+    background: var(--bg2);
+    border-radius: var(--r-md);
     border: 1px solid var(--line);
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--fs-sm);
     line-height: 1.45;
     max-height: 180px;
     overflow: auto;
@@ -76,8 +77,9 @@
   }
 
   .update-modal__progress {
-    background: var(--bg3);
-    border: 1px solid var(--line);
+    background: var(--bg0);
+    border: 1px solid var(--line-strong);
+    border-radius: 999px;
     height: 8px;
     margin-top: 10px;
     overflow: hidden;
@@ -90,8 +92,8 @@
   }
 
   .update-modal__error {
-    color: #f87171;
-    font-size: 12px;
+    color: var(--danger-text);
+    font-size: var(--fs-sm);
     margin: 10px 0 0;
   }
 </style>

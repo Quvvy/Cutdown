@@ -130,7 +130,7 @@
   }
 </script>
 
-<DraggablePanel open={open} title="Export clip" width={560} on:close={() => dispatch('close')}>
+<DraggablePanel open={open} title="Export options" width={560} maxHeight="min(85vh, 600px)" fixedHeight on:close={() => dispatch('close')}>
   {#if validationErrors.length > 0}
     <ul class="modal__validation">
       {#each validationErrors as error}
@@ -219,7 +219,7 @@
               checked={exportMode === 'sequence'}
               on:change={() => dispatch('exportModeChange', { mode: 'sequence' })}
             />
-            All kept segments ({segmentCount} segment{segmentCount === 1 ? '' : 's'}, {formatTime(duration)})
+            Everything kept ({segmentCount} part{segmentCount === 1 ? '' : 's'}, {formatTime(duration)})
           </label>
           <label>
             <input
@@ -230,7 +230,7 @@
               disabled={!canExportRange}
               on:change={() => dispatch('exportModeChange', { mode: 'range' })}
             />
-            I/O range only ({formatTime(rangeDuration)})
+            Kept parts from In to Out ({formatTime(rangeDuration)})
           </label>
         </div>
       </div>
@@ -238,10 +238,10 @@
         <span>Batch</span>
         <label class="modal__mode">
           <input type="checkbox" bind:checked={batchPerSegment} disabled={!canBatchPerSegment} />
-          Export each kept segment as its own file
+          Export each kept part as its own file
         </label>
       </div>
-      <p class="modal__note">Existing files at the output path will be replaced.</p>
+      <p class="modal__hint">If a file with this name exists, you'll be asked before it's replaced.</p>
     </div>
   {:else if activeTab === 'preset'}
     <div class="panel-section">

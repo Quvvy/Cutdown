@@ -89,18 +89,27 @@
       </div>
     {/if}
   </div>
-  <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} on:click={() => dispatch('undo')} />
-  <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={!canRedo} on:click={() => dispatch('redo')} />
-  <div class="toolbar__spacer"></div>
-  {#if filePath}
-    <span class="toolbar__clip-name" title={filePath}>{fileName}</span>
-    {#if metadata}
-      <span class="toolbar__meta" title={metadataDetail}>{metadata.width}×{metadata.height} · {metadata.variableFrameRate ? `VFR, up to ${Math.round(metadata.maxFps ?? metadata.fps)}` : `${metadata.fps.toFixed(0)}`} fps · {metadata.codec}</span>
-    {/if}
+  <div class="toolbar__group">
+    <IconButton icon="undo" title="Undo (Ctrl+Z)" disabled={!canUndo} on:click={() => dispatch('undo')} />
+    <IconButton icon="redo" title="Redo (Ctrl+Y)" disabled={!canRedo} on:click={() => dispatch('redo')} />
+  </div>
+  {#if $$slots.tools}
+    <span class="toolbar__separator" aria-hidden="true"></span>
+    <slot name="tools" />
   {/if}
-  <button type="button" class="tool-button" title="Help — shortcuts and features (?)" on:click={() => dispatch('help')}>?</button>
-  <IconButton icon="history" title="Clip history" on:click={() => dispatch('history')} />
-  <IconButton icon="settings" title="Settings" on:click={() => dispatch('settings')} />
+  <div class="toolbar__clip">
+    {#if filePath}
+      <span class="toolbar__clip-name" title={filePath}>{fileName}</span>
+      {#if metadata}
+        <span class="toolbar__meta mono" title={metadataDetail}>{metadata.width}×{metadata.height} · {metadata.variableFrameRate ? `VFR ≤${Math.round(metadata.maxFps ?? metadata.fps)}` : `${metadata.fps.toFixed(0)}`} fps · {metadata.codec}</span>
+      {/if}
+    {/if}
+  </div>
+  <div class="toolbar__group">
+    <IconButton icon="help" title="Help and shortcuts (?)" on:click={() => dispatch('help')} />
+    <IconButton icon="history" title="Clip history" on:click={() => dispatch('history')} />
+    <IconButton icon="settings" title="Settings" on:click={() => dispatch('settings')} />
+  </div>
   <span data-export-button>
     <IconButton
       icon="export"

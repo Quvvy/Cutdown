@@ -1,24 +1,26 @@
 <script lang="ts">
+  import IconButton from './IconButton.svelte';
+  import SvgIcon from './SvgIcon.svelte';
+  import { appIcons } from '../lib/appIcons';
   import { dismissToast, toasts, type ToastKind } from '../stores/toasts';
 
-  function kindLabel(kind: ToastKind): string {
-    switch (kind) {
-      case 'success':
-        return 'Success';
-      case 'error':
-        return 'Error';
-      default:
-        return 'Notice';
+  function kindIcon(kind: ToastKind) {
+    if (kind === 'success') {
+      return appIcons.success;
     }
+    if (kind === 'error') {
+      return appIcons.error;
+    }
+    return appIcons.info;
   }
 </script>
 
 <div class="toast-host" aria-live="polite" aria-relevant="additions">
   {#each $toasts as toast (toast.id)}
-    <div class="toast toast--{toast.kind}" role="status">
-      <span class="toast__kind">{kindLabel(toast.kind)}</span>
+    <div class="toast toast--{toast.kind}" role={toast.kind === 'error' ? 'alert' : 'status'}>
+      <span class="toast__icon"><SvgIcon icon={kindIcon(toast.kind)} size={18} /></span>
       <p class="toast__message">{toast.message}</p>
-      <button type="button" class="toast__dismiss" title="Dismiss" on:click={() => dismissToast(toast.id)}>×</button>
+      <IconButton icon="dismiss" title="Dismiss" variant="mini" size={16} on:click={() => dismissToast(toast.id)} />
     </div>
   {/each}
 </div>

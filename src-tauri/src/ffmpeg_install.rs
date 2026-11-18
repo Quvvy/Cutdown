@@ -66,10 +66,10 @@ pub fn run_install(app: Option<&AppHandle>) -> Result<(), String> {
     #[cfg(not(windows))]
     {
         let _ = app;
-        return Err(
+        Err(
             "Automatic ffmpeg install is only supported on Windows. Install ffmpeg with your package manager (for example: sudo apt install ffmpeg), then restart Cutdown."
                 .to_string(),
-        );
+        )
     }
 
     #[cfg(windows)]

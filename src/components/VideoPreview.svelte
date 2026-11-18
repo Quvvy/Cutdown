@@ -1,11 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher, onMount, tick } from 'svelte';
-  import { clamp, formatTime } from '../lib/format';
+  import { clamp } from '../lib/format';
   import { computeFitScale, shouldAutoFitOnViewportResize } from '../lib/previewView';
   import type { NormalizedCropRect } from '../lib/types';
 
   export let src: string | null = null;
-  export let currentTime = 0;
   export let loopEnabled = false;
   export let loopStart: number | null = null;
   export let loopEnd: number | null = null;
@@ -15,6 +14,9 @@
   export let lockedAspectRatio: number | null = null;
   export let volume = 1;
   export let playbackRate = 1;
+  /** Empty state: recent clips to reopen, and whether a watch folder is set for Latest replay. */
+  export let recentSources: string[] = [];
+  export let canOpenLatestReplay = false;
 
   let video: HTMLVideoElement;
   let viewport: HTMLDivElement;
@@ -51,6 +53,8 @@
     error: { message: string };
     cropChange: { rect: NormalizedCropRect };
     open: void;
+    latestReplay: void;
+    openRecent: { path: string };
   }>();
 
   let previewReadyForSrc: string | null = null;
@@ -543,7 +547,6 @@
           </div>
         {/if}
       </div>
-      <div class="timecode">{formatTime(currentTime)}</div>
       {#if canPan()}
         <div class="video-preview__hint">Alt+drag to pan · scroll to zoom · double-click to fit</div>
       {/if}
@@ -553,10 +556,31 @@
     {/if}
   {:else}
     <div class="video-preview__empty">
-      <strong>No clip loaded</strong>
-      <span>Open a video, drop a file on this window, or pick a recent source to start cutting.</span>
-      <button type="button" class="primary" on:click={() => dispatch('open')}>Open a video</button>
-      <span class="video-preview__empty-hint">H.264 MP4 plays immediately. HEVC, AV1, and MKV files get a playable preview automatically.</span>
+      <h1 class="video-preview__empty-title">Open a clip to start cutting</h1>
+      <p class="video-preview__empty-hint">Or drop a video or .cutdown project anywhere on this window.</p>
+      <div class="video-preview__empty-actions">
+        <button type="button" class="primary" on:click={() => dispatch('open')}>Open video <kbd>Ctrl+O</kbd></button>
+        {#if canOpenLatestReplay}
+          <button type="button" class="secondary" title="Open the newest video in your watch folder" on:click={() => dispatch('latestReplay')}>
+            Latest replay
+          </button>
+        {/if}
+      </div>
+      {#if recentSources.length > 0}
+        <section class="video-preview__recent" aria-label="Recent clips">
+          <h2>Recent</h2>
+          <ul>
+            {#each recentSources.slice(0, 4) as source (source)}
+              <li>
+                <button type="button" title={source} on:click={() => dispatch('openRecent', { path: source })}>
+                  <span class="video-preview__recent-name">{source.split(/[\\/]/).pop() ?? source}</span>
+                  <span class="video-preview__recent-folder">{source.replace(/[\\/][^\\/]*$/, '')}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        </section>
+      {/if}
     </div>
   {/if}
 </section>

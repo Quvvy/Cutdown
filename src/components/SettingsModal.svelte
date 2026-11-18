@@ -103,14 +103,21 @@
 
   let wasVisible = false;
 
-  $: if (visible && !wasVisible) {
-    activeTab = initialTab;
-    draft = draftFromProps();
-    savedSnapshot = draftSignature(draft);
-    editingId = null;
-    editingPresetId = null;
+  // One function, so "load the draft on open" always runs before "remember it's open".
+  // As two reactive statements Svelte ran `wasVisible = visible` first, the draft was
+  // never loaded, and Save could write defaults over the real settings.
+  function syncOpenState(isVisible: boolean): void {
+    if (isVisible && !wasVisible) {
+      activeTab = initialTab;
+      draft = draftFromProps();
+      savedSnapshot = draftSignature(draft);
+      editingId = null;
+      editingPresetId = null;
+    }
+    wasVisible = isVisible;
   }
-  $: wasVisible = visible;
+
+  $: syncOpenState(visible);
 
   $: dirty = visible && draftSignature(draft) !== savedSnapshot;
 
@@ -459,7 +466,7 @@
   }
 </script>
 
-<DraggablePanel open={visible} title="Settings" width={580} on:close={requestClose}>
+<DraggablePanel open={visible} title="Settings" width={580} maxHeight="min(85vh, 620px)" fixedHeight on:close={requestClose}>
   <nav class="panel-nav" aria-label="Settings sections">
     {#each tabs as tab (tab.id)}
       <button
@@ -477,7 +484,7 @@
     <div class="panel-section">
       <h3 class="panel-section__title">{isWindows ? 'Windows' : 'Desktop'}</h3>
       <p class="panel-section__lead">
-        These options apply as soon as you toggle them. Only one Cutdown window runs; opening a clip reuses it.
+        These save as soon as you change them. Only one Cutdown window runs; opening a clip reuses it.
       </p>
       <div class="panel-field">
         <span>Startup and tray</span>
@@ -532,12 +539,12 @@
         </button>
       </div>
       <h3 class="panel-section__title">Encoding</h3>
-      <p class="panel-section__lead">ffmpeg and GPU options used when exporting clips. Click Save settings for encoding changes.</p>
+      <p class="panel-section__lead">How exports are encoded. Changes here save with Save settings.</p>
       <div class="panel-info">{ffmpegStatus || 'Checking ffmpeg availability...'}</div>
       <div class="panel-field">
         <span>GPU encoders</span>
         <div class="panel-info">
-          {gpuEncoders.length > 0 ? gpuEncoders.join(', ') : 'None detected (libx264 fallback)'}
+          {gpuEncoders.length > 0 ? gpuEncoders.join(', ') : 'None found. Re-encoding exports use the CPU (libx264).'}
         </div>
       </div>
       <label class="panel-field">
@@ -565,7 +572,7 @@
           </p>
         {:else}
           <p class="modal__hint">
-            To update, install the newer .deb or AppImage from GitHub releases.
+            To update, install the newer .deb, Arch package or AppImage from GitHub releases.
           </p>
         {/if}
       </div>
@@ -789,8 +796,10 @@
       <p class="panel-section__lead">Share exported clips via Catbox, File Garden, or your own HTTP server.</p>
       <div class="modal__output upload-settings">
             <p class="modal__hint">
-              Credentials are stored locally in settings.json. Click a target to edit it; use the circle to pick the
-              default for uploads. Click Save settings when finished.
+              Passwords and tokens are kept in your system's credential store ({isWindows
+                ? 'Windows Credential Manager'
+                : 'KWallet or GNOME Keyring, or a private file if no keyring is running'}). Click a target to edit it; the circle picks the
+              default. Changes save with Save settings.
             </p>
             <div class="upload-settings__toolbar">
               <button type="button" class="secondary" on:click={() => addProvider('catbox')}>Add Catbox</button>
@@ -1021,8 +1030,9 @@
         Clear watch folder
       </button>
     {/if}
-    <button type="button" class="primary" title="Save settings" on:click={saveSettings}>
-      {dirty ? 'Save settings*' : 'Save settings'}
-    </button>
+    {#if dirty}
+      <span class="floating-panel__footer-note" role="status">Unsaved changes</span>
+    {/if}
+    <button type="button" class="primary" on:click={saveSettings}>Save settings</button>
   </svelte:fragment>
 </DraggablePanel>
