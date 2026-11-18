@@ -2,7 +2,9 @@
 
 Internal scratch pad for what’s done, what’s flaky, and what’s next. Not release notes—see GitHub releases for those.
 
-## Now (v0.6.0)
+## Now (v0.6.1)
+
+**0.6.1** — Arch Linux package. `packaging/arch/PKGBUILD` builds from the GitHub tag; `scripts/build-arch.sh` packages the local checkout with baseline x86-64 flags (overriding `-march=native` / `target-cpu=native` from tuned makepkg.conf setups like CachyOS) into `target/release/bundle/arch/`. No app changes.
 
 **0.6.0** — Linux. Builds as a .deb (ffmpeg as a dependency, Open With for video types and `.cutdown`) and an AppImage. Settings in `~/.config/cutdown`, secrets in the Secret Service keyring (file fallback), run at startup via XDG autostart, watch-folder desktop notifications, reveal via xdg-open. Preview streams over a token-guarded loopback HTTP server because WebKitGTK can't play `<video>` from `asset://`. Export paths keep `/` on Linux. Release builds use LTO and strip symbols; dev ffmpeg in `public/ffmpeg` is no longer embedded in the app.
 
