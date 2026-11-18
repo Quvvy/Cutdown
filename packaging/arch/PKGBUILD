@@ -1,0 +1,69 @@
+# Maintainer: Quvvy
+#
+# Builds Cutdown from the tagged GitHub source.
+#   makepkg -si                     install from the published tag
+#   scripts/build-arch.sh           build a package from your local checkout
+
+pkgname=cutdown
+pkgver=0.6.1
+pkgrel=1
+pkgdesc='Clip and compress videos'
+arch=('x86_64')
+url='https://github.com/Quvvy/Cutdown'
+license=('MIT')
+depends=(
+  'ffmpeg'
+  'gtk3'
+  'webkit2gtk-4.1'
+  'libayatana-appindicator'
+  'openssl'
+  'hicolor-icon-theme'
+  # WebKitGTK plays the preview through GStreamer: MP4/MKV demuxers and the H.264 decoder.
+  'gst-plugins-good'
+  'gst-libav'
+)
+makedepends=('cargo' 'nodejs' 'npm')
+optdepends=(
+  'gst-plugins-bad: preview for less common formats'
+  'gnome-keyring: store upload passwords (or KWallet on Plasma)'
+)
+options=('!lto' '!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+_srcdir() {
+  # GitHub names the folder Cutdown-<ver>; scripts/build-arch.sh uses the same name.
+  echo "$srcdir/Cutdown-$pkgver"
+}
+
+prepare() {
+  cd "$(_srcdir)"
+  export CARGO_HOME="$srcdir/cargo-home"
+  npm ci --no-audit --no-fund
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd "$(_srcdir)"
+  export CARGO_HOME="$srcdir/cargo-home"
+  # Absolute: the Tauri CLI runs cargo from src-tauri/, which would resolve a relative path there.
+  export CARGO_TARGET_DIR="$PWD/target"
+  # --no-bundle: build the release binary with the embedded frontend; makepkg does the packaging.
+  npm run tauri -- build --no-bundle -- --locked
+}
+
+check() {
+  cd "$(_srcdir)"
+  npm test
+}
+
+package() {
+  cd "$(_srcdir)"
+  install -Dm755 target/release/cutdown "$pkgdir/usr/bin/cutdown"
+  install -Dm644 packaging/arch/cutdown.desktop "$pkgdir/usr/share/applications/cutdown.desktop"
+  install -Dm644 src-tauri/linux/cutdown-mime.xml "$pkgdir/usr/share/mime/packages/cutdown.xml"
+  install -Dm644 src-tauri/icons/32x32.png "$pkgdir/usr/share/icons/hicolor/32x32/apps/cutdown.png"
+  install -Dm644 src-tauri/icons/64x64.png "$pkgdir/usr/share/icons/hicolor/64x64/apps/cutdown.png"
+  install -Dm644 src-tauri/icons/128x128.png "$pkgdir/usr/share/icons/hicolor/128x128/apps/cutdown.png"
+  install -Dm644 src-tauri/icons/128x128@2x.png "$pkgdir/usr/share/icons/hicolor/256x256/apps/cutdown.png"
+}

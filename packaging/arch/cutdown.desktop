@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Cutdown
+Comment=Clip and compress videos
+Exec=cutdown %F
+Icon=cutdown
+StartupWMClass=cutdown
+Terminal=false
+Categories=AudioVideo;Video;
+MimeType=video/mp4;video/x-matroska;video/quicktime;video/webm;video/mp2t;video/x-msvideo;video/x-flv;application/x-cutdown-project;

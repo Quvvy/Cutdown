@@ -22,16 +22,16 @@ Press `?` in the app for the full shortcut list.
 
 ## Linux
 
-Builds as a `.deb` (Debian, Ubuntu, Mint, Pop!_OS…) and an AppImage (anything else). Differences from Windows:
+Builds as a `.deb` (Debian, Ubuntu, Mint, Pop!_OS…), an Arch package (Arch, CachyOS, EndeavourOS, Manjaro…: `sudo pacman -U cutdown-*-x86_64.pkg.tar.zst`) and an AppImage (anything else). Differences from Windows:
 
 - **ffmpeg** comes from your package manager, not an in-app download.
-- **Opening:** right-click a video in Dolphin / Files → *Open With* → Cutdown (the .deb registers the video types and `.cutdown` projects).
-- **Preview** plays through WebKitGTK + GStreamer. If a format shows a black frame, install `gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad`; the H.264 proxy fallback still kicks in for HEVC/AV1/10-bit. The AppImage bundles its own GStreamer.
+- **Opening:** right-click a video in Dolphin / Files → *Open With* → Cutdown (the .deb and Arch package register the video types and `.cutdown` projects).
+- **Preview** plays through WebKitGTK + GStreamer. If a format shows a black frame, install `gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad` (Arch: `gst-libav gst-plugins-good gst-plugins-bad`); the H.264 proxy fallback still kicks in for HEVC/AV1/10-bit. The AppImage bundles its own GStreamer.
 - **Tray:** needs a StatusNotifier/AppIndicator tray (KDE Plasma has one; GNOME needs the AppIndicator extension). Restore from the tray icon's menu → *Open Editor*.
 - **Run at startup** writes `~/.config/autostart/cutdown.desktop`.
 - **Watch-folder alerts** are desktop notifications with *Open* / *Not now*.
 - **NVIDIA:** Cutdown sets `WEBKIT_DISABLE_DMABUF_RENDERER=1` on the proprietary driver to avoid a blank window. Set it yourself to `0` to opt out.
-- **Updates:** no in-app updater; install the newer .deb / AppImage from GitHub releases.
+- **Updates:** no in-app updater; install the newer .deb / Arch package / AppImage from GitHub releases.
 
 ## Caveats worth knowing
 
@@ -56,6 +56,13 @@ sudo apt install ./target/release/bundle/deb/Cutdown_*_amd64.deb
 ```
 
 Linux bundle settings (targets, MIME types, deb dependencies) live in `src-tauri/tauri.linux.conf.json`, which Tauri merges over `tauri.conf.json` on Linux.
+
+**Arch package.** `packaging/arch/PKGBUILD` builds from the GitHub tag (`makepkg -si` in that folder). To package your current commit instead, with baseline x86-64 compiler flags so it runs on other machines:
+
+```bash
+sudo pacman -S --needed base-devel webkit2gtk-4.1 libayatana-appindicator gst-plugins-good gst-libav ffmpeg nodejs npm rust
+scripts/build-arch.sh          # → target/release/bundle/arch/cutdown-<ver>-1-x86_64.pkg.tar.zst
+```
 
 ```powershell
 npm install

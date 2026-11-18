@@ -75,3 +75,18 @@ On a VM or spare profile if you can:
 ## 6. Publish
 
 Write release notes for humans. Attach the three updater files. Tag after smoke passes.
+
+# Shipping Linux builds
+
+On Linux, with the version already bumped (step 1 above):
+
+```bash
+npm ci
+npm run validate:release:linux
+npm run build:linux        # .deb + AppImage in target/release/bundle/
+scripts/build-arch.sh      # Arch package in target/release/bundle/arch/
+```
+
+`build-arch.sh` packages the committed HEAD, so commit first. It builds for baseline x86-64 regardless of your makepkg.conf; never ship a package built with `-march=native`. Keep `pkgver` in `packaging/arch/PKGBUILD` equal to the app version (the script refuses otherwise).
+
+Upload `Cutdown_*_amd64.deb`, `Cutdown_*_amd64.AppImage` and `cutdown-*-x86_64.pkg.tar.zst` to the release. If the release has no new Windows installer, attach the previous release's `latest.json` too: the Windows updater reads `/releases/latest/download/latest.json`, and a "Latest" release without it breaks update checks.
