@@ -29,7 +29,7 @@ optdepends=(
 )
 options=('!lto' '!debug')
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('11c5762bf947ed8460954d092e4ba7f0573bb4282fa407c7462350d45e314069')
 
 _srcdir() {
   # GitHub names the folder Cutdown-<ver>; scripts/build-arch.sh uses the same name.
