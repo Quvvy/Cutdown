@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Build an Arch Linux package (cutdown-<ver>-<rel>-x86_64.pkg.tar.zst) from this checkout.
 # Uses packaging/arch/PKGBUILD, but feeds it the committed HEAD instead of the GitHub tag,
-# so it works before tagging. Output lands in target/release/bundle/arch/.
+# so it works before tagging (checksums are skipped: the tarball is local). Output lands in
+# target/release/bundle/arch/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -36,7 +37,7 @@ EOF
 
 (
   cd "$work"
-  PKGDEST="$PWD/../../$out" SRCDEST="$PWD" makepkg --config "$PWD/makepkg.conf" --force --cleanbuild --noconfirm "$@"
+  PKGDEST="$PWD/../../$out" SRCDEST="$PWD" makepkg --config "$PWD/makepkg.conf" --skipchecksums --force --cleanbuild --noconfirm "$@"
 )
 
 ls -l "$out"/cutdown-"$version"-*.pkg.tar.zst

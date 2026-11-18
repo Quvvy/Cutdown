@@ -87,6 +87,6 @@ npm run build:linux        # .deb + AppImage in target/release/bundle/
 scripts/build-arch.sh      # Arch package in target/release/bundle/arch/
 ```
 
-`build-arch.sh` packages the committed HEAD, so commit first. It builds for baseline x86-64 regardless of your makepkg.conf; never ship a package built with `-march=native`. Keep `pkgver` in `packaging/arch/PKGBUILD` equal to the app version (the script refuses otherwise).
+`build-arch.sh` packages the committed HEAD, so commit first. After pushing the tag, pin the source checksum in the PKGBUILD (`cd packaging/arch && updpkgsums`, or `sha256sum` of GitHub's tag tarball) and commit that. It builds for baseline x86-64 regardless of your makepkg.conf; never ship a package built with `-march=native`. Keep `pkgver` in `packaging/arch/PKGBUILD` equal to the app version (the script refuses otherwise).
 
 Upload `Cutdown_*_amd64.deb`, `Cutdown_*_amd64.AppImage` and `cutdown-*-x86_64.pkg.tar.zst` to the release. If the release has no new Windows installer, attach the previous release's `latest.json` too: the Windows updater reads `/releases/latest/download/latest.json`, and a "Latest" release without it breaks update checks.
