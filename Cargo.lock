@@ -800,6 +800,7 @@ dependencies = [
  "arboard",
  "base64 0.22.1",
  "chrono",
+ "gtk",
  "keyring",
  "notify",
  "notify-rust",

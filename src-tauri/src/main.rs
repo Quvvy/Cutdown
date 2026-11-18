@@ -160,6 +160,17 @@ fn apply_webkit_gpu_workarounds() {
     }
 }
 
+/// tao gives every Wayland window its own GTK header bar. Dropping it lets the desktop draw
+/// its usual title bar (KWin's, or GTK's plain one where the compositor has none). Runs
+/// before the window is first shown.
+#[cfg(target_os = "linux")]
+fn use_native_title_bar<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    use gtk::prelude::GtkWindowExt;
+    if let Ok(gtk_window) = window.gtk_window() {
+        gtk_window.set_titlebar(None::<&gtk::Widget>);
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     apply_webkit_gpu_workarounds();
@@ -199,6 +210,9 @@ fn main() {
             single_instance::spawn_listener(app.handle().clone(), single_instance_listener);
 
             if let Some(window) = app.get_webview_window("main") {
+                #[cfg(target_os = "linux")]
+                use_native_title_bar(&window);
+
                 let window_for_close = window.clone();
                 let app_for_close = app.handle().clone();
                 window.on_window_event(move |event| {
